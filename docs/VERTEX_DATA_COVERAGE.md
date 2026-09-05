@@ -75,7 +75,7 @@ Légende état : **RÉEL** (source identifiée, chaîne complète) · **PARTIEL*
 | Radar / Actions / ETF | `/scan` rows + detail 120 s ; buckets recalculés côté client sans gate régime | RÉEL / DÉGRADÉ (2e vérité) | consigné |
 | Entonnoir serveur | `/api/opportunities/funnel` 60 s ; 2 étages cliquables inexistants | PARTIEL | consigné |
 | Options (board, comparateur, contrat ouvert) | `/scan.options_board` ; `/api/options/simulate` ; 4 cartes `Date.now()` | RÉEL / DÉGRADÉ (âge) | consigné |
-| Positions × moteur, risque du panier | `/api/command.risk` = **panier du comité, pas le portefeuille** | DÉGRADÉ | consigné (P1) |
+| Positions × moteur, risque du panier | `POST /api/risk {symbols}` sur les positions **déclarées** ; titres non mesurables nommés | RÉEL / PARTIEL | corrigé (`/api/command.risk` reste le panier du comité pour Aujourd'hui) |
 | Anomalies, catalyseurs | `/scan`, `/cal-feed` | RÉEL / PARTIEL | consigné |
 
 ## 5. Analyse (`/analysis`, `/analysis/<sym>`)
@@ -118,7 +118,7 @@ Légende état : **RÉEL** (source identifiée, chaîne complète) · **PARTIEL*
 | Positions, marques | desk déclaré + `/api/pos-quotes` (IBKR marché, repli clôture scan) ; **jamais compte/positions IBKR** | RÉEL / PARTIEL | vérifié |
 | Badge « marques live » | `live = bool(ibkr_enabled)` (config, pas socket) | DÉGRADÉ | consigné (P1 : `scan_state.ibkr_live`) |
 | Valeur, P&L, poids | calculés dans le JS | PARTIEL | consigné |
-| Diversification / dépendances cachées | `/api/command.risk`, `/api/risk` = panier du scan | DÉGRADÉ | consigné (P1 → `/api/portfolio/team`) |
+| Diversification / dépendances cachées | `POST /api/risk {symbols}` = positions déclarées (jamais le panier du scan) ; `non_mesures` et `as_of` servis | RÉEL / PARTIEL | corrigé |
 | Allocation, stress, Greeks agrégés | `/api/portfolio/context`, `/stress`, `/greeks` | RÉEL / PARTIEL | — |
 | Performance (équité, contribution) | `myTradesEquity` jamais alimenté ; `t.plAbs` jamais produit | ABSENT | consigné |
 | Devise, pays, thème | — | ABSENT (déclaré) | — |
@@ -170,7 +170,7 @@ Légende état : **RÉEL** (source identifiée, chaîne complète) · **PARTIEL*
 | 4 | P0 | `Date.now()` posé comme âge de donnée (≈ 25 emplacements, 7 pages) ; `/api/market/regime` sans `as_of` ; `scan_ts_h` jamais écrit | **corrigé** (`f8d6f150` : `scan_ts_h` écrit, régime daté, 28 `Date.now()` retirés, gardien `test_fraicheur_serveur`) |
 | 5 | P0 | Simulateur actions : IV 25 % codée → PoP/Greeks fabriqués | **corrigé** (`31305b70` : `iv: null`, PoP et Greeks absents sans IV cotée) |
 | 6 | P1 | Badges « live » fondés sur la configuration (`ibkr_enabled`) | **corrigé** (`31305b70` : « live » sur preuve de socket `ibkr_live` seulement) |
-| 7 | P1 | Risque du panier ≠ portefeuille déclaré | consigné |
+| 7 | P1 | Risque du panier ≠ portefeuille déclaré | **corrigé** : `/api/risk` accepte en POST les symboles déclarés par la page (Portefeuille › Dépendances cachées, Opportunités › Risque du panier) et dit `panier: declare`, `non_mesures`, `as_of` ; le GET (panier du comité) reste pour Aujourd'hui |
 | 8 | P1 | Réseau dans les requêtes UI (corrélations, descriptions, analystes, dossier options, pos-quotes) | consigné |
 | 9 | P1 | Composants jamais alimentés (changes_since_prev, daily_changes, #an-committee, priceDomain, équité portefeuille) | **partiel** : `#an-committee` et `#an-catalyst-strip` ont leur hôte (le raisonnement du comité s'affiche dans la fiche), `priceDomain`/`status` déclarés (âge réel de la cotation) ; restent `changes_since_prev`, `daily_changes`, équité portefeuille |
 | 10 | P2 | Sources officielles macro absentes (FRED, BCE, BNS) | **corrigé** (nouvelle chaîne source → carte) |

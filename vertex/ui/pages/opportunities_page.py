@@ -1274,10 +1274,14 @@ async function renderPortfolio(){
         <a class="vx-btn vx-btn-sm vx-btn-ghost" href="/options/dossier/${esc(h.p.sym)}">Options</a>
         <button class="vx-btn vx-btn-icon vx-btn-ghost" data-entity-menu="${esc(h.p.sym)}" aria-label="Actions">⋯</button></div>
     </div>`;}).join('')+'</div>';
-  /* Risque du panier — chiffres RÉELS du moteur de risque (/api/command.risk) */
+  /* Risque du panier — moteur de risque sur les positions DÉCLARÉES (POST
+     /api/risk {symbols}). L'ancien `/api/command.risk` mesurait le panier du
+     comité et l'affichait sous « Mon portefeuille » (§13 #7). */
   try{
-    const cmd=await VX.fetch('/api/command',{ttl:60000});
-    const rk=(cmd&&cmd.risk)||null;
+    const symsDecl=[...new Set(held.map(h=>String(h.p.sym||'').toUpperCase()).filter(Boolean))];
+    const rr=await fetch('/api/risk',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({symbols:symsDecl})});
+    const rk=rr.ok?await rr.json():null;
     const el=$('op-pf-risk');
     if(rk&&el){
       const kv2=(k,v,cls)=>`<div class="vx-kv"><span class="k">${k}</span><span class="v vx-mono ${cls||''}">${v}</span></div>`;
@@ -1289,7 +1293,9 @@ async function renderPortfolio(){
           rk.max_sector>((rk.limits&&rk.limits.max_sector)||40)?'vx-neg':'')
         +kv2('Nouveau risque',rk.no_new_risk?'BLOQUÉ':'autorisé',rk.no_new_risk?'vx-neg':'vx-pos')
         +((rk.flags&&rk.flags.length)?`<div class="vx-insight vx-mt2" data-tone="risk">${rk.flags.map(f2=>esc(f2)).join('<br>')}</div>`:'')
-        +`<div class="vx-card-footer"><span class="vx-meta">moteur de risque du panier — limites : ${(rk.limits&&rk.limits.max_pos)||'—'} positions max · ${(rk.limits&&rk.limits.max_sector)||'—'} % max par secteur</span></div>`;
+        +(rk.note?`<div class="vx-meta vx-mt2">${esc(rk.note)}</div>`:'')
+        +((rk.non_mesures&&rk.non_mesures.length)?`<div class="vx-meta vx-mt1">${rk.non_mesures.length} titre(s) non mesurable(s) (hors scan ou historique trop court) : ${rk.non_mesures.map(esc).join(', ')}</div>`:'')
+        +`<div class="vx-card-footer">${VX.updateIndicator(rk.as_of||null,'risk_engine · positions déclarées','delayed')} · limites : ${(rk.limits&&rk.limits.max_pos)||'—'} positions max · ${(rk.limits&&rk.limits.max_sector)||'—'} % max par secteur</div>`;
       if(window.VXCharts&&VXCharts.gauge&&rk.diversification!=null){
         VXCharts.gauge('op-pf-divgauge',{value:rk.diversification,min:0,max:100,unit:' %',label:'Diversification',
           reading:rk.diversification>=70?'Panier réellement diversifié':'Concentration à surveiller',

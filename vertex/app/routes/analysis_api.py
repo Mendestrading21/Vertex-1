@@ -66,14 +66,38 @@ def api_validator():
     return jsonify(validator.build(eq))
 
 
-@bp.route('/api/risk')
+@bp.route('/api/risk', methods=['GET', 'POST'])
 def api_risk():
-    """VERTEX v4 — Risk Manager portefeuille (corrélation, concentration, secteurs).
-    Panier = top convictions du scan. Lecture seule, indicatif, aucun ordre."""
-    rows = scan_state.get('rows') or []
+    """VERTEX v4 — Risk Manager (corrélation, concentration, secteurs).
+
+    GET  : panier = top convictions du scan (le COMITÉ, pas le portefeuille).
+    POST {symbols:[…]} : panier = positions DÉCLARÉES par l'utilisateur, envoyées
+    explicitement par la page (jamais lues chez un courtier). La réponse dit
+    quel panier elle mesure (`panier`), les titres non mesurables
+    (`non_mesures` : hors scan ou historique trop court) et son époque.
+    Lecture seule, indicatif, aucun ordre."""
     detail = scan_state.get('detail') or {}
-    syms = [r['symbol'] for r in rows[:10]]
-    return jsonify(portfolio_risk.build(syms, detail))
+    if request.method == 'POST':
+        body = request.get_json(silent=True) or {}
+        syms = []
+        for s in (body.get('symbols') or [])[:60]:
+            v = _input.symbol(s)
+            if v and v not in syms:
+                syms.append(v)
+        if not syms:
+            out = {'n': 0, 'symbols': [], 'flags': [], 'no_new_risk': False,
+                   'note': 'aucune position déclarée — rien à mesurer'}
+        else:
+            out = portfolio_risk.build(syms, detail)
+        out['panier'] = 'declare'
+        out['demandes'] = syms
+        out['non_mesures'] = [s for s in syms if s not in (out.get('symbols') or [])]
+    else:
+        rows = scan_state.get('rows') or []
+        out = portfolio_risk.build([r['symbol'] for r in rows[:10]], detail)
+        out['panier'] = 'comite'
+    out['as_of'] = scan_state.get('scan_ts_h') or scan_state.get('updated')
+    return jsonify(out)
 
 
 __all__ = ['bp']

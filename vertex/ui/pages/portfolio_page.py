@@ -1205,9 +1205,23 @@ async function renderStress(){
 }
 
 /* Dependances cachees : ce que l'etiquette de secteur ne montre pas. */
+/* Panier = positions DÉCLARÉES (actions/ETF), envoyées explicitement au
+   moteur. Le GET de /api/risk mesure le panier du comité, pas le portefeuille :
+   c'était l'ancien défaut (§13 #7). Aucun chiffre n'est calculé ici. */
+function pfSymbolesDeclares(){
+  const pos=(window.VXEntities?VXEntities.positions():[])||[];
+  return [...new Set(pos.filter(p=>!p.type||p.type==='STK')
+    .map(p=>String(p.sym||'').toUpperCase()).filter(Boolean))];
+}
+async function pfRisqueDeclare(){
+  const r=await fetch('/api/risk',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({symbols:pfSymbolesDeclares()})});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  return r.json();
+}
 async function renderHiddenDeps(){
   let d=null,err=null;
-  try{d=await VX.fetch('/api/risk',{ttl:120000});}catch(e){err=e;}
+  try{d=await pfRisqueDeclare();}catch(e){err=e;}
   document.querySelectorAll('[aria-label="Dependances cachees"]').forEach(n=>n.remove());
   const host=document.createElement('section');
   host.className='vx-card vx-mt3';host.setAttribute('aria-label','Dependances cachees');
@@ -1225,10 +1239,14 @@ async function renderHiddenDeps(){
         differentes : la premiere est un resultat, la seconde une absence de
         mesure. Le serveur les distingue par `note` — on la sert telle quelle
         plutot que d'annoncer une diversification qu'on n'a pas mesuree.  */
+    /*  « Aucun drapeau » sur un panier mesure est un RESULTAT (etat positif),
+        pas une absence de donnee : seule la `note` du serveur (panier trop
+        petit, aucune position) est un etat vide.  */
     host.innerHTML=tete
       +(d.note?VX.states.empty(esc(d.note))
-             :VX.states.empty('Aucune dependance cachee detectee sur '+(d.n||0)+' titre(s)'))
-      +`<div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,'risk_engine',
+             :'<div class="vx-insight vx-mt2">Aucune dependance cachee detectee sur '+(d.n||0)+' titre(s) declare(s).</div>')
+      +pfNonMesures(d)
+      +`<div class="vx-card-footer">${VX.updateIndicator(d.as_of||window.__pfTs||null,'risk_engine · positions declarees',
           window.__pfLive?'live':'fallback')}</div>`;
     ($('pf-body')||{}).appendChild&&$('pf-body').appendChild(host);return;}
 
@@ -1241,11 +1259,18 @@ async function renderHiddenDeps(){
 
   host.innerHTML=tete
     +`<div class="vx-mt2">${items}</div>`
-    +`<div class="vx-meta vx-mt2">${flags.length} signal(aux) sur ${d.n||0} titre(s)`
+    +`<div class="vx-meta vx-mt2">${flags.length} signal(aux) sur ${d.n||0} titre(s) declare(s)`
     +(d.no_new_risk?' · <span class="vx-neg">nouveau risque deconseille</span>':'')+'</div>'
-    +`<div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,'risk_engine',
+    +pfNonMesures(d)
+    +`<div class="vx-card-footer">${VX.updateIndicator(d.as_of||window.__pfTs||null,'risk_engine · positions declarees',
         window.__pfLive?'live':'fallback')} · lecture seule</div>`;
   ($('pf-body')||{}).appendChild&&$('pf-body').appendChild(host);
+}
+/* Titres declares que le moteur n'a PAS pu mesurer (hors scan ou historique
+   < 40 clotures) : dits, jamais comptes comme « diversifies ». */
+function pfNonMesures(d){
+  const nm=(d&&d.non_mesures)||[];
+  return nm.length?`<div class="vx-meta vx-mt1">${nm.length} titre(s) non mesurable(s) (hors scan ou historique trop court) : ${nm.map(esc).join(', ')}</div>`:'';
 }
 
 async function renderDiscipline(){
