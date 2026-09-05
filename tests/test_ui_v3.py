@@ -229,7 +229,7 @@ def test_no_console_errors():
 
 def test_service_worker_version_bumped(client):
     body = client.get('/sw.js').get_data(as_text=True)
-    assert 'td-shell-v291' in body
+    assert 'td-shell-v292' in body
     assert 'td-shell-v49' not in body
 
 

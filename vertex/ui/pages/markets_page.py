@@ -902,8 +902,11 @@ async function loadBreadth(scan){
   if(window.VXCharts&&VXCharts.funnel){
     const scanned=rows.length;
     const noted=rows.filter(r=>r.score!==null&&r.score!==undefined).length;
-    const isBuy=v=>['ACHETER','RENFORCER'].includes((v||'').toUpperCase());
-    const isAct=v=>{const u=(v||'').toUpperCase();return u&&u!=='ÉVITER'&&u!=='EVITER';};
+    /* Le scan parle anglais (BUY/WATCH/WAIT/AVOID), le comité français : les
+       deux vocabulaires sont acceptés, sinon « Achats » vaut 0 à tort
+       (même règle que l'entonnoir d'Aujourd'hui, briefing.py). */
+    const isBuy=v=>['ACHETER','RENFORCER','BUY','STRONG_BUY'].includes((v||'').toUpperCase());
+    const isAct=v=>{const u=(v||'').toUpperCase();return !!u&&!['ÉVITER','EVITER','AVOID','SELL','STRONG_SELL'].includes(u);};
     const dossiers=rows.filter(r=>isAct(r.verdict||r.decision)).length;
     const buys=rows.filter(r=>isBuy(r.verdict||r.decision)).length;
     if(scanned>0){

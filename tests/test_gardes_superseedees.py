@@ -76,7 +76,7 @@ def sup():
 #  de la liste (la regle a ete portee, ils mesurent de nouveau quelque chose)
 #  et deux y sont entres pour la propriete deplacee de la courbe de resultats.
 #  Une liste qui DIMINUE est le signe qu'on la relit.
-TOTAL_ECARTES = 132
+TOTAL_ECARTES = 131
 
 
 #  ═══════════  1. la liste ne grossit pas  ════════════════════════════════════

@@ -85,10 +85,15 @@ def make_blueprint(scan_state: dict) -> Blueprint:
         if packet is None:
             # 200 + available:false : état applicatif honnête (pas une erreur
             # transport) — un 404 pollue la console navigateur à chaque fiche.
+            # Aucun verdict n'est FABRIQUÉ hors scan : `final_decision` est
+            # null et l'état `NON_EVALUE` dit pourquoi. Un « ATTENDRE » ici
+            # se lisait comme une conclusion du moteur alors qu'il n'avait
+            # rien calculé.
             return jsonify({'available': False,
+                            'etat': 'NON_EVALUE',
                             'error': f'{sym.upper()} absent du scan courant',
-                            'final_decision': 'ATTENDRE',
-                            'reason': 'aucune donnée — impossible de décider'}), 200
+                            'final_decision': None,
+                            'reason': 'titre hors scan courant — aucun verdict calculé'}), 200
         #  `build_executive_decision` ci-dessus construit DEJA le packet,
         #  appelle le moteur et pose `as_of`. Le corps qui suivait refaisait
         #  tout une seconde fois — et sur `detail`, un nom qui n'existe pas

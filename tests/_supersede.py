@@ -118,8 +118,6 @@ REGISTRE = {
         MARQUAGE,
     'tests/test_analysis_visual.py::test_candlestick_locale_is_stable_on_linux_browsers':
         MARQUAGE,
-    'tests/test_analysis_visual.py::test_future_catalyst_is_not_backdated_on_last_historical_candle':
-        MARQUAGE,
     'tests/test_analysis_visual.py::test_radar_keeps_missing_scores_missing':
         MARQUAGE,
     'tests/test_audit_coherence.py::test_breadth_prefers_canonical_mm200':

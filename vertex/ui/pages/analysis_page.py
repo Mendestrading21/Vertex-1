@@ -155,6 +155,10 @@ _SECTIONS = """
      Le renderer n'a pas été touché : on lui rend son domicile. -->
 <div id="an-trace" class="vx-mt3">%%TRACE%%</div>
 <div id="an-verdict" class="vx-mt3"></div>
+<!-- Raisonnement du comité : le renderer de loadDecisionStack écrivait dans
+     `#an-committee`, qui n'existait dans aucune section (garde `if(CO)`
+     silencieuse). L'hôte lui est rendu. -->
+<div id="an-committee" class="vx-mt3"></div>
 
 <!-- Scores + radar : SORTIS du hero collant → la barre d'identité (titre/prix/décision)
      reste seule en haut au défilement, le reste de l'analyse défile librement. -->
@@ -192,6 +196,9 @@ _SECTIONS = """
   </section>
 
 <!-- 3. Graphique principal + sous-graphe RSII -->
+<!-- Bandeau catalyseur (résultats estimés) : rempli par loadChart, caché
+     sans échéance connue. L'hôte manquait ; le bandeau n'apparaissait jamais. -->
+<div id="an-catalyst-strip" class="vx-mb2" hidden></div>
 <div id="an-chart"></div>
 <div id="an-rsi" class="vx-mt2"></div>
 <div id="an-volume" class="vx-mt2"></div>
@@ -791,7 +798,7 @@ async function loadDossier(){
   ['/api/ticker/'+SYM,'/api/strategy/decision/'+SYM,'/api/anomalies/'+SYM,
    '/api/tradingview/signals?symbol='+SYM,'/api/options/chain/'+SYM]
     .forEach(function(u){try{VX.fetch(u).catch(function(){});}catch(e){}});
-  let t=null,exec=null,stale=false;
+  let t=null,exec=null,status=null,stale=false;
   try{t=await VX.fetch('/api/ticker/'+SYM,{ttl:60000});}catch(e){}
   try{exec=await VX.fetch('/api/strategy/decision/'+SYM,{ttl:60000});}catch(e){}
   try{status=status||await VX.fetch('/api/live/status',{ttl:60000});}catch(e){}
@@ -864,6 +871,9 @@ async function loadDossier(){
   const scanTs=(exec&&exec.as_of)||null;
   const scanMode=demo?'demo':((status&&status.mode)||'delayed');
   const scanSource=(status&&status.ibkr)?'IBKR · scan':'scan';
+  /* Domaine « prix » de /api/live/status : porte l'âge réel (age_s) de la
+     dernière cotation servie. `null` quand la route ne l'a pas fourni. */
+  const priceDomain=(status&&status.domains&&status.domains.prices)||null;
 
   /* Hero */
   ($('an-name')||{}).textContent=(t&&t.company&&(t.company.name||t.company.shortName))||'';
@@ -884,7 +894,12 @@ async function loadDossier(){
       }
     }
   }catch(e){}
-  const decision=(exec&&exec.final_decision)||'ATTENDRE';
+  /*  Hors scan (`available:false`) ou verdict absent, RIEN n'est fabriqué :
+      `decision` reste null et le rail dit « NON ÉVALUÉ » avec la raison du
+      serveur. Un « ATTENDRE » par défaut se lisait comme un verdict calculé. */
+  const horsScan=!exec||exec.available===false||!exec.final_decision;
+  const decision=horsScan?null:String(exec.final_decision);
+  const decisionAff=decision||'NON ÉVALUÉ';
   /*  Une écriture NUE de `textContent` sur `an-decision` vivait ici, et le
       nœud `#an-decision` n'existe plus : il appartenait à l'agencement
       précédent. (Le motif exact n'est pas recopié ci-dessus : le recensement
@@ -909,8 +924,10 @@ async function loadDossier(){
     if(pl.rr!=null||pl.rr_res!=null)advice.push('R:R '+VX.fmt.num(pl.rr!=null?pl.rr:pl.rr_res,1)+'×');
     if(pl.stop!=null)advice.push('stop '+(pl.stop_type?esc(pl.stop_type)+' ':'')+VX.fmt.nd(pl.stop));
     railD.innerHTML=`<div class="vx-kpi vx-mb2">
-        <span class="vx-kpi-value" style="font-size:24px"><span class="vx-badge vx-badge-decision" data-decision="${decision.replace('É','E')}" style="font-size:14px;padding:5px 14px">${decision}</span></span>
-        <span class="vx-kpi-delta vx-muted">${exec&&exec.reason?esc(exec.reason):'moteur exécutif unique'}</span></div>`
+        <span class="vx-kpi-value" style="font-size:24px"><span class="vx-badge vx-badge-decision" data-decision="${decisionAff.replace(/É/g,'E').replace(' ','_')}" style="font-size:14px;padding:5px 14px">${esc(decisionAff)}</span></span>
+        <span class="vx-kpi-delta vx-muted">${horsScan
+          ?esc((exec&&(exec.reason||exec.error))||'titre hors scan courant — aucun verdict calculé')
+          :(exec&&exec.reason?esc(exec.reason):'moteur exécutif unique')}</span></div>`
       +(advice.length?`<div class="vx-flex vx-wrap vx-mb2" style="gap:.3rem">${advice.map(a=>`<span class="vx-badge">${a}</span>`).join('')}</div>`:'')
       +(d.thesis?`<div class="vx-insight vx-mb2" data-tone="ai" style="font-size:12px;line-height:1.5">${esc(String(d.thesis).split(/[.·]/)[0])}.</div>`:'')
       +(audit.length?`<details class="vx-mt1"><summary class="vx-meta" style="cursor:pointer">Audit trail (${audit.length})</summary>

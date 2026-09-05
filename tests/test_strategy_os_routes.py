@@ -46,7 +46,9 @@ def test_decision_route_honest_when_symbol_unknown(client):
     assert r.status_code == 200
     j = r.get_json()
     assert j['available'] is False
-    assert j['final_decision'] == 'ATTENDRE'
+    # Hors scan, aucun verdict n'est fabriqué : null + état explicite.
+    assert j['final_decision'] is None
+    assert j['etat'] == 'NON_EVALUE'
 
 
 def test_regime_route(client):

@@ -380,14 +380,15 @@ function renderVerdict(sym,question,strat,deci){
     ($('vx-analyst-meta')||{}).innerHTML=`<span class="vx-meta">${esc(sym)}</span>`;
     return;
   }
-  const decision=(strat&&strat.final_decision)||'ATTENDRE';
+  /* Verdict absent = « NON ÉVALUÉ », jamais un « ATTENDRE » fabriqué ici. */
+  const decision=(strat&&strat.final_decision)?String(strat.final_decision):'NON ÉVALUÉ';
   const unknowns=(strat&&strat.unknowns)||[];
   const blocking=(strat&&strat.blocking_rules)||[];
   const lens=deci&&deci.market_lens;
   ($('vx-analyst-verdict')||{}).innerHTML=
     `<div class="vx-flex vx-mb3">
       <button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${sym}">${sym}</button>
-      <span class="vx-badge vx-badge-decision" data-decision="${esc(decision)}">${esc(decision)}</span>
+      <span class="vx-badge vx-badge-decision" data-decision="${esc(decision.replace(/É/g,'E').replace(' ','_'))}">${esc(decision)}</span>
       ${E()?E().badges(sym):''}</div>
     ${question?`<div class="vx-help vx-mb2">Question : &laquo; ${esc(question)} &raquo; — r&eacute;ponse via le dossier complet ci-dessous.</div>`:''}
     ${deci&&(deci.decision_label||deci.headline)?`<div class="vx-dim vx-mb2" style="font-size:13px">${esc(deci.decision_label||deci.headline)}</div>`:''}
@@ -521,19 +522,19 @@ function renderCommittee(){
     var _mpts=reviews.map(function(r){
       var ag=(r.agreement==null)?null:(r.agreement<=1?r.agreement*100:r.agreement);
       if(ag==null||r.conviction==null)return null;
-      return {x:ag,y:r.conviction,sym:r.symbol,dec:r.decision,grp:DECISION_GROUP[r.decision]||'ATTENDRE',contra:!!r.has_contradiction};
+      return {x:ag,y:r.conviction,sym:r.symbol,dec:r.decision,grp:DECISION_GROUP[r.decision]||'AUTRE',contra:!!r.has_contradiction};
     }).filter(Boolean);
     var _mhost=$('vx-committee-map');
     if(_mhost){
       if(_mpts.length<2){_mhost.innerHTML='';}
       else whenChartsReady(function(){
         var cc=VXCharts.colors;
-        var _gc={AVOID:cc.negative,'ÉVITER':cc.negative,WAIT:cc.warning,ATTENDRE:cc.warning,WATCH_BREAKOUT:cc.brand,ACHETER:cc.positive,RENFORCER:cc.positive};
+        var _gc={AVOID:cc.negative,'ÉVITER':cc.negative,WAIT:cc.warning,ATTENDRE:cc.warning,WATCH_BREAKOUT:cc.brand,ACHETER:cc.positive,RENFORCER:cc.positive,AUTRE:cc.neutral};
         VXCharts.card('vx-committee-map',{
           title:'Carte du comité — conviction × accord',
           question:'Qui est à la fois convaincu ET consensuel ?',
           conclusion:_mpts.filter(function(p){return p.y>=60&&p.x>=60;}).length+' titre(s) en zone haute (conviction ≥60, accord ≥60)',
-          height:360,legend:[{label:'Achat',color:cc.positive},{label:'Cassure',color:cc.brand},{label:'Éviter',color:cc.negative},{label:'Attente',color:cc.warning}],
+          height:360,legend:[{label:'Achat',color:cc.positive},{label:'Cassure',color:cc.brand},{label:'Éviter',color:cc.negative},{label:'Attente',color:cc.warning},{label:'Non classé',color:cc.neutral}],
           source:(committeeData.data_source==='demo'?'scan (DÉMO)':'scan'),timestamp:committeeData.as_of,
           mode:committeeData.data_source==='demo'?'fallback':'delayed',
           explain:{shows:'Chaque point est un titre passé en revue, placé par l’accord du comité (X) et la conviction (Y). Couleur = groupe de décision ; cerclé d’ambre = comité divisé.',
@@ -577,7 +578,8 @@ function renderCommittee(){
     <thead><tr><th>Titre</th><th>D&eacute;cision</th><th class="vx-num">Conviction</th>
     <th class="vx-num">Accord</th><th class="vx-num">Prix</th><th><span class="vx-sr-only">D&eacute;tail</span></th><th><span class="vx-sr-only">Actions</span></th></tr></thead><tbody>`
     +rows.map((r,i)=>{
-      const grp=DECISION_GROUP[r.decision]||'ATTENDRE';
+      /* Vocabulaire inconnu → groupe « AUTRE » (neutre), jamais rangé en attente. */
+      const grp=DECISION_GROUP[r.decision]||'AUTRE';
       const agree=r.agreement===null||r.agreement===undefined?null
         :(r.agreement<=1?r.agreement*100:r.agreement);
       return `<tr>
