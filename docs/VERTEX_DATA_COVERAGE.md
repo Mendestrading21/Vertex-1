@@ -165,13 +165,14 @@ Légende état : **RÉEL** (source identifiée, chaîne complète) · **PARTIEL*
 | # | Sév. | Défaut | Statut |
 |---|---|---|---|
 | 1 | P0 | Session IBKR synchronisait positions/compte/exécutions au connect | **corrigé** (session marché seulement, prouvée) |
-| 2 | P0 | Verdict `ATTENDRE` fabriqué hors scan ; trois autorités de décision | consigné (programme lot décision, hors alimentation) |
-| 3 | P0 | Calendrier : démo non signalée, `dte` figé, « Confirmé » systématique | consigné (lot fraîcheur/calendrier) |
-| 4 | P0 | `Date.now()` posé comme âge de donnée (≈ 25 emplacements, 7 pages) ; `/api/market/regime` sans `as_of` ; `scan_ts_h` jamais écrit | consigné (lot fraîcheur : serveur d'abord) |
-| 5 | P0 | Simulateur actions : IV 25 % codée → PoP/Greeks fabriqués | consigné (lot moteur) |
-| 6 | P1 | Badges « live » fondés sur la configuration (`ibkr_enabled`) | consigné |
+| 2 | P0 | Verdict `ATTENDRE` fabriqué hors scan ; trois autorités de décision | **partiel** : plus aucun verdict fabriqué hors scan (`final_decision: null`, `etat: NON_EVALUE`, rail « NON ÉVALUÉ » avec la raison servie ; Vertex IA idem ; carte du comité : vocabulaire inconnu → « Non classé », plus « Attente ») — les trois autorités de décision restent (programme lot décision) |
+| 3 | P0 | Calendrier : démo non signalée, `dte` figé, « Confirmé » systématique | **corrigé** : `dte` recalculé et items étiquetés par `/cal-feed` (`f8d6f150`) ; le niveau de confirmation est SERVI (résultats : « non confirmée par l’émetteur » ; macro : dérivé de la source, Fed publiée = confirmée, règle BLS = non confirmée) et l'écran ne décide plus « Confirmé » ; démo signalée par `cal.demo` |
+| 4 | P0 | `Date.now()` posé comme âge de donnée (≈ 25 emplacements, 7 pages) ; `/api/market/regime` sans `as_of` ; `scan_ts_h` jamais écrit | **corrigé** (`f8d6f150` : `scan_ts_h` écrit, régime daté, 28 `Date.now()` retirés, gardien `test_fraicheur_serveur`) |
+| 5 | P0 | Simulateur actions : IV 25 % codée → PoP/Greeks fabriqués | **corrigé** (`31305b70` : `iv: null`, PoP et Greeks absents sans IV cotée) |
+| 6 | P1 | Badges « live » fondés sur la configuration (`ibkr_enabled`) | **corrigé** (`31305b70` : « live » sur preuve de socket `ibkr_live` seulement) |
 | 7 | P1 | Risque du panier ≠ portefeuille déclaré | consigné |
 | 8 | P1 | Réseau dans les requêtes UI (corrélations, descriptions, analystes, dossier options, pos-quotes) | consigné |
-| 9 | P1 | Composants jamais alimentés (changes_since_prev, daily_changes, #an-committee, priceDomain, équité portefeuille) | consigné |
+| 9 | P1 | Composants jamais alimentés (changes_since_prev, daily_changes, #an-committee, priceDomain, équité portefeuille) | **partiel** : `#an-committee` et `#an-catalyst-strip` ont leur hôte (le raisonnement du comité s'affiche dans la fiche), `priceDomain`/`status` déclarés (âge réel de la cotation) ; restent `changes_since_prev`, `daily_changes`, équité portefeuille |
 | 10 | P2 | Sources officielles macro absentes (FRED, BCE, BNS) | **corrigé** (nouvelle chaîne source → carte) |
 | 11 | P2 | SEC EDGAR branchée mais inactive et non consommée | consigné (action humaine : `SEC_USER_AGENT`) |
+| 12 | P1 | Entonnoir Marchés « Achats = 0 » structurel (vocabulaire français seul alors que le scan parle anglais) | **corrigé** : même vocabulaire que l'entonnoir d'Aujourd'hui (gardien d'égalité) ; mesuré sur l'instance QA : 513 → 513 → 294 → 94 au lieu de 0 |

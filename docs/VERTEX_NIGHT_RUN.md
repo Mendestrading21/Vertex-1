@@ -78,6 +78,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | `31305b70` | fix(honnêteté) : live sur preuve de socket, Simulateur sans IV inventée |
 | `f8d6f150` | fix(fraîcheur) : scan_ts_h, régime daté, calendrier daté, fin des `Date.now()` |
 | `fda07e70` | chore(assets) : coque vx-shell-4, SW v291, cartes macro Marchés, runbook |
+| `240d23b7` | fix(honnêteté) : aucun verdict fabriqué hors scan, confirmation du calendrier servie, entonnoir Marchés au vocabulaire du scan, hôtes morts de la fiche Analyse (coque vx-shell-5, SW v292) |
 
 ## 5. Tests (résultats exacts)
 
@@ -88,6 +89,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | Après macro + honnêteté | `4385 passed, 181 skipped, 8 failed` → pins de versions, fingerprint, import orphelin, 3 tests fournisseur (passés au rejeu isolé) corrigés |
 | Après fraîcheur | `4420 passed, 181 skipped, 2 failed` (fingerprint + import orphelin, corrigés dans `fda07e70`) |
 | Final (après `e5c1a042`) | `4422 passed, 181 skipped, 0 failed` ; CI PR #867 : safety pass, test pass |
+| Tranche honnêteté (`240d23b7`) | `4435 passed, 180 skipped, 0 failed` ; une garde « écartée » (`test_future_catalyst_is_not_backdated_on_last_historical_candle`) repasse au vert grâce à l'hôte restauré et sort du registre des gardes supplantées (131 au lieu de 132) |
 
 Preuves réelles hors suite : socket TWS (session marché seulement),
 collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
@@ -99,5 +101,13 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
 - Instance de travail : relancer `python -m vertex` avec TWS ouvert ; vérifier
   `/healthz` (`ibkr_live`), Système › Jobs (`MACRO_OFFICIEL_REFRESH` ACTIF
   après la première collecte), Marchés › Macro.
-- Prochaine action si reprise : `VERTEX_DATA_COVERAGE.md` §13, défauts #2 à
-  #9 par ordre de priorité, une tranche par commit.
+- Tranche « honnêteté » faite (`240d23b7`) : §13 #2 (partiel), #3, #9 (partiel),
+  #12. Vérifié sur l'instance QA (port 5003, sans IBKR) : calendrier 120 j —
+  badges « Confirmée » (Fed publiée), « Approx. » (règle BLS), « Non
+  confirmée » (résultats, titre = texte du serveur) ; fiche `/analysis/ZZZZ`
+  — rail « NON ÉVALUÉ · titre hors scan courant — aucun verdict calculé » ;
+  fiche AAPL — « Raisonnement du comité » enfin rendu ; Marchés › Largeur —
+  entonnoir 513 → 513 → 294 → 94 ; console sans erreur, 375 px sans
+  débordement.
+- Prochaine action si reprise : §13 #7 (risque du panier), #8 (réseau dans
+  les requêtes UI), reste de #9, puis #2 (autorités de décision).
