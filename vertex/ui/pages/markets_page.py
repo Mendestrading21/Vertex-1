@@ -737,7 +737,7 @@ async function loadMacroCal(){
       label:esc(m.label||'')+(m.note?' — '+esc(m.note):'')+(m.dte!==undefined&&m.dte!==null?` (J-${m.dte})`:'')}));
     VXCharts.timelineCard('vx-mk-macro-cal',{title:'Calendrier macro',unit:'événements',
       question:'Quels événements macro peuvent changer le régime ?',
-      items,source:'calendrier moteur',timestamp:cal.ts||Date.now(),mode:'delayed',
+      items,source:'calendrier moteur',timestamp:cal.ts?cal.ts*1000:null,mode:'delayed',
       emptyText:'Aucun événement macro fourni par le calendrier moteur.'});
   }catch(e){emptyCard('vx-mk-macro-cal','Calendrier macro indisponible ('+esc(e.message)+').');}
 }

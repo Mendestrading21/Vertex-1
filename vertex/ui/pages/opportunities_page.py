@@ -615,7 +615,7 @@ async function renderScreener(classe){
         VXCharts.card('op-sel-mc',{title:'Dispersion Monte-Carlo',unit:'%',
           question:'Fourchette réaliste du rendement sur l’horizon ?',
           conclusion:(tp1!=null?'TP1 avant stop '+Math.round(tp1*100)+'% · stop '+Math.round((stopf||0)*100)+'%':''),
-          height:150,source:'Monte-Carlo · bootstrap',timestamp:Date.now(),mode:'delayed',limits:'MODEL_ESTIMATE',
+          height:150,source:'Monte-Carlo · bootstrap',timestamp:null,mode:'delayed',limits:'MODEL_ESTIMATE',
           render:function(cv){return VXCharts.mount(cv,{type:'bar',
             data:{labels:['P05','P50','P95'],datasets:[{data:[bs.p05,bs.p50,bs.p95],backgroundColor:[cc.negative,cc.neutral,cc.positive],borderRadius:4,maxBarThickness:26}]},
             options:{indexAxis:'y',scales:{x:{ticks:{callback:function(x){return x+'%';},color:cc.muted,font:{size:9}},grid:{color:cc.grid}},y:{grid:{display:false},ticks:{color:cc.text,font:{size:10}}}},plugins:{legend:{display:false}}}});}});
@@ -1163,7 +1163,7 @@ async function renderOptions(){
       conclusion:`Breakeven ${VX.fmt.nd(c.be)} · prime ${VX.fmt.nd(c.cost)}`,
       spot:spot,strike:c.strike,premium:c.cost,right:c.type==='PUT'?'P':'C',breakeven:c.be,height:210,
       expectedMovePct:c.em_pct,target:c.tgt,
-      source:'board options',timestamp:Date.now(),mode:'delayed',
+      source:'board options',timestamp:null,mode:'delayed',
       conclusion:(c.be!=null&&spot&&c.em_pct?('Breakeven '+VX.fmt.nd(c.be)+' · '+(Math.abs(c.be-spot)/spot*100<=c.em_pct?'DANS':'HORS')+' le mouvement attendu (±'+VX.fmt.num(c.em_pct,1)+' %)'):('Breakeven '+VX.fmt.nd(c.be))),
       explain:{shows:'Le P&L du contrat à l’échéance selon le prix du sous-jacent (arithmétique du contrat).',
         why:'Visualiser breakeven et asymétrie avant d’engager la prime.',
@@ -1176,15 +1176,15 @@ async function renderOptions(){
       VXCharts.scenarioMatrix('op-scenarios',s.sim,{title:'Scénarios (moteur)',
         question:'Que vaut le contrat selon le spot et le temps ?',
         conclusion:`R:R simulé ${VX.fmt.nd(s.sim.reward_risk)} · perte planifiée ${VX.fmt.nd(s.sim.worst_planned_loss_pct)} %`,
-        source:'scenario_pricer',timestamp:Date.now(),mode:'delayed'});
+        source:'scenario_pricer',timestamp:(s&&s.ts)||null,mode:'delayed'});
       VXCharts.thetaCard('op-theta',s.sim,{title:'Décomposition temps',unit:'$ par jour',
         question:'Combien coûte chaque jour d’attente ?',
         conclusion:'Réévaluer après 5-8 séances sans mouvement',
-        height:190,source:'scenario_pricer',timestamp:Date.now(),mode:'delayed'});
+        height:190,source:'scenario_pricer',timestamp:(s&&s.ts)||null,mode:'delayed'});
       VXCharts.ivSensitivityCard('op-iv',s.sim,{title:'Sensibilité IV',unit:'$',
         question:'Que se passe-t-il si la volatilité implicite bouge ?',
         conclusion:'IV -20 % à +20 % au scénario BASE',height:190,
-        source:'scenario_pricer',timestamp:Date.now(),mode:'delayed'});
+        source:'scenario_pricer',timestamp:(s&&s.ts)||null,mode:'delayed'});
     }catch(e){
       ($('op-scenarios')||{}).innerHTML='<div class="vx-card">'+VX.states.error('Simulation moteur indisponible : '+e.message)+'</div>';
       ($('op-theta')||{}).innerHTML='';($('op-iv')||{}).innerHTML='';
@@ -1305,7 +1305,7 @@ async function renderPortfolio(){
       VXCharts.donutCard('op-pf-sect-card',{title:'Secteurs du portefeuille',unit:'% du portefeuille',
         question:'Suis-je concentré sur un seul thème ?',
         labels:ks,values:ks.map(k=>cnt[k]),height:200,
-        source:'positions déclarées × scan',timestamp:Date.now(),mode:'delayed'});
+        source:'positions déclarées × scan',timestamp:null,mode:'delayed'});
     }else{($('op-pf-sect')||{}).innerHTML=VX.states.empty('Aucun secteur identifiable.');}
   })();
   const cd=$('op-pf-cands');
@@ -1430,7 +1430,7 @@ async function renderCalendar(){
       (document.getElementById('op-cal-count')||{}).textContent=items.length+' événement(s)';
       VXCharts.timelineCard('op-cal',{title:'Calendrier des catalyseurs',unit:'événements',
         question:'Quels événements peuvent faire bouger les dossiers ?',
-        items:items.slice(0,40),source:'calendrier moteur',timestamp:cal.ts||Date.now(),mode:'delayed',
+        items:items.slice(0,40),source:'calendrier moteur',timestamp:cal.ts?cal.ts*1000:null,mode:'delayed',
         emptyText:'Aucun événement sur ce filtre.'});
     }
     document.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{

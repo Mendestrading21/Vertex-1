@@ -747,6 +747,10 @@ def _scan_once():
                   'titres_en_echec': _te,
                   **({'source': 'demo'} if DEMO_MODE else {}),
                   'scan_ts': time.time(),
+                  #  `scan_ts_h` : lu par 23 consommateurs (as_of des routes,
+                  #  DecisionTrace…) et jamais ecrit jusqu'a la mission
+                  #  alimentation — la fraicheur se lisait « HH:MM:SS » sans date.
+                  'scan_ts_h': _horodatage_iso_utc(),
                   'updated': datetime.now().strftime('%H:%M:%S'), 'error': None})
         if DEMO_MODE:                                  # VITRINE : board d'options synthétique
             try:
@@ -871,6 +875,7 @@ def _scan_once():
                   },
                   'universe_n': len(syms_scan), 'scanned_n': len(rows),
                   'scan_ts': time.time(),
+                  'scan_ts_h': _horodatage_iso_utc(),
                   'updated': datetime.now().strftime('%H:%M:%S'), 'error': None})
         try:
             _apply_ibkr_indices()   # overlay indices/VIX TEMPS RÉEL IBKR par-dessus le différé yfinance
@@ -2594,6 +2599,12 @@ def _alerts_loop():
 #  `/api/alerts/status` a rejoint `live_state_api`, et
 #  `/api/track-record` `track_record_api` (aucune injection : ses deux
 #  dependances vivaient deja dans le paquet).
+
+
+def _horodatage_iso_utc() -> str:
+    """Horodatage ISO 8601 UTC (`2026-09-06T00:12:03Z`) : parseable par
+    `VX.freshness._ms`, contrairement a `updated` (heure locale sans date)."""
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
 
 
 def _demarrer_les_boucles():

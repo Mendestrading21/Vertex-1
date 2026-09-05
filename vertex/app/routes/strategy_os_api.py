@@ -103,7 +103,13 @@ def make_blueprint(scan_state: dict) -> Blueprint:
     def market_regime():
         # La clé `market` du scan est l'horloge (market_status), pas les données —
         # le mapping canonique scan → moteur vit dans market_context.regime_inputs.
-        return jsonify(classify_regime(regime_inputs(scan_state)))
+        resp = classify_regime(regime_inputs(scan_state))
+        if isinstance(resp, dict):
+            #  Le régime est daté par le SCAN qui l'a produit : sans `as_of`,
+            #  trois pages affichaient l'heure du navigateur comme âge.
+            resp['as_of'] = scan_state.get('scan_ts_h') or scan_state.get('updated')
+            resp['ts'] = scan_state.get('scan_ts')
+        return jsonify(resp)
 
     @bp.route('/api/company/twin/<sym>')
     def company_twin_ep(sym):

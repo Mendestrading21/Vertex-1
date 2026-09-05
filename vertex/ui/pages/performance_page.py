@@ -466,7 +466,7 @@ function loadEquity(){
       question:'Le capital déclaré progresse-t-il régulièrement ?',
       conclusion:values[values.length-1]>=values[0]?'Équité en progression sur la période.':'Équité en retrait sur la période.',
       labels,values,height:240,
-      source:'journal local (cumul des clôtures)',timestamp:Date.now(),mode:'delayed',
+      source:'journal local (cumul des clôtures)',timestamp:null,mode:'delayed',
       explain:{shows:'La série d’équité issue de vos clôtures de positions déclarées.',
         why:'Une méthode saine produit une pente régulière, pas des à-coups.',
         confirm:'Nouveaux plus hauts d’équité avec drawdowns contenus.',
@@ -476,7 +476,7 @@ function loadEquity(){
       question:'Les pertes restent-elles contrôlées ?',
       conclusion:'Dérivé arithmétiquement de la courbe d’équité déclarée.',
       labels,values,height:240,
-      source:'journal local (cumul des clôtures)',timestamp:Date.now(),mode:'delayed',
+      source:'journal local (cumul des clôtures)',timestamp:null,mode:'delayed',
       limits:'dérivé de la série déclarée — pas un indicateur de marché',
       explain:{shows:'L’écart en % entre l’équité et son dernier pic.',
         why:'La profondeur des drawdowns mesure la discipline de risque réelle.',
@@ -576,7 +576,7 @@ function loadDist(){
   VXCharts.card('vx-pf-dist',{title:'Distribution des rendements par trade',unit:'trades',
     question:'Le profil est-il asymétrique (petites pertes, gains amples) ?',
     conclusion:withPl.length+' clôtures · l’asymétrie droite valide la gestion.',
-    height:220,source:'journal local (clôtures)',timestamp:Date.now(),mode:'delayed',
+    height:220,source:'journal local (clôtures)',timestamp:null,mode:'delayed',
     explain:{shows:'Le décompte de tes trades clôturés par tranche de rendement (%).',
       why:'La méthode vise des pertes tronquées (stops) et des gains étendus (TP échelonnés).',
       confirm:'Masse des pertes concentrée entre 0 et −10 %, queue droite étendue.',
@@ -716,7 +716,7 @@ function loadProgression(){
     VXCharts.card('vx-pf-prog-chart',{title:'Erreurs déclarées par mois',unit:'erreurs',
       question:'Mes erreurs récurrentes diminuent-elles ?',
       conclusion:byMonth[months[months.length-1]]<=byMonth[months[0]]?'Tendance à la baisse — la discipline progresse.':'Vigilance : les erreurs ne diminuent pas encore.',
-      height:200,source:'journal local',timestamp:Date.now(),mode:'delayed',
+      height:200,source:'journal local',timestamp:null,mode:'delayed',
       render:(cv)=>VXCharts.bars(cv,months,months.map(m=>byMonth[m]),
         {colors:months.map(()=>VXCharts.colors.warning),yFmt:(v)=>v})});
   }else{
@@ -770,7 +770,7 @@ async function loadTrack(){
       if(window.VXCharts&&VXCharts.card&&VXCharts.bars&&_tv.some(x=>x!=null)){
         VXCharts.card('vx-pf-track-bar',{title:'Rendement moyen +20 séances par verdict',unit:'%',
           question:'Quels verdicts moteur ont le mieux tenu ?',height:200,
-          source:'historique moteur',timestamp:Date.now(),mode:'delayed',
+          source:'historique moteur',timestamp:null,mode:'delayed',
           limits:'moyenne réelle des verdicts résolus (n≥5) — mesure, pas une promesse',
           render:(cv)=>VXCharts.bars(cv,_tl,_tv,{colors:_tv.map(v=>v==null?VXCharts.colors.muted:(v>=0?VXCharts.colors.positive:VXCharts.colors.negative)),yFmt:(x)=>x+' %'})});
       }

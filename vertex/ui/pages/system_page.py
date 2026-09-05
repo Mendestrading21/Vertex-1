@@ -487,7 +487,7 @@ async function loadBrain(){
     table='<div class="vx-empty vx-mt2">Aucune cotation web pour l&#8217;instant. « Mettre &agrave; jour avec Claude » pour lancer une recherche.</div>';
   }
   body.innerHTML=head+(movers.length?'<div id="vx-brain-movers" class="vx-mt3"></div>':'')+table
-    +'<div class="vx-card-footer">'+VX.updateIndicator((snap&&snap.as_of)?Date.parse(snap.as_of):Date.now(),'/api/ai/enrichment',status==='OK'?'delayed':'fallback')
+    +'<div class="vx-card-footer">'+VX.updateIndicator((snap&&snap.as_of)?Date.parse(snap.as_of):null,'/api/ai/enrichment',status==='OK'?'delayed':'fallback')
     +' · rendements/prix 100% diff&eacute;r&eacute;s &mdash; jamais un ordre</div>';
   if(window.VXCharts&&VXCharts.barCard&&movers.length){
     VXCharts.barCard('vx-brain-movers',{title:'Plus forts mouvements du jour',unit:'%',
@@ -495,7 +495,7 @@ async function loadBrain(){
       labels:movers,values:movers.map(s=>quotes[s].change_pct),
       colors:movers.map(s=>quotes[s].change_pct>=0?VXCharts.colors.positive:VXCharts.colors.negative),
       horizontal:true,yFmt:(v)=>v+'%',source:'via Claude · web',
-      timestamp:(snap&&snap.as_of)?Date.parse(snap.as_of):Date.now(),mode:'delayed'});
+      timestamp:(snap&&snap.as_of)?Date.parse(snap.as_of):null,mode:'delayed'});
   }
 }
 async function refreshBrain(){
@@ -656,7 +656,7 @@ async function loadConnections(){
       +kv('Donn&eacute;es march&eacute;',esc((st.data_sources||{}).market_data||'—'))
       +kv('Mode global',esc(st.mode||'—'))
       +kv('Ex&eacute;cution d&#8217;ordres','<b class="vx-neg">'+esc(st.order_execution||'disabled-by-design')+'</b>')
-      +`<div class="vx-card-footer">${VX.updateIndicator(st.ts||Date.now(),'/api/system-status',proven?(ib==='connected-live'?'live':'delayed'):'fallback')}</div>`;
+      +`<div class="vx-card-footer">${VX.updateIndicator(st.ts||null,'/api/system-status',proven?(ib==='connected-live'?'live':'delayed'):'fallback')}</div>`;
   }else{
     ($('vx-conn-ibkr')||{}).innerHTML=VX.states.error('&Eacute;tat syst&egrave;me indisponible');
     ($('vx-conn-ibkr-badge')||{}).innerHTML=statusBadge('offline','inconnu');
@@ -770,7 +770,7 @@ async function loadConnections(){
       +diagItem(null,'Abonnement Reuters (fondamentaux)','Coche « Reuters Worldwide Fundamentals » dans IBKR Market Data → lève l’erreur 10358 et remplace le repli yfinance par des fondamentaux temps réel.')
       +diagItem(null,'Abonnement Nasdaq-100 (NDX)','Sans cet abonnement, le Nasdaq reste en différé (affiché honnêtement, jamais mélangé). Abonne-toi pour le temps réel homogène.')
       +`<div class="vx-meta vx-mt2">Hors séance, les cotations IBKR passent en différé/frozen — c’est normal, pas une panne.</div></div>`
-      +`<div class="vx-card-footer">${VX.updateIndicator(live.generated?live.generated*1000:Date.now(),'/api/live/status',liveOn?'live':'delayed')}
+      +`<div class="vx-card-footer">${VX.updateIndicator(live.generated?live.generated*1000:null,'/api/live/status',liveOn?'live':'delayed')}
         <a class="vx-btn vx-btn-sm vx-btn-ghost vx-right" href="/system?view=data">D&eacute;tail par domaine →</a></div>`;
   }else{
     ($('vx-conn-sync')||{}).innerHTML=VX.states.error('Live Engine injoignable');
@@ -809,7 +809,7 @@ async function loadConnections(){
       }).join('')+'</div>'
       +((st.warnings||[]).length?`<div class="vx-stale-banner vx-mt3">⏳ ${st.warnings.map(esc).join(' · ')}</div>`:'')
       +`<div class="vx-mt3"><button class="vx-btn vx-btn-sm vx-btn-ghost" id="vx-tech-endpoints">Détails techniques (endpoints) →</button></div>`;
-    ($('vx-conn-meta')||{}).innerHTML=VX.updateIndicator(st.ts||Date.now(),'/api/system-status','delayed');
+    ($('vx-conn-meta')||{}).innerHTML=VX.updateIndicator(st.ts||null,'/api/system-status','delayed');
     $('vx-tech-endpoints')?.addEventListener('click',()=>{
       VX.shell.openDrawer('Endpoints techniques',
         [['GET /healthz','santé serveur'],['GET /api/system-status','état institutionnel complet'],
@@ -893,7 +893,7 @@ async function loadData(){
         question:'Les donn&eacute;es sont-elles utilisables pour d&eacute;cider ?',
         conclusion:'Dominante : '+dominant+' ('+byQ[dominant]+' / '+dq.total+') · source '+(dq.scan_source||'n/d'),
         labels,values,colors:labels.map(k=>colByQ[k]||colors.muted),height:200,
-        source:'scan '+(dq.scan_source||'n/d'),timestamp:(scan&&scan.last_scan_ts)||Date.now(),
+        source:'scan '+(dq.scan_source||'n/d'),timestamp:(scan&&scan.last_scan_ts)||null,
         mode:dq.scan_source==='demo'?'fallback':'delayed',
         limits:dq.note||'',
         explain:{shows:'La r&eacute;partition des titres scann&eacute;s par niveau de qualit&eacute; de donn&eacute;es.',
@@ -982,7 +982,7 @@ async function loadData(){
           <td class="vx-dim" style="font-size:12px">${esc(d.detail||'—')}</td></tr>`;
       }).join('')+'</tbody></table></div>';
     ($('vx-data-fresh-meta')||{}).innerHTML=VX.updateIndicator(
-      live.generated?live.generated*1000:Date.now(),'Live Engine · mode '+(live.mode||'n/d'),'delayed');
+      live.generated?live.generated*1000:null,'Live Engine · mode '+(live.mode||'n/d'),'delayed');
   }else{
     ($('vx-data-fresh')||{}).innerHTML=VX.states.empty('Aucun domaine suivi par le Live Engine pour l&#8217;instant.');
   }

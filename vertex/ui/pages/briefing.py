@@ -980,7 +980,7 @@ async function loadRegime(){
       <div class="vx-kv"><span class="k">Nouveau risque</span><span class="v ${adj.new_risk_allowed?'vx-pos':'vx-neg'}">${adj.new_risk_allowed?'autorisé':'BLOQUÉ'}</span></div>
       <div class="vx-kv"><span class="k">Priorité setups</span><span class="v">${SETUP_FR[adj.setup_priority]||VX.fmt.nd(adj.setup_priority)}</span></div>
       <div class="vx-kv"><span class="k">Confirmations exigées</span><span class="v">${VX.fmt.nd(adj.confirmation_required)}</span></div>
-      <div class="vx-card-footer">${VX.updateIndicator(r.as_of||Date.now(),'Moteur de régimes','delayed')}
+      <div class="vx-card-footer">${VX.updateIndicator(r.ts?r.ts*1000:(r.as_of||null),'Moteur de régimes','delayed')}
       <button class="vx-btn vx-btn-sm vx-btn-ghost vx-right" data-scrollto="pulse">Pouls ↓</button></div>`;
     if(window.VXCharts&&VXCharts.gauge){
       const CO=(window.VXCharts&&VXCharts.colors)||{};
@@ -1372,7 +1372,7 @@ async function loadPulse(scan){
       +'<div class="vx-meta vx-mt3">Régime <b>'+esc(regFr(r.regime)[0])+'</b> · confiance '
       +(conf==null?'n/d':conf+' %')+' · '
       +(allowed?'<span class="vx-pos">nouveau risque autorisé</span>':'<span class="vx-neg">nouveau risque BLOQUÉ</span>')+'</div>'
-      +'<div class="vx-card-footer">'+VX.updateIndicator(r.as_of||Date.now(),'Moteur de régimes','delayed')+'</div>';
+      +'<div class="vx-card-footer">'+VX.updateIndicator(r.ts?r.ts*1000:(r.as_of||null),'Moteur de régimes','delayed')+'</div>';
   }catch(e){
     if($('vx-gauge-trend'))($('vx-gauge-trend')||{}).innerHTML=VX.states.empty('Régime non calculé.');
     if($('vx-regime-rail'))($('vx-regime-rail')||{}).innerHTML=VX.states.error('Positionnement indisponible');
@@ -1835,7 +1835,7 @@ async function loadSession(){
     VXCharts.timelineCard('vx-calendar',{title:'Calendrier & catalyseurs',unit:'événements',
       question:'Quels catalyseurs arrivent '+(CAL_RANGE==='day'?'aujourd’hui':'cette semaine')+' ?',
       controlsHtml:rangeCtl+filtCtl,
-      items,source:'calendrier moteur',timestamp:cal.ts||Date.now(),mode:'delayed',
+      items,source:'calendrier moteur',timestamp:cal.ts?cal.ts*1000:null,mode:'delayed',
       emptyText:CAL_FILTER==='mine'?'Aucun catalyseur sur tes actions dans cet horizon.':'Aucun événement dans cet horizon.'});
     document.querySelectorAll('[data-calf]').forEach(b=>b.addEventListener('click',()=>{
       CAL_FILTER=b.dataset.calf;loadSession();}));

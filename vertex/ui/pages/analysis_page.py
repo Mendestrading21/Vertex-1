@@ -438,7 +438,7 @@ function paintValuation(t,cf){
         {label:'Marge',value:marg,median:sm.median_margin,better:'high',fmt:v=>(+v).toFixed(1)+'%'},
         {label:'Rentab.',value:roe,median:sm.median_roe,better:'high',fmt:v=>(+v).toFixed(0)+'%'},
       ],
-      source:demo?'company (DÉMO)':'company (cache)',timestamp:Date.now(),mode:demo?'fallback':'delayed',
+      source:demo?'company (DÉMO)':'company (cache)',timestamp:null,mode:demo?'fallback':'delayed',
     });
   }
   /* ── Grille Financials premium ── */
@@ -519,7 +519,7 @@ function paintQuadrant(cf,sm,peers,demo){
     question:'Le titre allie-t-il croissance ET rentabilité ?',
     conclusion:(ok(cf.rev_growth)&&ok(cf.roe)&&sm)?((cf.rev_growth*100>=(sm.median_growth||0)&&cf.roe*100>=(sm.median_roe||0))?'Cadran qualité — croissance et rentabilité au-dessus du secteur':'Au moins un axe sous la médiane sectorielle'):'',
     height:320,legend:[{label:SYM,color:cc.brand},{label:'Pairs',color:cc.neutral},{label:'Médiane',color:cc.warning}],
-    source:demo?'company (DÉMO)':'company (cache)',timestamp:Date.now(),mode:'delayed',
+    source:demo?'company (DÉMO)':'company (cache)',timestamp:null,mode:'delayed',
     limits:'X = croissance du CA · Y = ROE (rentabilité des fonds propres)',
     render:function(cv){return VXCharts.mount(cv,cfg);}});
 }
@@ -577,7 +577,7 @@ function paintQuarters(cf,demo){
     conclusion:(function(){const r0=qs[0].rev,r1=qs[qs.length-1].rev;
       return (r0&&r1)?('CA '+(r1>=r0?'en hausse':'en baisse')+' sur '+qs.length+' trimestres'):(qs.length+' trimestres');})(),
     height:300,legend:[{label:'Chiffre d’affaires',color:cc.neutral},{label:'Résultat net',color:cc.positive},{label:'Marge nette',color:cc.brand}],
-    source:demo?'company (DÉMO)':'company (cache)',timestamp:Date.now(),mode:demo?'fallback':'delayed',
+    source:demo?'company (DÉMO)':'company (cache)',timestamp:null,mode:demo?'fallback':'delayed',
     limits:'CA & résultat net par trimestre · marge = résultat/CA',
     explain:{shows:'Le chiffre d’affaires et le résultat net des 8 derniers trimestres, plus la marge nette.',
       why:'La trajectoire trimestrielle révèle l’accélération ou l’essoufflement, invisibles sur un seul point annuel.',
@@ -632,7 +632,7 @@ async function paintProfile(d){
     +`<div class="vx-scorecard-side">${side||'<span class="vx-meta">Métriques de décision indisponibles.</span>'}</div>`
     +(perfHtml?`<div class="vx-scorecard-side" style="grid-column:1/-1"><span class="vx-metric-k" style="display:block;margin-bottom:2px">Performance</span><div class="vx-perfbars">${perfHtml}</div></div>`:'')
     +`</div>`
-    +`<div class="vx-card-footer">${VX.updateIndicator((TICKER&&TICKER.detail&&TICKER.detail.updated)||Date.now(),(window.__vxStatus&&window.__vxStatus.source)||'scan',(window.__vxStatus&&window.__vxStatus.demo)?'fallback':'delayed')}</div>`;
+    +`<div class="vx-card-footer">${VX.updateIndicator((TICKER&&TICKER.detail&&TICKER.detail.updated)||null,(window.__vxStatus&&window.__vxStatus.source)||'scan',(window.__vxStatus&&window.__vxStatus.demo)?'fallback':'delayed')}</div>`;
 }
 
 VX.recentTickers.push(SYM);
@@ -673,7 +673,7 @@ function stCol(state){
   if(/MOYENNE|RETOUR|RANGE|NEUTRE|MIXTE|PRUDEN|DIVERG/.test(s))return cc.warning;
   return cc.neutral;
 }
-function physFoot(src,ts){return '<div class="vx-chart-foot">'+VX.updateIndicator(ts||Date.now(),src,'delayed')+'<span class="vx-meta">estimation moteur — lecture seule</span></div>';}
+function physFoot(src,ts){return '<div class="vx-chart-foot">'+VX.updateIndicator(ts||null,src,'delayed')+'<span class="vx-meta">estimation moteur — lecture seule</span></div>';}
 function paintPhysics(d){
   if(!window.VXCharts||!d)return;
   var cc=VXCharts.colors,v=d.vertex||{},mc=v.mc||{},bs=v.bootstrap||{},kelly=v.kelly||{},ph=d.physics||{},mtf=d.mtf||{};
@@ -688,7 +688,7 @@ function paintPhysics(d){
         title:'Dispersion des rendements — Monte-Carlo & bootstrap',
         question:'Quelle fourchette de rendement l’horizon peut-il produire ?',
         conclusion:(p50!=null?'médian '+VX.fmt.pct(p50):'')+(bs.p_positive!=null?' · '+Math.round(bs.p_positive*100)+'% proba positive':''),
-        unit:'% horizon',height:232,source:'Monte-Carlo 1200 chemins (GBM) · bootstrap blocs',timestamp:d.updated||Date.now(),mode:'delayed',
+        unit:'% horizon',height:232,source:'Monte-Carlo 1200 chemins (GBM) · bootstrap blocs',timestamp:d.updated||null,mode:'delayed',
         limits:'MODEL_ESTIMATE · '+(bs.horizon||mc.days||'?')+' j'+(tp1f!=null?' · TP1 avant stop '+Math.round(tp1f*100)+'% vs stop '+Math.round((stopf||0)*100)+'%':''),
         render:function(cv){return VXCharts.mount(cv,{type:'bar',
           data:{labels:['Pessimiste P05','Médian P50','Optimiste P95'],datasets:[{data:[p05,p50,p95],backgroundColor:[cc.negative,cc.neutral,cc.positive],borderRadius:5,maxBarThickness:46}]},
@@ -1055,7 +1055,7 @@ async function loadDossier(){
       VXCharts.card('an-rsi',{title:SYM+' — RSI (14)',height:118,unit:'RSI',
         question:'Momentum : suracheté (>70) ou survendu (<30) ?',
         conclusion:(d.rsi!=null?('RSI actuel '+VX.fmt.num(d.rsi,0)+(d.rsi>=70?' · suracheté':d.rsi<=30?' · survendu':' · neutre')):''),
-        source:'scan',timestamp:Date.now(),mode:demo?'fallback':'delayed',
+        source:'scan',timestamp:(TICKER&&TICKER.detail&&TICKER.detail.updated)||null,mode:demo?'fallback':'delayed',
         render:function(cv){return VXCharts.mount(cv,{type:'line',
           data:{labels:cut.map((_,i)=>i-cut.length),datasets:[{data:rsi,borderColor:VXCharts.colors.brand,borderWidth:1.5,pointRadius:0,tension:.25,fill:false}]},
           options:{scales:{x:{display:false},y:{min:0,max:100,position:'right',grid:{display:false},border:{display:false},ticks:{stepSize:20,font:{size:10},color:VXCharts.colors.muted,padding:6}}},
@@ -1069,7 +1069,7 @@ async function loadDossier(){
       const volCols=cut.map(function(c,i){return (i>0&&c<cut[i-1])?VXCharts.colors.negative:VXCharts.colors.positive;});
       VXCharts.card('an-volume',{title:SYM+' — Volume',height:96,unit:'titres',
         question:'Le mouvement est-il soutenu par le volume ?',
-        source:'scan',timestamp:Date.now(),mode:demo?'fallback':'delayed',
+        source:'scan',timestamp:(TICKER&&TICKER.detail&&TICKER.detail.updated)||null,mode:demo?'fallback':'delayed',
         render:function(cv){return VXCharts.mount(cv,{type:'bar',
           data:{labels:cut.map((_,i)=>i-cut.length),datasets:[{data:vol,
             backgroundColor:volCols.map(function(c){return (VXCharts.rgba&&VXCharts.rgba(c,.5))||c;}),

@@ -44,9 +44,47 @@ def cal_feed_ep():
     """
     #  La couverture accompagne les evenements : un horizon qui depasse le
     #  calendrier FOMC publie doit se voir, pas se deviner.
-    return jsonify({**cal_state,
+    return jsonify({**cal_state, **_items_dates(cal_state),
                     'macro': macro_calendar.events(horizon_days=120),
                     'macro_couverture': macro_calendar.couverture(horizon_days=120)})
+
+
+def _items_dates(etat: dict) -> dict:
+    """Les items du calendrier, DATÉS à la lecture.
+
+    Mesuré : `cal_cache.json` réhydraté au démarrage gardait un `dte` figé au
+    moment de la collecte (un cache de trois jours annonçait J-10 pour un
+    résultat à J-7) et aucun `ts` avant la première publication ; en démo, les
+    dates synthétiques ne portaient aucun drapeau. Ici : `dte` recalculé depuis
+    `date`, `ts` = époque de publication sinon mtime du cache, `source` et
+    `confirmation` par item — l'écran ne peut plus dire « Confirmé » de lui-même.
+    """
+    import os as _os
+    from datetime import date as _date
+    from vertex.app.config import DEMO_MODE as _demo
+    items = []
+    aujourd_hui = _date.today()
+    for it in (etat.get('items') or []):
+        it = dict(it)
+        try:
+            d = _date.fromisoformat(str(it.get('date') or '')[:10])
+            it['dte'] = (d - aujourd_hui).days
+        except ValueError:
+            it['dte'] = None
+        it['source'] = 'demo' if _demo else 'yfinance'
+        it['confirmation'] = ('synthétique (démonstration)' if _demo
+                              else 'date fournisseur, non confirmée par l’émetteur')
+        items.append(it)
+    ts = etat.get('ts')
+    if not ts:
+        try:
+            racine = _os.path.dirname(_os.path.dirname(_os.path.dirname(
+                _os.path.dirname(_os.path.abspath(__file__)))))
+            ts = _os.path.getmtime(_os.path.join(racine, 'cal_cache.json'))
+        except OSError:
+            ts = None
+    return {'items': items, 'ts': ts, 'source': 'demo' if _demo else 'yfinance',
+            'demo': bool(_demo)}
 
 
 @bp.route('/weekly-feed')

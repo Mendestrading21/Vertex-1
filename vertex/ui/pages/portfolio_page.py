@@ -105,7 +105,7 @@ async function quotesFor(pos){
     //  « mis a jour maintenant » a chaque re-rendu, y compris dix minutes
     //  plus tard sur une charge qui n'avait pas bouge. Un age faux est
     //  pire qu'un age absent — il empeche de se mefier.
-    window.__pfTs=(d.ts!=null?d.ts:Date.now());
+    window.__pfTs=(d.ts!=null?d.ts:null);
     const res=d.results||{};const byId={};
     pos.forEach(t=>{const key=[String(t.sym).toUpperCase(),t.exp||'',
       (t.strike!==null&&t.strike!==undefined)?t.strike:'',

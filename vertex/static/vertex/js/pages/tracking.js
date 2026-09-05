@@ -69,7 +69,7 @@
       title: 'Performance hypothétique depuis le suivi',
       question: 'Chaque idée suivie bat-elle SPY depuis que je l\'ai marquée ?',
       conclusion: pts.length + ' suivi(s) actif(s) — rendements 100 % hypothétiques',
-      height: 240, source: 'SCAN', timestamp: Date.now(), mode: 'delayed',
+      height: 240, source: 'SCAN', timestamp: null, mode: 'delayed',
       limits: 'rendement prix hors frais/dividendes · aucune position réelle',
       legend: [{ label: 'Idée suivie — émeraude = gain / corail = perte', color: positive }, { label: 'SPY (référence)', color: neutral }],
       explain: {

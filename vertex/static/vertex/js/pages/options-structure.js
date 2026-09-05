@@ -219,7 +219,7 @@
     VC.card('vx-os-payoff', {
       title: 'Payoff à l\'échéance — ' + esc(s.label), question: 'Où gagne / perd la structure ?',
       conclusion: concl, unit: 'P&L $ (1 structure)', timeframe: (d.dte != null ? d.dte + ' j' : ''),
-      source: d.demo ? 'multileg_lab (board démo)' : 'multileg_lab (board réel)', timestamp: Date.now(), mode: d.demo ? 'demo' : 'delayed',
+      source: d.demo ? 'multileg_lab (board démo)' : 'multileg_lab (board réel)', timestamp: (d && d.as_of) || null, mode: d.demo ? 'demo' : 'delayed',
       summary: 'Courbe de P&L à l\'échéance selon le cours du sous-jacent ; spot ' + price(m.spot)
         + ', breakeven(s) ' + ((s.breakevens || []).map(function (b) { return nd(b); }).join(', ') || '—')
         + ', perte max ' + price(m.capital) + ', ' + favorable + ' points sur ' + pts.length + ' en zone favorable.',

@@ -743,7 +743,7 @@ async function initResearch(){
         question:'L&#8217;edge tient-il fen&ecirc;tre apr&egrave;s fen&ecirc;tre ?',
         conclusion:VX.fmt.num(v.folds_positive_pct,0)+' % des fen&ecirc;tres positives — verdict '+(v.verdict||'n/d'),
         labels:folds.map((_,i)=>'F'+(i+1)),values:folds,height:190,
-        source:'validateur hors &eacute;chantillon',timestamp:Date.now(),mode:'delayed',
+        source:'validateur hors &eacute;chantillon',timestamp:null,mode:'delayed',
         limits:'indicatif — d&eacute;pend de l&#8217;historique disponible',
         explain:{shows:'Le Sharpe annualis&eacute; recalcul&eacute; sur chaque fen&ecirc;tre temporelle disjointe.',
           why:'Un edge r&eacute;el survit hors de la fen&ecirc;tre o&ugrave; il a &eacute;t&eacute; d&eacute;couvert.',
