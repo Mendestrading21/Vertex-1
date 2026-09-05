@@ -39,7 +39,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | E | Extension à l'inventaire | **partiel** | étiquettes « live » sur preuve de socket (`31305b70`), fraîcheur servie sur 9 pages (`f8d6f150`), calendrier daté et étiqueté ; le reste est consigné dans `VERTEX_DATA_COVERAGE.md` §13 avec priorités |
 | F | Actualités, fondamentaux, macro | **partiel** | macro officielle faite ; SEC bloquée par la configuration (contact humain) ; actualités et fondamentaux inchangés (chaînes existantes documentées) |
 | G | Diagnostics, performances, reprises | **partiel** | registre des jobs (nouveau job avec battement, états ACTIF/SILENCIEUX), reprise espacée du collecteur, cache persisté ; runbook `VERTEX_RUNBOOK.md` |
-| H | Tests finaux et lancement local vérifié | **en cours** | suite complète relancée après chaque tranche (voir §5) ; relance de l'instance de travail avec le code de la nuit + observation de stabilité (voir `VERTEX_FINAL_REPORT.md`) |
+| H | Tests finaux et lancement local vérifié | **fait** | suite complète relancée après chaque tranche (voir §5) ; relance de l'instance de travail avec le code de la nuit + observation de stabilité (voir `VERTEX_FINAL_REPORT.md`) |
 
 ## 3. Décisions
 
@@ -87,7 +87,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | Après la session IBKR | `4376 passed, 180 skipped, 2 failed` → les 2 (population des `except: pass`) corrigés dans la même tranche |
 | Après macro + honnêteté | `4385 passed, 181 skipped, 8 failed` → pins de versions, fingerprint, import orphelin, 3 tests fournisseur (passés au rejeu isolé) corrigés |
 | Après fraîcheur | `4420 passed, 181 skipped, 2 failed` (fingerprint + import orphelin, corrigés dans `fda07e70`) |
-| Final | voir `VERTEX_FINAL_REPORT.md` |
+| Final (après `e5c1a042`) | `4422 passed, 181 skipped, 0 failed` ; CI PR #867 : safety pass, test pass |
 
 Preuves réelles hors suite : socket TWS (session marché seulement),
 collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
