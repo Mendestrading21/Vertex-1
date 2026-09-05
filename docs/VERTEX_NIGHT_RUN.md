@@ -69,7 +69,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
   réseau dans les requêtes UI ; risque du panier ≠ portefeuille ; composants
   jamais alimentés ; SEC (contact humain requis).
 
-## 4. Commits de la nuit (aucun push, aucune fusion)
+## 4. Commits de la nuit (poussés sur la branche dédiée, PR brouillon #867, aucune fusion)
 
 | SHA | Objet |
 |---|---|
