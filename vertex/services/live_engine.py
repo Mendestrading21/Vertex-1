@@ -167,9 +167,14 @@ def _domains():
     # téléchargement daily (yfinance/stooq) même en mode IBKR — le live IBKR
     # alimente l'overlay /quotes et les options. On affiche la vraie chaîne.
     scan_src = st.get('source')
+    #  « temps réel » n'est écrit que sur PREUVE de socket (`ibkr_state.sync`
+    #  pose `ibkr_live` quand un tick récent arrive en type 1) — plus jamais
+    #  depuis le seul drapeau de configuration `ibkr_enabled`.
+    ibkr_live = bool(st.get('ibkr_live'))
     src = ('démo (synthétique)' if _CFG['demo']
-           else ('scan %s + cotations IBKR temps réel' % scan_src) if (_CFG['ibkr_enabled'] and scan_src and scan_src != 'demo')
-           else 'IBKR live (TWS)' if _CFG['ibkr_enabled'] else 'yfinance (delayed ~15 min)')
+           else ('scan %s + cotations IBKR temps réel' % scan_src) if (ibkr_live and scan_src and scan_src != 'demo')
+           else ('scan %s (IBKR configuré, socket sans tick récent)' % scan_src) if (_CFG['ibkr_enabled'] and scan_src and scan_src != 'demo')
+           else 'IBKR configuré — aucune cotation reçue' if _CFG['ibkr_enabled'] else 'yfinance (delayed ~15 min)')
     sources = {
         'prices': src, 'options': ('démo' if _CFG['demo'] else 'chaînes IBKR/yfinance'),
         'companies': 'yfinance + cache hebdo',
@@ -197,7 +202,8 @@ def mode():
         return 'offline'
     if _CFG['demo']:
         return 'demo'
-    return 'live' if _CFG['ibkr_enabled'] else 'delayed'
+    #  Preuve de socket, pas configuration : sans tick récent, c'est du différé.
+    return 'live' if (_CFG['ibkr_enabled'] and st.get('ibkr_live')) else 'delayed'
 
 
 def status():

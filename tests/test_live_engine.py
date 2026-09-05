@@ -34,7 +34,12 @@ def test_mode_reflects_reality():
     assert live_engine.mode() == 'demo'
     _wire(scan={'scan_ts': time.time()}, demo=False, ibkr=False)
     assert live_engine.mode() == 'delayed'
-    _wire(scan={'scan_ts': time.time()}, demo=False, ibkr=True)
+    st = {'scan_ts': time.time()}
+    _wire(scan=st, demo=False, ibkr=True)
+    #  Mission alimentation (2026-09-06) : « live » exige la PREUVE de socket
+    #  (`ibkr_live` posé par ibkr_state.sync), plus le seul drapeau de config.
+    assert live_engine.mode() == 'delayed', 'IBKR configuré sans tick récent = différé'
+    st['ibkr_live'] = True
     assert live_engine.mode() == 'live'
 
 

@@ -492,7 +492,13 @@ def make_blueprint(*, opt_job, ibkr_enabled, cotation_repli=None):
             #  Un marche large rend TOUTE convention de marque incertaine.
             _q['spread_pct'] = (round((_a - _b) / _mid * 100, 2)
                                 if (_mid and _b and _a) else None)
-        return jsonify({'results': out, 'live': bool(ibkr_enabled),
+        #  `live` disait « IBKR configuré » : un P&L sur clôture de la veille
+        #  passait pour du temps réel. Il dit désormais « des cotations IBKR
+        #  récentes ont été servies » (preuve `ibkr_live` posée par ibkr_state).
+        from vertex.app.state import scan_state as _etat_scan
+        return jsonify({'results': out,
+                        'live': bool(ibkr_enabled and _etat_scan.get('ibkr_live')),
+                        'ibkr_configure': bool(ibkr_enabled),
                         'fallback_used': bool(combles), 'ts': int(now),
                         #  Lot 6 — les cles servies depuis un cache au-dela du
                         #  TTL : l'UI peut etiqueter « cote conservee » au lieu

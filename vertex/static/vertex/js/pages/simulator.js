@@ -232,7 +232,9 @@
           ? '<span class="vx2-mono vx2-neg">Non bornée</span>'
           : num(d.max_loss, { unite: 'USD', signe: true, directionnel: true }), 'théorique')
       + metric('Probabilité de gain', num(d.probability_of_profit, { unite: '%', dec: 1 }),
-               'risque-neutre, pas une fréquence observée')
+               d.probability_of_profit == null
+                 ? 'non calculable sans volatilité implicite cotée'
+                 : 'risque-neutre, pas une fréquence observée')
       + '</div>';
 
     var be = (d.breakevens || []);
@@ -392,7 +394,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             legs: [{ type: 'stock', strike: 0, premium: ref, qty: qte }],
-            spot: ref, days: Number(p.dte) || 90, iv: 0.25,
+            //  Aucune IV inventée : sans volatilité cotée, le moteur rend
+            //  probabilité de gain et sensibilités ABSENTES (jamais un chiffre
+            //  fabriqué sur une constante). Le payoff, lui, n'en a pas besoin.
+            spot: ref, days: Number(p.dte) || 90, iv: null,
             sym: p.sym, name: p.sym + ' — position en actions ('
               + (refSource === 'scan' ? 'prix du scan courant' : 'prix saisi')
               + ' : ' + ref + ' $)'
