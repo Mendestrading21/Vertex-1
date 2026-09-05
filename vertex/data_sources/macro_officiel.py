@@ -26,7 +26,7 @@ import csv
 import io
 import json
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from typing import Callable
 
 FRED_CSV = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id={serie}'
