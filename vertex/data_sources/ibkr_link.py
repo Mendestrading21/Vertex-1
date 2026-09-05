@@ -87,6 +87,9 @@ CLIENT_IDS = {
                         # PROPRE, et non un emprunt à « cotations » : le scan
                         # tourne par salves longues, la collision se lirait
                         # comme une panne de cotations sans rapport.
+    'verification': 29, # preuve sur socket réelle (tests/test_ibkr_session_
+                        # marche_seule.py, sur demande) : une session brève,
+                        # jamais partagée avec un consommateur du produit.
 }
 
 MODES = dict(PORTS)

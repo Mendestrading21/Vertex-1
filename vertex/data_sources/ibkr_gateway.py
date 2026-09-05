@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 import threading
 
-from vertex.data_sources import ibkr_link
+from vertex.data_sources import ibkr_link, ibkr_session
 
 
 def classe(nom: str):
@@ -68,11 +68,14 @@ class IbkrGateway:
                 ib = IB()
                 ib.RequestTimeout = REQUEST_TIMEOUT_S
                 try:
-                    # readonly=True EN DUR : cette façade ne peut PAS ouvrir une
-                    # session capable de transmettre des ordres, quels que
-                    # soient les arguments.
-                    ib.connect(self.host, port, clientId=self.client_id,
-                               readonly=True, timeout=REQUEST_TIMEOUT_S)
+                    #  Session « marché seulement » (ibkr_session) : poignée
+                    #  de main client, AUCUNE synchronisation de compte,
+                    #  positions, ordres ni exécutions — `IB.connect` en
+                    #  émettait au premier instant, readonly=True ou non —
+                    #  puis verrouillage des méthodes de compte. readonly=True
+                    #  reste écrit ici, où les gardiens le cherchent.
+                    ibkr_session.connecter(ib, self.host, port, client_id=self.client_id,
+                                           timeout=REQUEST_TIMEOUT_S, readonly=True)
                 except Exception as exc:                       # noqa: BLE001
                     derniere = exc
                     continue

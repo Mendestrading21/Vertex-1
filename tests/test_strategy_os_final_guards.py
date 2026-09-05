@@ -58,7 +58,9 @@ def test_ibkr_readonly():
     for path in _python_sources():
         lines = path.read_text(encoding='utf-8', errors='ignore').splitlines()
         for i, line in enumerate(lines, 1):
-            if '.connect(' in line and ('clientId' in line or 'client_id' in line):
+            #  Depuis la session « marché seulement », la porte canonique est
+            #  `ibkr_session.connecter(` ; `IB.connect(` n'a plus de site.
+            if ('.connect(' in line or '.connecter(' in line) and ('clientId' in line or 'client_id' in line):
                 window = ' '.join(lines[i - 1:i + 2])  # l'appel peut être multi-lignes
                 connect_sites.append((path, i, window))
     for path, i, window in connect_sites:

@@ -49,6 +49,7 @@ from vertex.data_sources import scan_evidence as _scan_evidence
 #  Point UNIQUE de decouverte de TWS : ordre des ports et identifiants de
 #  session. Voir vertex/data_sources/ibkr_link.py pour ce qu'il corrige.
 from vertex.data_sources import ibkr_link as _ibkr_link
+from vertex.data_sources import ibkr_session as _ibkr_session  # noqa: E402
 from vertex.engines import decide as engine
 from vertex.engines import scorecard as ibkr
 from vertex.strategy import legacy_adapter as strategy
@@ -998,9 +999,9 @@ def _ibkr_opt_worker():
         #  reel.
         for port in _ibkr_link.ordre_des_ports():
             try:
-                ib.connect(_ibkr_link.hote(), port,
-                           clientId=_ibkr_link.client_id('options'),
-                           readonly=True, timeout=6)
+                #  Session marché seulement (aucune lecture de compte au connect).
+                _ibkr_session.connecter(ib, _ibkr_link.hote(), port, client_id=_ibkr_link.client_id('options'),
+                                        timeout=6, readonly=True)
                 ib.reqMarketDataType(1)              # temps réel (abonnement actif)
                 _ibkr_link.noter_succes(port, 'options')
                 _optf.noter_connexion(True)
@@ -2140,9 +2141,9 @@ def _ibkr_worker(res):
     #  cash d'un compte et les cotations d'un autre, sans que rien ne le dise.
     for port in _ibkr_link.ordre_des_ports():
         try:
-            r.ib.connect(_ibkr_link.hote(), port,
-                         clientId=_ibkr_link.client_id('compte'),
-                         readonly=True, timeout=2)
+            #  Preuve de socket seulement : session marché, jamais de compte.
+            _ibkr_session.connecter(r.ib, _ibkr_link.hote(), port, client_id=_ibkr_link.client_id('compte'),
+                                    timeout=2, readonly=True)
             r.port = port
             _ibkr_link.noter_succes(port, 'compte')
             break
@@ -2258,9 +2259,8 @@ def _quotes_worker():
             ok = False
             for port in _ibkr_link.ordre_des_ports():
                 try:
-                    ib.connect(_ibkr_link.hote(), port,
-                               clientId=_ibkr_link.client_id('cotations'),
-                               readonly=True, timeout=4)
+                    _ibkr_session.connecter(ib, _ibkr_link.hote(), port, client_id=_ibkr_link.client_id('cotations'),
+                                            timeout=4, readonly=True)
                     _ibkr_link.noter_succes(port, 'cotations')
                     ok = True
                     break
@@ -2407,9 +2407,8 @@ def _indices_loop():
             ok = False
             for port in _ibkr_link.ordre_des_ports():
                 try:
-                    ib.connect(_ibkr_link.hote(), port,
-                               clientId=_ibkr_link.client_id('indices'),
-                               readonly=True, timeout=4)
+                    _ibkr_session.connecter(ib, _ibkr_link.hote(), port, client_id=_ibkr_link.client_id('indices'),
+                                            timeout=4, readonly=True)
                     _ibkr_link.noter_succes(port, 'indices')
                     ok = True
                     break
