@@ -101,7 +101,11 @@ def test_pos_quotes_live_quotes_and_caches():
     body = {'positions': [{'sym': 'AAPL', 'exp': '2026-12', 'strike': 200, 'right': 'C'}]}
     j = c.post('/api/pos-quotes', json=body).get_json()
     key = 'AAPL|2026-12|200|C'
-    assert j['live'] is True and j['results'][key] == {'px': 1.23}
+    #  Mission alimentation (2026-09-06) : `live` = preuve de socket
+    #  (`scan_state['ibkr_live']`), plus la configuration ; ici, sans tick
+    #  récent, la réponse dit « IBKR configuré » mais pas « live ».
+    assert j['live'] is False and j['ibkr_configure'] is True
+    assert j['results'][key] == {'px': 1.23}
     assert calls == [('posq', [key])]
     # 2e appel < TTL → servi du cache, aucun nouveau job IBKR
     j2 = c.post('/api/pos-quotes', json=body).get_json()

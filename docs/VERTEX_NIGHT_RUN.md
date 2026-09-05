@@ -1,4 +1,4 @@
-# VERTEX_NIGHT_RUN — journal de la mission d'alimentation (nuit du 2026-09-05)
+# VERTEX_NIGHT_RUN — journal de la mission d'alimentation (nuit du 2026-09-05 → 06)
 
 Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 
@@ -19,12 +19,11 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
   hors dépôt pour les contrôles de syntaxe. Flask 3 + HTML rendu serveur + JS
   vanilla + CSS custom, `ib_async 2.1.0`, `yfinance`, `pandas`.
 - Processus actifs au début : instance live `python -m vertex` (port 5002,
-  IBKR réel en lecture seule, TWS 7496 ouvert), instance QA (port 5003,
-  sans IBKR) arrêtée à la fin de la mission précédente.
-- Accès réseau depuis cette machine (mesuré par requête HTTP) :
-  FRED CSV public 200, FRED API sans clé 400 (clé requise), BCE data API 200,
-  BNS data API 200, SEC EDGAR 403 sans User-Agent / 200 avec, Stooq : voir
-  `vertex/data_sources/stooq.py` (format d'URL propre).
+  IBKR réel en lecture seule, TWS 7496 ouvert) ; instance QA (port 5003, sans
+  IBKR) relancée à la demande pour les vérifications navigateur.
+- Accès réseau mesurés par requête HTTP : FRED CSV public 200, FRED API sans
+  clé 400 (clé requise), BCE data API 200, BNS data API 200, SEC EDGAR 403
+  sans User-Agent / 200 avec.
 - `.env` ne contient que `VERTEX_CODE` et `VERTEX_SECRET` : pas de clé
   Anthropic, pas de `SEC_USER_AGENT` (la SEC exige un contact réel, à saisir
   par l'humain), pas de secret TradingView, pas de clé FRED.
@@ -33,27 +32,72 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 
 | # | Jalon | État | Preuve |
 |---|---|---|---|
-| A | Inventaire et état de référence (4 audits parallèles en lecture seule) | en cours | rapports fusionnés dans `VERTEX_DATA_COVERAGE.md`, `VERTEX_SOURCE_REGISTRY.md` |
-| B | Choix des sources et architecture minimale | à faire | |
-| C | Connecteur marché sécurisé (IBKR données seulement, requêtes prouvées) | en cours | `vertex/data_sources/ibkr_session.py`, tests |
-| D | Première chaîne source → carte vérifiée | à faire | |
-| E | Extension à l'inventaire | à faire | |
-| F | Actualités, fondamentaux, macro (SEC, FRED, BCE, BNS) | à faire | |
-| G | Diagnostics, performances, reprises | à faire | |
-| H | Tests finaux et lancement local vérifié | à faire | |
+| A | Inventaire et état de référence | **fait** | 3 audits parallèles en lecture seule (pages Piloter/Explorer, pages Gérer/Options/IA/Système, sources + frontière IBKR) ; le 4ᵉ (circuit temps réel) a été interrompu par la limite d'usage et remplacé par une lecture directe (SSE 4 émetteurs, `VX.refresh` par page, registre des jobs). Résultats : `VERTEX_DATA_COVERAGE.md`, `VERTEX_SOURCE_REGISTRY.md` |
+| B | Choix des sources et architecture minimale | **fait** | D1–D3 ci-dessous ; aucun nouveau système d'orchestration |
+| C | Connecteur marché sécurisé (IBKR données seulement, requêtes prouvées) | **fait** | `dfa0247f` — `vertex/data_sources/ibkr_session.py`, 6 sites migrés, doublure + gardien statique + **preuve sur socket réelle TWS** (`VERTEX_TEST_IBKR_LIVE=1`, rôle `verification`, id 29 : aucune position ni valeur de compte détenue) |
+| D | Première chaîne source → carte vérifiée | **fait** | `426c5184` — FRED/BCE/BNS → collecteur 6 h → `/api/macro/officiel` → carte Marchés › Macro « Références officielles », 11/11 séries publiées, vérifiée dans le navigateur, collecte réelle testée (`VERTEX_TEST_RESEAU=1`) |
+| E | Extension à l'inventaire | **partiel** | étiquettes « live » sur preuve de socket (`31305b70`), fraîcheur servie sur 9 pages (`f8d6f150`), calendrier daté et étiqueté ; le reste est consigné dans `VERTEX_DATA_COVERAGE.md` §13 avec priorités |
+| F | Actualités, fondamentaux, macro | **partiel** | macro officielle faite ; SEC bloquée par la configuration (contact humain) ; actualités et fondamentaux inchangés (chaînes existantes documentées) |
+| G | Diagnostics, performances, reprises | **partiel** | registre des jobs (nouveau job avec battement, états ACTIF/SILENCIEUX), reprise espacée du collecteur, cache persisté ; runbook `VERTEX_RUNBOOK.md` |
+| H | Tests finaux et lancement local vérifié | **en cours** | suite complète relancée après chaque tranche (voir §5) ; relance de l'instance de travail avec le code de la nuit + observation de stabilité (voir `VERTEX_FINAL_REPORT.md`) |
 
 ## 3. Décisions
 
 - D1. Pas de nouveau système d'orchestration (ni Docker, ni n8n, ni Prefect) :
   les boucles existantes de `terminal.py` + le registre `vertex/scheduler`
-  + le diffuseur SSE `vertex/services/live_stream.py` sont réutilisés.
+  + le diffuseur SSE `vertex/services/live_stream.py` sont réutilisés ; le
+  nouveau collecteur vit dans le paquet et n'ajoute qu'une ligne de démarrage
+  au monolithe.
 - D2. Frontière IBKR : `ib_async 2.1.0` émet `reqPositions` **sans condition**
   au connect, et `reqAccountUpdates`/`reqAccountUpdatesMulti`/`reqExecutions`
   selon `fetchFields` (défaut ALL). `readonly=True` n'y change rien. La
-  connexion passe donc par une session « marché seulement » qui n'appelle que
-  la couche client (handshake) et verrouille les méthodes de compte.
+  connexion passe par une session « marché seulement » (poignée de main au
+  niveau client) verrouillée par **liste blanche** : tout ce qui n'est pas
+  une méthode de marché lève avant toute requête. `ib_async` n'est pas épinglé
+  à une version exacte dans `requirements.txt` (`>=1.0`) : à décider par
+  l'humain (le comportement au connect dépend de la version).
+- D3. Sources macro : FRED par CSV public (pas de clé), BCE et BNS sans clé ;
+  fréquence déclarée par série, dates de la source, jamais « live ».
+- D4. « Live » n'est écrit que sur preuve de socket (`ibkr_live` posé par
+  `ibkr_state.sync`), plus sur la configuration.
+- D5. Aucune donnée inventée pour compenser une absence : le Simulateur
+  n'envoie plus d'IV constante ; PoP et Greeks deviennent absents.
+- D6. L'heure du navigateur n'est jamais un âge de donnée : les routes datent
+  (`scan_ts_h`, `as_of`, `ts`), le client transmet ou rend « Âge inconnu ».
+- D7. Non traité cette nuit, consigné avec priorité : verdict `ATTENDRE`
+  fabriqué hors scan et trois autorités de décision (programme lot décision) ;
+  réseau dans les requêtes UI ; risque du panier ≠ portefeuille ; composants
+  jamais alimentés ; SEC (contact humain requis).
 
-## 4. Checkpoint de reprise
+## 4. Commits de la nuit (aucun push, aucune fusion)
 
-- Dernier commit : voir `git log --oneline -1` ; état de l'arbre : `git status`.
-- Reprendre au premier jalon « en cours » du tableau ci-dessus.
+| SHA | Objet |
+|---|---|
+| `dfa0247f` | fix(ibkr) : session marché seulement, gardiens, preuve socket |
+| `426c5184` | feat(macro) : FRED/BCE/BNS → carte Marchés, registre des sources, matrice de couverture |
+| `31305b70` | fix(honnêteté) : live sur preuve de socket, Simulateur sans IV inventée |
+| `f8d6f150` | fix(fraîcheur) : scan_ts_h, régime daté, calendrier daté, fin des `Date.now()` |
+| `fda07e70` | chore(assets) : coque vx-shell-4, SW v291, cartes macro Marchés, runbook |
+
+## 5. Tests (résultats exacts)
+
+| Moment | Résultat |
+|---|---|
+| Baseline (fin de la mission précédente) | `4322 passed, 179 skipped, 0 failed` |
+| Après la session IBKR | `4376 passed, 180 skipped, 2 failed` → les 2 (population des `except: pass`) corrigés dans la même tranche |
+| Après macro + honnêteté | `4385 passed, 181 skipped, 8 failed` → pins de versions, fingerprint, import orphelin, 3 tests fournisseur (passés au rejeu isolé) corrigés |
+| Après fraîcheur | `4420 passed, 181 skipped, 2 failed` (fingerprint + import orphelin, corrigés dans `fda07e70`) |
+| Final | voir `VERTEX_FINAL_REPORT.md` |
+
+Preuves réelles hors suite : socket TWS (session marché seulement),
+collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
+
+## 6. Checkpoint de reprise
+
+- Dernier commit : `git log --oneline -1` ; arbre : `git status` (doit être
+  propre hors caches gitignorés).
+- Instance de travail : relancer `python -m vertex` avec TWS ouvert ; vérifier
+  `/healthz` (`ibkr_live`), Système › Jobs (`MACRO_OFFICIEL_REFRESH` ACTIF
+  après la première collecte), Marchés › Macro.
+- Prochaine action si reprise : `VERTEX_DATA_COVERAGE.md` §13, défauts #2 à
+  #9 par ordre de priorité, une tranche par commit.
