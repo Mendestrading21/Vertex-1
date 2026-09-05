@@ -94,6 +94,7 @@ Chaque tranche de la mission est un commit revertible sur
 | Étiquettes « live » et Simulateur sans IV inventée | `31305b70` | oui |
 | Fraîcheur servie (scan_ts_h, régime, calendrier, `Date.now()`) | `f8d6f150` | oui |
 | Honnêteté (verdict hors scan, confirmation du calendrier, entonnoir, hôtes de la fiche) | `240d23b7` | oui (touche `vertex/static` : re-bump requis, voir ci-dessous) |
+| Risque du panier sur les positions déclarées | `08e0a79a` | oui |
 
 Après un revert touchant `vertex/static`, bumper `td-shell-vN`
 (`vertex/app/routes/system.py`), `SHELL_VERSION` (`vertex/ui/shell/__init__.py`)
