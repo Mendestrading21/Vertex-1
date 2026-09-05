@@ -4,8 +4,20 @@
     {
       "name": "vertex",
       "runtimeExecutable": ".venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "vertex"],
+      "runtimeArgs": [
+        "-m",
+        "vertex"
+      ],
       "port": 5002,
+      "autoPort": false
+    },
+    {
+      "name": "vertex-qa",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": [
+        "tools/qa/run_qa_instance.py"
+      ],
+      "port": 5003,
       "autoPort": false
     }
   ]

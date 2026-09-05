@@ -99,7 +99,7 @@ def test_payoff_uses_canonical_engine():
 def test_greeks_always_interpreted_or_insufficient():
     src = _read(JS)
     assert 'function renderGreeks' in src
-    assert 'Insufficient' in src  # greeks non fiables => état honnête
+    assert 'Insuffisant' in src  # greeks non fiables => état honnête, écrit en français (refonte dashboards)
     assert 'par +1 $ du sous-jacent' in src  # interprétation delta en langage clair
     assert 'rosion' in src                   # interprétation theta (érosion de la valeur temps)
 
