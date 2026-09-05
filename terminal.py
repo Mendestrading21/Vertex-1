@@ -2618,6 +2618,11 @@ def _demarrer_les_boucles():
         threading.Thread(target=_weekly_loop, daemon=True).start()
         threading.Thread(target=_fund_loop, daemon=True).start()
         threading.Thread(target=_edge_loop, daemon=True).start()
+        #  Références macro officielles (FRED, BCE, BNS) : collecteur de fond
+        #  propre au paquet (`vertex/services/macro_officiel.py`), rien de
+        #  nouveau dans le monolithe hormis ce démarrage.
+        from vertex.services import macro_officiel as _macro_officiel
+        _macro_officiel.demarrer()
     if IBKR_ENABLED:                                  # pas de TWS sur le cloud → on n'essaie pas
         threading.Thread(target=_quotes_worker, daemon=True).start()
         threading.Thread(target=_indices_loop, daemon=True).start()      # indices/VIX TEMPS RÉEL IBKR (lecture seule)

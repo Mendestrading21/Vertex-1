@@ -102,6 +102,7 @@ BLUEPRINTS: Tuple[Tuple[str, str], ...] = (
     ('vertex.app.routes.system', 'bp'),
     ('vertex.app.routes.live_events', 'bp'),
     ('vertex.app.routes.content', 'bp'),
+    ('vertex.app.routes.macro_api', 'bp'),
 )
 
 #: Les blueprints qui restent chez le monolithe, et POURQUOI. Cette liste n'est

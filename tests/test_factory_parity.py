@@ -86,8 +86,10 @@ def test_le_registre_declare_ce_qui_est_reellement_enregistre(application):
     #  `weekly_api` (chemin du snapshot + carte des resultats).
     #  19 -> 21 : `descriptions_api` (table FR + cache disque) et `ticker_api`
     #  (les deux dernieres routes LEGACY, avec `options_pack`).
-    assert len(factory.BLUEPRINTS) == 21, (
-        'le registre ne compte plus 21 entrees (%d) : si un blueprint a migre '
+    #  21 -> 22 : `macro_api` (références macro officielles FRED/BCE/BNS,
+    #  mission alimentation 2026-09-06), né dans le paquet, sans injection.
+    assert len(factory.BLUEPRINTS) == 22, (
+        'le registre ne compte plus 22 entrees (%d) : si un blueprint a migre '
         'depuis le monolithe, mettre a jour A_INJECTION en meme temps'
         % len(factory.BLUEPRINTS))
 

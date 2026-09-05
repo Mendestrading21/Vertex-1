@@ -33,6 +33,7 @@ qu'une instance `IB` déjà construite.
 """
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import Iterable
 
@@ -126,19 +127,13 @@ def verrouiller(ib):
     for nom in METHODES_INTERDITES:
         setattr(ib, nom, _interdit(nom))
     wrapper = getattr(ib, 'wrapper', None)
-    if wrapper is not None:
-        for attr in ('accounts',):
-            if hasattr(wrapper, attr):
-                try:
-                    setattr(wrapper, attr, [])
-                except Exception:  # noqa: BLE001 — attribut figé : on n'insiste pas
-                    pass
+    if wrapper is not None and hasattr(wrapper, 'accounts'):
+        with contextlib.suppress(Exception):   # attribut figé : on n'insiste pas
+            wrapper.accounts = []
     client = getattr(ib, 'client', None)
     if client is not None and hasattr(client, '_accounts'):
-        try:
+        with contextlib.suppress(Exception):
             client._accounts = []
-        except Exception:  # noqa: BLE001
-            pass
     setattr(ib, _MARQUE, True)
     return ib
 
@@ -191,10 +186,8 @@ def connecter_role(ib, role: str, timeout: float = 4.0,
             connecter(ib, host, port, client_id, timeout, readonly=True)
         except Exception as exc:  # noqa: BLE001 — chaque port est un essai borné
             derniere = exc
-            try:
+            with contextlib.suppress(Exception):
                 ib.client.disconnect()
-            except Exception:  # noqa: BLE001
-                pass
             continue
         ibkr_link.noter_succes(port, role)
         return port

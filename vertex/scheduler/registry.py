@@ -85,6 +85,10 @@ _CANONICAL_4 = (
     #  toutes les 240 s — la dernière boucle cadencée du produit qui
     #  n'avait aucune ligne à l'écran.
     ('MARKET_RADAR_REFRESH', 'Radar marché entier + fil courtier', 240, True),
+    #  AJOUT (mission alimentation 2026-09-06) : références macro OFFICIELLES
+    #  (FRED, BCE, BNS) collectées par `vertex/services/macro_officiel.py`,
+    #  cadence de croisière 6 h (séries quotidiennes ou mensuelles).
+    ('MACRO_OFFICIEL_REFRESH', 'Références macro officielles (FRED, BCE, BNS)', 6 * 3600, True),
     ('PREMARKET_BRIEF', 'Brief pré-marché', None, False),
     ('INTRADAY_BRIEF', 'Brief intraday', None, False),
     ('CLOSE_BRIEF', 'Brief de clôture', None, False),

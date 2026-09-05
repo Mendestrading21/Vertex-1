@@ -95,6 +95,11 @@ _VIEW_CONTENT = {
 """,
     'macro': """
 <div class="vx-kpi-strip vx-mt3" id="vx-mk-macro-kpis" data-max-kpis="4" aria-label="Quatre indicateurs macro clés"></div>
+<section class="vx-card vx-mt4" id="vx-mk-macro-officiel" aria-label="Références macro officielles">
+  <div class="vx-card-header"><span class="vx-card-title">Références officielles — taux, inflation, change</span>
+    <span class="vx-chart-question">Que publient la Fed, la BCE et la BNS, et à quelle date ?</span></div>
+  <div id="vx-mk-macro-officiel-body"><div class="vx-skeleton" style="height:180px"></div></div>
+</section>
 <div class="vx-hero-grid vx-mt4">
   <div id="vx-mk-yield"></div>
   <aside class="vx-insight-rail" style="grid-template-columns:minmax(0,1fr)">
@@ -673,6 +678,58 @@ async function loadMacroRegime(){
     +kv('&gt; MM200',br.above200!=null?br.above200+' %':'—',brCls(br.above200))
     +'</div><div class="vx-card-footer"><span class="vx-meta">Écart risk-on/risk-off du moteur (positif = appétit, négatif = aversion). Aucune valeur inventée.</span></div></section>';
 }
+/* Références macro OFFICIELLES (FRED, BCE, BNS) — instantané du collecteur de
+   fond (/api/macro/officiel). Chaque tuile porte la valeur, l'unité, la DATE
+   D'OBSERVATION chez la source (pas l'heure du clic), la fréquence et la source.
+   Une série en échec dit son erreur ; jamais un zéro. */
+const FREQ_FR={quotidien:'quotidien',mensuel:'mensuel',annuel:'annuel'};
+function dateFrOff(s){
+  const m=/^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(String(s||''));
+  if(!m)return s||'—';
+  return m[3]?(m[3]+'/'+m[2]+'/'+m[1]):(m[2]+'/'+m[1]);
+}
+function ageObs(iso){
+  if(!iso)return null;
+  const d=new Date(iso.length===7?iso+'-01T00:00:00Z':iso.length===10?iso+'T00:00:00Z':iso);
+  return isNaN(d)?null:Math.round((Date.now()-d.getTime())/86400000);
+}
+async function loadMacroOfficiel(){
+  const host=$('vx-mk-macro-officiel-body');if(!host)return;
+  let d=null;
+  try{ d=await VX.fetch('/api/macro/officiel',{ttl:60000}); }
+  catch(e){ host.innerHTML=VX.states.error('Références officielles injoignables ('+esc(e.message)+')'); return; }
+  const series=(d&&d.series)||[];
+  if(!series.length){
+    host.innerHTML=VX.states.empty('Aucune collecte encore effectuée : le collecteur de fond passe toutes les '+(d&&d.cadence_min||360)+' min.',null,{title:'Pas encore collecté'});
+    return;
+  }
+  const zones=['US','Zone euro','Suisse'];
+  const tuile=(s)=>{
+    const absent=s.value==null;
+    const dec=(s.unite==='USD'||s.unite==='CHF')?4:2;   /* change : 4 décimales, taux : 2 */
+    const delta=(!absent&&s.previous!=null)?(s.value-s.previous):null;
+    const dtone=delta==null?'':(delta>0?'pos':delta<0?'neg':'');
+    const meta=absent
+      ? ('indisponible · '+esc(s.error||'aucune observation'))
+      : ('observé le '+dateFrOff(s.observed_at)+' · '+(FREQ_FR[s.frequence]||s.frequence)
+         +(delta!=null?' · '+(delta>0?'+':'')+VX.fmt.num(delta,dec)+' '+esc(s.unite)+' vs '+dateFrOff(s.previous_at):''));
+    return VX.tile.metric({k:s.libelle,v:absent?null:VX.fmt.num(s.value,dec),unit:absent?'':s.unite,tone:absent?'':dtone,meta:meta,kTitle:s.note||''});
+  };
+  let html='';
+  zones.forEach(z=>{
+    const rows=series.filter(s=>s.zone===z);if(!rows.length)return;
+    html+='<div class="vx-meta" style="margin:8px 0 4px;text-transform:uppercase;letter-spacing:.06em">'+esc(z)+'</div>'
+      +'<div class="vx-metricgrid vx-opt-kpis">'+rows.map(tuile).join('')+'</div>';
+  });
+  const src=d.sources||{};
+  const foot='<div class="vx-table-stamp"><span>Sources : '+Object.keys(src).map(k=>'<b>'+esc(k)+'</b>').join(' · ')
+    +'</span><span>'+d.disponibles+'/'+d.total+' séries publiées</span>'
+    +'<span>'+VX.updateIndicator(d.as_of,'collecteur officiel','delayed')+'</span>'
+    +(d.etat&&d.etat.derniere_erreur?'<span class="vx-warn">'+esc(d.etat.derniere_erreur)+'</span>':'')+'</div>'
+    +'<div class="vx-meta vx-mt2">Publications officielles, jamais des cotations : la date affichée est celle de la source. Droits : affichage personnel avec attribution (FRED, BCE, BNS).</div>';
+  host.innerHTML=html+foot;
+}
+if(window.VX&&VX.bus){VX.bus.on('vx:live:market',function(ev){ if(ev&&ev.macro_officiel&&VIEW==='macro'){ VX.fetch.invalidate&&VX.fetch.invalidate('/api/macro/officiel'); loadMacroOfficiel(); } });}
 async function loadMacroCal(){
   try{
     const cal=await VX.fetch('/cal-feed',{ttl:300000});
@@ -983,7 +1040,7 @@ async function boot(){
     }catch(e){}
     if(VIEW==='overview'){loadRegime(scan);loadLeader(scan||{});loadRisk(scan);loadSpyChart(scan);}
     else if(VIEW==='indices'){loadStrip(scan);loadMultiIndex(scan);loadMovers(scan);}
-    else if(VIEW==='macro'){loadMacroKpis(scan);loadMacroRegime();loadYield(scan);loadMacroCal();}
+    else if(VIEW==='macro'){loadMacroKpis(scan);loadMacroRegime();loadYield(scan);loadMacroCal();loadMacroOfficiel();}
     else if(VIEW==='sectors'){loadSectors(scan);}
     else if(VIEW==='breadth'){loadBreadth(scan);}
     else if(VIEW==='volatility'){loadVix(scan);}
