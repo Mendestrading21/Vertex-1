@@ -57,3 +57,29 @@
     color:var(--vx-text-faint)}
   .vx-table-cards .vx-row-actions{opacity:1;grid-column:1/-1;justify-content:flex-start}
 }
+
+/* ── Cellule principale à deux lignes + « Ouvrir » — RESTAURÉS ───────────
+   (commit fcc41cd2, tables.css:34-40). Sans elles, « NVDACALL · 2027-03-19 »
+   se collait sur une ligne dans le scanner LEAPS et les tables de structure. */
+.vx-table-primary{display:flex;flex-direction:column;gap:2px;min-width:0}
+.vx-table-primary>strong{color:var(--vx-text-primary);font-weight:650}
+.vx-table-primary>span{color:var(--vx-text-muted);font-size:11px;
+  overflow:hidden;text-overflow:ellipsis;max-width:320px}
+.vx-row-open{display:inline-flex;align-items:center;gap:5px;color:var(--vx-text-muted);
+  font-size:11px;font-weight:600;white-space:nowrap}
+.vx-row-open::after{content:"›";font-size:16px;line-height:1;color:var(--vx-brand-strong)}
+/* Micro-barre partagée (Qualité, PoP…) : le CHIFFRE porte le sens, la barre
+   n'est qu'un repère (aria-hidden). Une seule définition au lieu de deux
+   blocs inline identiques (options-intel.js / options-symbol.js). */
+.vx-microbar{display:inline-grid;grid-template-columns:44px minmax(3ch,auto);
+  align-items:center;gap:6px}
+.vx-microbar>i{display:block;height:4px;border-radius:99px;background:var(--vx-surface-hover);
+  position:relative;overflow:hidden}
+.vx-microbar>i>b{position:absolute;left:0;top:0;bottom:0;border-radius:99px;
+  background:var(--_tone,var(--vx-brand))}
+.vx-microbar>span{font-family:var(--vx-font-mono);font-variant-numeric:tabular-nums;
+  font-weight:600;text-align:right}
+.vx-microbar[data-tone="pos"]{--_tone:var(--vx-positive)}
+.vx-microbar[data-tone="warn"]{--_tone:var(--vx-warning)}
+.vx-microbar[data-tone="neg"]{--_tone:var(--vx-negative)}
+.vx-microbar[data-tone="opt"]{--_tone:var(--vx-option)}

@@ -70,3 +70,9 @@
 [data-live="frozen"] .vx-live-dot,.vx-live-dot[data-live="frozen"]{background:var(--vx-neutral-chart)}
 [data-live="fallback"] .vx-live-dot,.vx-live-dot[data-live="fallback"]{background:var(--vx-violet)}
 [data-live="offline"] .vx-live-dot,.vx-live-dot[data-live="offline"]{background:var(--vx-negative)}
+
+/* ── `.vx-empty` : état vide court, dans un corps de carte (jamais un texte nu) ──
+   Cette classe n'a jamais eu de règle ; ~20 rendus Options l'émettent pour une
+   absence honnête en une phrase. `VX.states.empty` reste la primitive riche. */
+.vx-empty{padding:var(--vx-s3) var(--vx-s4);color:var(--vx-text-muted);font-size:12.5px;
+  line-height:1.5;border:1px dashed var(--vx-border-soft);border-radius:var(--vx-r-sm)}

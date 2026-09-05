@@ -1560,3 +1560,149 @@ html,body{max-width:100%;overflow-x:clip}
 #vx-content[data-space="analysis"] .vx-scenario-note{
   grid-column:1 / -1;color:var(--vx-smoke);font-size:12px;
 }
+
+/* === 32. Refonte dashboards — la carte d'environnement Options n'avait aucune
+   disposition, et cinq règles transversales manquaient =======================
+   Mesuré au navigateur (instance QA, 1600 px) : la jauge 56/100 flottait seule
+   au centre d'une carte pleine largeur, les cinq dimensions rendaient
+   « Volatilité66 » (libellé et valeur collés, barre invisible) et la couverture
+   partielle « 2/5 dimensions » n'était qu'une note grise. Cause : les règles
+   `.vx-opt-*` vivaient dans `neon-glass.css` (supprimée au lot 24, comme §24).
+   Rapatriées ici en jetons vx2, avec ce que la feuille morte ne savait pas :
+   une dimension NON MESURÉE ne remplit jamais sa barre (absence ≠ zéro). */
+#vx-content .vx-opt-hero-grid{
+  display:grid;grid-template-columns:minmax(200px,240px) minmax(0,1fr);
+  gap:var(--vx2-s5);align-items:center;
+}
+#vx-content .vx-opt-gauge{
+  display:flex;flex-direction:column;gap:var(--vx2-s2);align-items:center;text-align:center;min-width:0;
+}
+#vx-content .vx-opt-gauge .vx-gauge svg{max-width:220px}
+#vx-content .vx-opt-gauge .vx-gauge svg text:first-of-type{font-family:var(--vx-font-mono);font-weight:600}
+#vx-content .vx-opt-coverage{
+  display:flex;flex-wrap:wrap;justify-content:center;gap:var(--vx2-s2);align-items:center;
+}
+#vx-content .vx-opt-dims{display:flex;flex-direction:column;gap:var(--vx2-s2);min-width:0}
+#vx-content .vx-opt-dim{
+  display:grid;grid-template-columns:minmax(120px,150px) minmax(80px,1fr) 4ch minmax(0,1fr);
+  gap:var(--vx2-s3);align-items:center;font-size:12.5px;min-width:0;
+}
+#vx-content .vx-opt-dim-l{color:var(--vx-text-secondary)}
+#vx-content .vx-opt-dim-bar{display:block;width:100%;height:6px;border-radius:var(--vx2-r-pill);
+  background:var(--vx-glass-subtle,rgba(255,255,255,.06));overflow:hidden}
+#vx-content .vx-opt-dim-bar i{display:block;height:100%;border-radius:var(--vx2-r-pill);
+  background:var(--vx-silver)}
+#vx-content .vx-opt-dim-v{text-align:right;color:var(--vx-text-primary);
+  font-family:var(--vx-font-mono);font-variant-numeric:tabular-nums;font-weight:600}
+#vx-content .vx-opt-dim-n{color:var(--vx-smoke);font-size:11.5px;min-width:0;overflow-wrap:anywhere}
+/* Dimension non mesurée : piste pointillée vide, tiret, note explicative. */
+#vx-content .vx-opt-dim[data-state="missing"] .vx-opt-dim-bar{
+  background:none;border:1px dashed var(--vx2-line);height:6px;
+}
+#vx-content .vx-opt-dim[data-state="missing"] .vx-opt-dim-v,
+#vx-content .vx-opt-dim[data-state="missing"] .vx-opt-dim-l{color:var(--vx-text-faint);font-weight:500}
+#vx-content .vx-opt-pulse{
+  display:flex;flex-wrap:wrap;gap:var(--vx2-s2);margin-top:var(--vx2-s4);
+  padding-top:var(--vx2-s3);border-top:1px solid var(--vx2-line-faint);
+}
+#vx-content .vx-opt-chip{font-size:11.5px;padding:4px 9px;color:var(--vx-text-secondary);
+  display:inline-flex;gap:5px;align-items:center;min-height:28px}
+#vx-content .vx-opt-chip b{color:var(--vx-text-primary);font-weight:600;font-family:var(--vx-font-mono)}
+/* Tiroir « Comprendre » : question, preuves, incertitudes, limites. */
+#vx-content .vx-explain h3,.vx-drawer .vx-explain h3{font-size:16px;margin:0 0 var(--vx2-s2)}
+#vx-content .vx-explain h4,.vx-drawer .vx-explain h4{font-size:11px;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--vx-smoke);margin:var(--vx2-s4) 0 6px}
+#vx-content .vx-explain ul,.vx-drawer .vx-explain ul{margin:4px 0;padding-left:18px}
+#vx-content .vx-explain li,.vx-drawer .vx-explain li{margin:4px 0;font-size:13px;line-height:1.45}
+.vx-grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--vx2-s4)}
+#vx-content tr.vx-row-hl td{background:var(--vx-glass-subtle,rgba(255,255,255,.04))}
+/* Le motif « scénario » (§31) sert aussi la vue Structure des Options. */
+#vx-content[data-space="options"] .vx-scenario-grid{
+  display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--vx2-s2);
+}
+#vx-content[data-space="options"] .vx-scenario{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;
+  column-gap:var(--vx2-s3);row-gap:var(--vx2-s1);padding:var(--vx2-s2) var(--vx2-s3);
+  border:1px solid var(--vx2-line-faint);border-radius:var(--vx2-r-control);
+}
+#vx-content[data-space="options"] .vx-scenario-k{font-size:13px;font-weight:650;color:var(--vx-text-primary)}
+#vx-content[data-space="options"] .vx-scenario-v{grid-column:2;grid-row:1;text-align:right;
+  font-variant-numeric:tabular-nums;font-weight:700}
+#vx-content[data-space="options"] .vx-scenario-note{grid-column:1 / -1;color:var(--vx-smoke);font-size:12px}
+/* Bande de KPI de la Vue d'ensemble : six tuiles sur une ligne dès 1100 px. */
+#vx-content .vx-opt-kpis{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+#vx-content .vx-opt-kpis .vx-metric-meta{display:block;margin-top:5px;font-size:11px;
+  color:var(--vx-smoke);line-height:1.35;overflow-wrap:anywhere}
+/* Répartition CALL / PUT : argent = call, violet = put — un type de contrat
+   n'est ni un gain ni une perte ; le vert/rouge reste aux valeurs signées. */
+#vx-content .vx-stackbar--options i[data-side="call"]{background:var(--vx-silver)}
+#vx-content .vx-stackbar--options i[data-side="put"]{background:var(--vx-options)}
+#vx-content .vx-stackbar-legend .vx-swatch--call{background:var(--vx-silver)}
+#vx-content .vx-stackbar-legend .vx-swatch--put{background:var(--vx-options)}
+/* Provenance sous une table : source, heure, population. */
+#vx-content .vx-table-stamp{display:flex;flex-wrap:wrap;gap:var(--vx2-s1) var(--vx2-s3);
+  margin-top:var(--vx2-s2);font-size:11.5px;color:var(--vx-smoke)}
+#vx-content .vx-table-stamp b{color:var(--vx-mist);font-weight:600}
+
+/* Cinq corrections transversales relevées par la critique (toutes pages) :
+   1. libellés de tuile tronqués par ellipse sans accès au texte complet ;
+   2. unités et estampilles en `--vx-text-faint` (≈3:1) sous le seuil AA ;
+   3. halo permanent sur les arcs de jauge (drop-shadow) ;
+   4. anneau de focus concurrent (outline vs box-shadow) clippé par overflow ;
+   5. boutons « sm » à 26 px, sous la cible minimale de 32 px. */
+#vx-content .vx-metric .vx-metric-k{white-space:normal;overflow:visible;text-overflow:clip;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.3}
+#vx-content .vx-metric .vx-metric-u,#vx-content .vx2-th-unit,#vx-content .vx2-stamp,
+#vx-content .vx-sg-lbl{color:var(--vx-smoke)}
+#vx-content .vx-scoregauge .vx-cg-arc,#vx-content .vx-confgauge .vx-cg-arc{filter:none}
+#vx-content .vx-gauge svg path,#vx-content .vx-gauge svg circle{filter:none!important}
+#vx-content :is(a,button,summary,select,input,textarea,[tabindex]):focus-visible{
+  outline:2px solid var(--vx-silver);outline-offset:2px;box-shadow:none;
+}
+#vx-content .vx-table :is(a,button,[tabindex]):focus-visible,
+#vx-content .vx-table tbody tr:focus-visible{outline-offset:-2px}
+#vx-content .vx-btn-sm{min-height:32px}
+#vx-content .vx-btn-icon.vx-btn-sm{width:32px;height:32px}
+
+@media (max-width:1100px){
+  #vx-content .vx-opt-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:900px){
+  #vx-content .vx-opt-hero-grid{grid-template-columns:minmax(0,1fr)}
+  #vx-content .vx-opt-dim{grid-template-columns:minmax(100px,1fr) minmax(70px,1fr) 4ch;
+    row-gap:2px}
+  #vx-content .vx-opt-dim-n{grid-column:1 / -1}
+  #vx-content[data-space="options"] .vx-scenario-grid{grid-template-columns:minmax(0,1fr)}
+  .vx-grid2{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:640px){
+  #vx-content .vx-opt-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+/* Lecture dominante : preuves pour/contre sous la phrase, puces sémantiques
+   (le signe accompagne toujours la couleur) ; ligne de contexte des tuiles. */
+#vx-content .vx-verdict-evidence{list-style:none;margin:var(--vx2-s2) 0 0;padding:0;
+  display:flex;flex-direction:column;gap:4px;font-size:12.5px;color:var(--vx-mist)}
+#vx-content .vx-verdict-evidence li{position:relative;padding-left:16px;line-height:1.4}
+#vx-content .vx-verdict-evidence li::before{position:absolute;left:0;top:0;font-weight:700;
+  font-family:var(--vx-font-mono)}
+#vx-content .vx-verdict-evidence li[data-tone="pos"]::before{content:"+";color:var(--vx-positive)}
+#vx-content .vx-verdict-evidence li[data-tone="neg"]::before{content:"−";color:var(--vx-negative)}
+#vx-content .vx-metric .vx-metric-meta{display:block;margin-top:5px;font-size:11px;
+  color:var(--vx-smoke);line-height:1.35;overflow-wrap:anywhere}
+/* Mesuré à 1025 px : la carte d'environnement (8 col = 490 px) laissait 196 px
+   aux dimensions ; la note tombait dans une colonne de largeur nulle et chaque
+   ligne mesurait 207 px de haut ; à 1281 px (hero 650 px) la note n'avait
+   encore que ~100 px. Sous 1440 px la note passe sous sa ligne ; sous 1180 px
+   le hero et le rail s'empilent (un rail de 237 px n'est pas un rail). */
+@media (max-width:1440px){
+  #vx-content .vx-opt-hero-grid{grid-template-columns:minmax(180px,220px) minmax(0,1fr);gap:var(--vx2-s4)}
+  #vx-content .vx-opt-dim{grid-template-columns:minmax(100px,140px) minmax(60px,1fr) 4ch;row-gap:2px}
+  #vx-content .vx-opt-dim-n{grid-column:1 / -1}
+}
+@media (max-width:1180px){
+  #vx-content .vx-grid > .vx-opt-hero,#vx-content .vx-grid > #vx-opt-verdict{grid-column:span 12}
+}
+/* Rail « Lecture dominante » : l'en-tête badge · confiance · source se replie
+   proprement au lieu de couper « 50 % » en deux. */
+#vx-content .vx-verdict > .vx-flex{flex-wrap:wrap;row-gap:4px}
+#vx-content .vx-verdict .vx-muted{white-space:nowrap}

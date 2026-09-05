@@ -462,11 +462,12 @@
     let valArc = '', needle = '', valColor = C.colors.neutral;
     if (v != null) {
       for (const b of bands) { if (v <= b.to) { valColor = b.color; break; } valColor = b.color; }
-      valArc = `<path d="${arc(ang(min), ang(v))}" stroke="${valColor}" stroke-width="9" fill="none" stroke-linecap="round" style="filter:drop-shadow(0 0 6px ${valColor})"/>`;
+      /* Aucun halo permanent (design system) : l'arc porte sa couleur, pas une lueur. */
+      valArc = `<path d="${arc(ang(min), ang(v))}" stroke="${valColor}" stroke-width="9" fill="none" stroke-linecap="round"/>`;
       const [nx, ny] = pt(ang(v), r);
       // Bille lumineuse blanche (réf. visuelle) : halo teinté → bille blanche → cœur teinté
-      needle = `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="10" fill="${valColor}" opacity=".20"/>`
-        + `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="5.4" fill="#fff" style="filter:drop-shadow(0 0 5px ${valColor})"/>`
+      needle = `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="9" fill="${valColor}" opacity=".16"/>`
+        + `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="5.2" fill="var(--vx-ink,#f5f7fa)"/>`
         + `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="2.3" fill="${valColor}"/>`;
     }
     const disp = v == null ? '—' : (Number.isInteger(v) ? v : (+v).toFixed(1));
@@ -476,7 +477,7 @@
         <svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:230px;display:block;margin:0 auto">
           ${track}${valArc}${needle}
           <text x="${cx}" y="${cy - 20}" text-anchor="middle" fill="${valColor}" font-size="30" font-weight="700" style="font-variant-numeric:tabular-nums">${disp}</text>
-          <text x="${cx}" y="${cy - 3}" text-anchor="middle" fill="var(--vx-text-muted,#817d77)" font-size="10" letter-spacing=".5">${(o.unit || '') + (o.label ? ' · ' + o.label : '')}</text>
+          <text x="${cx}" y="${cy - 3}" text-anchor="middle" fill="var(--vx-text-muted,#828892)" font-size="10" letter-spacing=".5">${(o.unit || '') + (o.label ? ' · ' + o.label : '')}</text>
         </svg>
         ${o.reading ? `<div class="vx-meta" style="text-align:center;margin-top:4px">${o.reading}</div>` : ''}
       </div>`;

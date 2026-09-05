@@ -709,6 +709,20 @@
       fichier de live en entier, comme je l'avais fait d'abord, jetait toute
       cette couche de continuite ; `tests/test_continuity_data.py` l'a dit.  */
   VX.tile = {
+    /* Micro-barre inline (Qualité, PoP…) : le CHIFFRE porte le sens, la barre
+       n'est qu'un repère visuel (aria-hidden). Une définition partagée au lieu
+       des deux blocs inline identiques d'options-intel.js et options-symbol.js.
+       o = {v (0-100), unit, tone ('pos'|'warn'|'neg'|'opt'|''), dec} ; v absent → « — ». */
+    microbar: function (o) {
+      o = o || {};
+      var v = (o.v == null || isNaN(o.v)) ? null : Number(o.v);
+      if (v == null) return '<span class="vx2-absent">—</span>';
+      var w = Math.max(3, Math.min(100, Math.abs(v)));
+      var txt = VX.fmt.num(v, o.dec == null ? 0 : o.dec) + (o.unit ? VX.esc(o.unit) : '');
+      return '<span class="vx-microbar" data-tone="' + _toneAttr(o.tone) + '">'
+        + '<i aria-hidden="true"><b style="width:' + w + '%"></b></i>'
+        + '<span>' + txt + '</span></span>';
+    },
     /* Métrique riche : label (+ title) + valeur (+ unité) (+ chip de comparaison)
        (+ mini-barre 0-100 avec repère médian optionnel). Les options additives
        cmp / mid / kTitle sont OFF par défaut → rétrocompatible. */
@@ -722,9 +736,13 @@
       var bar = (o.bar != null && !absent)
         ? '<div class="vx-metric-bar"><i style="width:' + Math.max(3, Math.min(100, o.bar)) + '%"></i>' + mid + '</div>' : '';
       var kt = o.kTitle ? ' title="' + VX.esc(o.kTitle) + '"' : '';
+      /* `meta` (additif, OFF par défaut) : une ligne de contexte sous la valeur
+         — population, dispersion, bande moteur — pour que le chiffre ne soit
+         jamais nu. Texte échappé : jamais de HTML injecté par un appelant. */
+      var meta = o.meta ? '<span class="vx-metric-meta">' + VX.esc(o.meta) + '</span>' : '';
       return '<div class="vx-metric" data-tone="' + (absent ? '' : _toneAttr(o.tone)) + '">'
         + '<span class="vx-metric-k"' + kt + '>' + VX.esc(o.k) + '</span>'
-        + '<span class="vx-metric-v">' + v + u + '</span>' + cmp + bar + '</div>';
+        + '<span class="vx-metric-v">' + v + u + '</span>' + cmp + bar + meta + '</div>';
     },
     /* Stat à halo : label + valeur (+ sous-légende) (+ extra, ex. sparkline SVG).
        Option additive `vfs` (taille de valeur, px) OFF par défaut → rétrocompatible. */

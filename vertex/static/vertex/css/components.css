@@ -195,3 +195,39 @@
   background:var(--vx-warning-dim)}
 .vx-insight[data-tone="ai"]{border-left-color:var(--vx-violet);
   background:var(--vx-violet-dim)}
+
+/* ── Disclosure, bouclier lecture seule, corps/pied de carte — RESTAURÉS ──
+   Règles présentes au commit fcc41cd2 (components.css:100-122) et perdues
+   ensuite : `<details class="vx-disclosure">` rendait un résumé natif de
+   ~20 px avec son chevron, le bouclier « Suivi uniquement · aucun ordre »
+   était un span nu. `.vx-card-body`/`.vx-card-foot` n'avaient jamais eu de
+   base malgré 20 consommateurs. Cibles tactiles ≥ 44 px sur le résumé. */
+.vx-disclosure{border:1px solid var(--vx-border-soft);border-radius:var(--vx-r-lg);
+  background:var(--vx-surface-1);overflow:hidden;min-width:0}
+.vx-disclosure>summary{display:flex;align-items:center;gap:var(--vx-s2);
+  min-height:44px;padding:0 var(--vx-s4);cursor:pointer;list-style:none;
+  color:var(--vx-text-secondary);font-size:13px;font-weight:600}
+.vx-disclosure>summary::-webkit-details-marker{display:none}
+.vx-disclosure>summary::after{content:"+";margin-left:auto;color:var(--vx-text-muted);
+  font-family:var(--vx-font-mono);font-size:17px;font-weight:500}
+.vx-disclosure[open]>summary{color:var(--vx-text-primary);
+  border-bottom:1px solid var(--vx-border-soft)}
+.vx-disclosure[open]>summary::after{content:"−"}
+.vx-disclosure>summary:hover{background:var(--vx-surface-hover)}
+.vx-disclosure__body{padding:var(--vx-s4);min-width:0}
+.vx-data-ledger{display:flex;align-items:center;gap:var(--vx-s2);flex-wrap:wrap;
+  color:var(--vx-text-muted);font-size:11.5px;line-height:1.45}
+.vx-data-ledger>*+*::before{content:"·";margin-right:var(--vx-s2);color:var(--vx-text-faint)}
+.vx-readonly-shield{display:inline-flex;align-items:center;gap:6px;
+  min-height:28px;padding:3px 9px;border:1px solid var(--vx-border-soft);
+  border-radius:999px;background:var(--vx-surface-2);color:var(--vx-text-secondary);
+  font-size:10.5px;font-weight:600;letter-spacing:.02em;white-space:nowrap}
+.vx-card-body{min-width:0}
+.vx-card-foot{display:flex;align-items:center;gap:var(--vx-s2);flex-wrap:wrap;
+  margin-top:var(--vx-s3);padding-top:var(--vx-s2);
+  border-top:1px solid var(--vx-border-faint);font-size:var(--vx-fs-meta);
+  color:var(--vx-text-muted)}
+/* Mention « données de démonstration » : un mot visible, jamais un fond coloré. */
+.vx-demo-tag{display:inline-flex;align-items:center;font-size:10.5px;font-weight:600;
+  letter-spacing:.04em;color:var(--vx-warning);border:1px solid var(--vx-border-soft);
+  border-radius:999px;padding:2px 8px;margin:0 0 var(--vx-s2)}

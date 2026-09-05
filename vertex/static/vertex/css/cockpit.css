@@ -82,3 +82,9 @@ a.vx-strip-item:hover{box-shadow:var(--vx-glow-copper-soft);border-color:rgba(20
 @media (prefers-reduced-motion:reduce){
   .vx-strip-item,.vx-card{transition:none}
 }
+
+/* ── Rangée de tuiles statistiques — RESTAURÉE (commit fcc41cd2, cockpit.css:50) ──
+   Sans grille, les dix tuiles du positionnement GEX s'empilaient en colonne
+   pleine largeur. */
+.vx-stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));
+  gap:10px;margin:2px 0 12px}

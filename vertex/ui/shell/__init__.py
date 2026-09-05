@@ -7,7 +7,9 @@ le temps de la bascule des routes.
 """
 from __future__ import annotations
 
-SHELL_VERSION = 'vx-shell-2'
+#  vx-shell-3 : refonte dashboards — le bundle CSS (immuable, 1 an) change de
+#  contenu ; sans ce bump un visiteur garderait l'ancienne feuille en cache.
+SHELL_VERSION = 'vx-shell-3'
 
 #: L'ORDRE DE LA CASCADE — un contrat, pas une liste (lot 30). Le bundle
 #: /asset/css/bundle.css concatène ces feuilles dans CET ordre exact :

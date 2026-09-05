@@ -142,7 +142,7 @@
     var be = (s.breakevens && s.breakevens.length) ? s.breakevens.map(function (b) { return nd(b); }).join(' · ') : '—';
     var g = s.greeks || null;
     var cell = function (l, v, cls) { return '<div class="vx-kv"><span class="k">' + l + '</span><span class="v ' + (cls || '') + '">' + v + '</span></div>'; };
-    var fresh = '<span class="vx-freshness" data-state="' + (d.demo ? 'demo' : 'delayed') + '">' + (d.demo ? 'DÉMO' : 'DELAYED') + '</span>';
+    var fresh = '<span class="vx-freshness" data-state="' + (d.demo ? 'demo' : 'delayed') + '">' + (d.demo ? 'Démo' : 'Différé') + '</span>';
     return '<section class="vx-verdict-card vx-card" aria-label="Verdict de la structure">'
       + '<div class="vx-flex vx-wrap" style="justify-content:space-between;align-items:flex-start;gap:10px">'
       + '<div><div class="vx-flex" style="gap:8px;align-items:center"><span class="vx-eyebrow">Verdict</span>' + fresh
@@ -163,8 +163,8 @@
       + cell('Gain probable (+1σ, échéance)', m.gainProb != null ? ((m.gainProb >= 0 ? '+' : '') + price(m.gainProb)) : 'n/d', m.gainProb >= 0 ? 'vx-pos' : 'vx-neg')
       + cell('Gain exceptionnel', typeof m.gainExc === 'number' ? ('+' + price(m.gainExc)) : gmax, 'vx-pos')
       + cell('Breakeven(s)', be)
-      + cell('Delta global', g ? num(g.delta, 1) : 'Insufficient', g ? 'vx-violet' : 'vx-muted')
-      + cell('Theta global', g ? num(g.theta, 2) + ' $/j' : 'Insufficient', g ? 'vx-neg' : 'vx-muted')
+      + cell('Delta global', g ? num(g.delta, 1) : 'Insuffisant', g ? 'vx-violet' : 'vx-muted')
+      + cell('Theta global', g ? num(g.theta, 2) + ' $/j' : 'Insuffisant', g ? 'vx-neg' : 'vx-muted')
       + cell('IV', m.ivDec != null ? num(m.ivDec * 100, 1) + ' %' : 'n/d', m.ivDec != null ? 'vx-violet' : '')
       + '</div>'
       + '<div class="vx-card-foot vx-mt2"><span class="vx-meta">' + esc(s.model_note || '')
@@ -272,7 +272,7 @@
   /* Greeks interprétés (LOT E) — jamais un Greek sans interprétation. */
   function greekRow(label, val, unit, interp, tone) {
     return '<div class="vx-greek"><div class="vx-flex" style="justify-content:space-between"><b>' + label + '</b>'
-      + '<span class="vx-mono ' + (tone || '') + '">' + (val == null ? 'Insufficient' : num(val, 3) + (unit ? ' ' + unit : '')) + '</span></div>'
+      + '<span class="vx-mono ' + (tone || '') + '">' + (val == null ? 'Insuffisant' : num(val, 3) + (unit ? ' ' + unit : '')) + '</span></div>'
       + '<div class="vx-meta">' + esc(interp) + '</div></div>';
   }
   function renderGreeks(s, ivDec) {
@@ -292,7 +292,7 @@
     host.innerHTML = '<div class="vx-greeks">' + lvl1 + '</div>'
       + '<details class="vx-mt2"><summary class="vx-btn vx-btn-sm vx-btn-ghost">Greeks avancés</summary>'
       + '<div class="vx-greeks vx-mt2">' + lvl2 + '</div></details>'
-      + '<div class="vx-card-foot"><span class="vx-meta">Greeks de position (moteur). Agrégés seulement si IV fiable — sinon Insufficient.</span></div>';
+      + '<div class="vx-card-foot"><span class="vx-meta">Greeks de position (moteur). Agrégés seulement si IV fiable — sinon « Insuffisant ».</span></div>';
   }
 
   /* Comparaison de structures (LOT I) — matrice claire, pas un radar. */
