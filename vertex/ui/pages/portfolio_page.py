@@ -130,7 +130,10 @@ function enrich(pos,quotes){
     const value=mark!==null?(isOpt?mark*100*t.qty:mark*t.qty):null;
     const invested=t.cost||0;
     const pl=value!==null&&invested?((value-invested)/invested*100):null;
-    return Object.assign({},t,{mark,underSpot,value,invested,pl,delayed:!!q.delayed});
+    /* P&L latent ABSOLU : la carte « Contribution » l'attendait (t.plAbs) et
+       personne ne le produisait — elle restait vide même avec des marques. */
+    const plAbs=value!==null?(value-invested):null;
+    return Object.assign({},t,{mark,underSpot,value,invested,pl,plAbs,delayed:!!q.delayed});
   });
 }
 /* Trois conventions coexistent chez le courtier lui-meme et ne donnent pas le
@@ -657,12 +660,24 @@ async function renderPositions(){
 }
 
 /* ═══ PERFORMANCE (LOT G — migrée depuis Journal, domicile unique) ═══ */
+function pfEquiteDerivee(closed){
+  const cl=(closed||[]).filter(t=>t&&t.closed&&isFinite(Number(t.cost))&&isFinite(Number(t.exit)))
+    .slice().sort((a,b)=>String(a.closed).localeCompare(String(b.closed)));
+  if(cl.length<2)return [];
+  const base=(E()&&E().capital&&E().capital())||0;
+  let cum=base;const eq=[];
+  cl.forEach(t=>{cum+=Number(t.exit)-Number(t.cost);eq.push({d:t.closed,v:Math.round(cum*100)/100});});
+  return eq;
+}
 function pfTrades(){return (E()?E().journal():[]).filter(e=>(e.result==='WIN'||e.result==='LOSS')&&isFinite(Number(e.pnl)));}
 async function renderPerformance(){
   const pos=E().positions();
   renderSummary(enrich(pos,await quotesFor(pos)));
-  const eq=(E()?E().equity():[])||[];
   const closed=(E()?E().closedPositions():[])||[];
+  /* Équité DÉRIVÉE des clôtures déclarées (exit − coût, cumulé, base = capital
+     déclaré) : le stock `myTradesEquity` n'est alimenté par personne, la courbe
+     restait vide à vie. Même règle que la page Performance. Arithmétique, réel. */
+  const eq=pfEquiteDerivee(closed);
   ($('pf-body')||{}).innerHTML=`
     <div class="vx-insight vx-page-lead vx-mb3" role="note"><b>Performance de portefeuille — domicile unique.</b>
       Courbe cumulée, drawdown, contribution et saisonnalité vivent ici (migrées depuis Journal).
@@ -688,14 +703,14 @@ async function renderPerformance(){
     VXCharts.equityCard('pf-perf-equity',{title:'Courbe d’équité (cumulée)',unit:'$',timeframe:eq.length+' points',
       question:'Le capital progresse-t-il régulièrement ?',
       conclusion:up?'Équité en progression sur la période.':'Équité en retrait sur la période.',
-      labels,values,height:240,source:'clôtures déclarées (myTradesEquity)',timestamp:window.__pfTs||null,mode:'delayed',
+      labels,values,height:240,source:'clôtures déclarées (cumul exit − coût)',timestamp:window.__pfTs||null,mode:'delayed',
       explain:{shows:'La série d’équité issue de tes clôtures de positions.',
         why:'Une méthode saine produit une pente régulière, pas des à-coups.',
         confirm:'Nouveaux plus hauts avec drawdowns contenus.',invalidate:'Série de plus bas d’équité.'}});
     VXCharts.drawdownCard('pf-perf-drawdown',{title:'Drawdown depuis les pics',unit:'%',
       question:'Les pertes de portefeuille restent-elles contrôlées ?',
       conclusion:'Dérivé arithmétiquement de la courbe d’équité.',
-      labels,values,height:240,source:'clôtures déclarées (myTradesEquity)',timestamp:window.__pfTs||null,mode:'delayed',
+      labels,values,height:240,source:'clôtures déclarées (cumul exit − coût)',timestamp:window.__pfTs||null,mode:'delayed',
       limits:'dérivé de la série déclarée — pas un indicateur de marché',
       explain:{shows:'L’écart en % entre l’équité et son dernier pic.',
         why:'La profondeur des drawdowns mesure la discipline de risque réelle.',

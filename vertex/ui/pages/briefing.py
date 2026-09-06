@@ -1130,18 +1130,27 @@ function loadMainChart(scan){
    inventé — produit par market_context sur DEUX sessions réelles). Mesuré au
    navigateur : cette carte restait un squelette perpétuel, personne ne la
    remplissait. Trois états honnêtes : pas de base · rien de notable · liste. ── */
-function loadDiff(scan){
+async function loadDiff(scan){
   const host=$('vx-diff');if(!host)return;
-  const m=((scan||{}).market_ctx)||{};
-  const ch=m.changes_since_prev;
-  if(!Array.isArray(ch)){
-    host.innerHTML=VX.states.empty('Pas de base de comparaison — il faut deux sessions de contexte marché.');
+  /* `scan.market_ctx` est le contexte BRUT du scan : il ne porte jamais de
+     diff. Le propriétaire du « depuis la dernière session » est
+     /api/market/context (moteur market_context + base persistée) — mesuré :
+     la carte restait « pas de base » à vie en lisant le mauvais objet. */
+  let ctx=null;
+  try{ctx=await VX.fetch('/api/market/context',{ttl:120000});}catch(e){}
+  if(!ctx){host.innerHTML=VX.states.error('Contexte marché indisponible.');return;}
+  const ch=ctx.changes_since_prev;
+  const pied=`<div class="vx-card-footer">${VX.updateIndicator(ctx.as_of||null,'market_context',ctx.demo?'demo':'delayed')}</div>`;
+  if(!ctx.changes_base||!Array.isArray(ch)){
+    host.innerHTML=VX.states.empty('Pas de base de comparaison — la première session pose la base, la suivante dira ce qui a changé.')+pied;
     return;}
   if(!ch.length){
-    host.innerHTML=VX.states.empty('Aucun changement notable depuis la dernière session.');
+    /* Un diff vide SUR UNE BASE est un résultat (état positif), pas une absence de donnée. */
+    host.innerHTML='<div class="vx-insight vx-mt1">Aucun changement notable depuis la session précédente'+(ctx.prev_as_of?' ('+VX.esc(String(ctx.prev_as_of))+')':'')+'.</div>'+pied;
     return;}
   host.innerHTML='<ul class="vx-mt1" style="margin:0;padding-left:18px;line-height:1.9">'
-    +ch.slice(0,8).map(c=>'<li>'+VX.esc(String(c))+'</li>').join('')+'</ul>';
+    +ch.slice(0,8).map(c=>'<li>'+VX.esc(String(c))+'</li>').join('')+'</ul>'
+    +(ctx.prev_as_of?`<div class="vx-meta vx-mt1">Comparé au contexte du ${VX.esc(String(ctx.prev_as_of))}</div>`:'')+pied;
 }
 
 /* ── MARCHÉS : indices comparés, rebasés à 0 % (héros 320, col-4) ── */
