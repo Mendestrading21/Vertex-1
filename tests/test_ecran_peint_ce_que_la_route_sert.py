@@ -58,6 +58,7 @@ en vigueur court jusqu'au changement suivant.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -93,9 +94,57 @@ def _extraire(nom: str, src: str) -> str:
     raise AssertionError("fonction %s non refermée" % nom)
 
 
+#: Desk SYNTHÉTIQUE, injecté pour les bancs qui interrogent
+#: `/api/portfolio/context`.
+#:
+#: MESURE DU 2026-09-06, intégration continue : deux bancs de ce fichier
+#: passaient sur le poste de développement et TOMBAIENT en CI. La route lit
+#: `persist.load_json('desk_data.json')`, c'est-à-dire le desk RÉEL de la
+#: machine. Ici il porte des positions déclarées, donc la route rendait un
+#: contexte complet ; sur un exécuteur vierge elle rend son court-circuit
+#: honnête `{'available': False, 'reason': 'aucune position réelle déclarée…'}`,
+#: sans `correlations` ni `hhi_basis`.
+#:
+#: Un banc qui dépend du portefeuille de l'utilisateur ne prouve rien : il lit
+#: des données personnelles, il donne un résultat différent sur chaque machine,
+#: et il masque la régression qu'il prétend surveiller. Il apporte donc son
+#: propre desk.
+_DESK_SYNTHETIQUE = {
+    'data': {
+        'myTrades': json.dumps([
+            {'id': 1, 'sym': 'KO', 'type': 'STK', 'qty': 10, 'cost': 880.70,
+             'entry': 88.07, 'date': '2026-08-01', 'status': 'OPEN'},
+            {'id': 2, 'sym': 'XOM', 'type': 'STK', 'qty': 5, 'cost': 600.00,
+             'entry': 120.00, 'date': '2026-08-01', 'status': 'OPEN'},
+        ]),
+    },
+}
+
+
+@pytest.fixture()
+def desk_declare(monkeypatch):
+    """Fait lire au serveur un desk connu, quel que soit celui de la machine."""
+    from vertex.services import persist
+
+    vrai = persist.load_json
+
+    def _lire(nom, defaut):
+        if nom == 'desk_data.json':
+            return _DESK_SYNTHETIQUE
+        return vrai(nom, defaut)
+
+    monkeypatch.setattr(persist, 'load_json', _lire)
+    return _DESK_SYNTHETIQUE
+
+
 # ══ 1. Corrélations : la cause SERVIE, pas une promesse ═══════════════
-def test_les_deux_routes_servent_une_cause_de_correlation():
-    """La cause existe côté serveur — l'écran n'a rien à inventer."""
+def test_les_deux_routes_servent_une_cause_de_correlation(desk_declare):
+    """La cause existe côté serveur — l'écran n'a rien à inventer.
+
+    Le desk est FOURNI par le banc : la route `context` lit le desk de la
+    machine, et dépendre de celui de l'utilisateur rendrait ce banc vert ici et
+    rouge ailleurs — c'est exactement ce qui s'est produit.
+    """
     os.environ.setdefault("VERTEX_CODE", "")
     from vertex.runtime import app
     c = app.test_client()
@@ -132,8 +181,11 @@ def test_la_heatmap_n_emprunte_plus_l_horloge_des_cotations():
 
 
 # ══ 2. HHI : chaque écran nomme la base de son indice ════════════════
-def test_les_deux_routes_servent_des_bases_de_hhi_differentes():
-    """La contradiction est réelle et mesurée, pas supposée."""
+def test_les_deux_routes_servent_des_bases_de_hhi_differentes(desk_declare):
+    """La contradiction est réelle et mesurée, pas supposée.
+
+    Desk fourni par le banc, pour la même raison que ci-dessus.
+    """
     os.environ.setdefault("VERTEX_CODE", "")
     from vertex.runtime import app
     c = app.test_client()
