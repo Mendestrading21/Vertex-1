@@ -34,6 +34,21 @@ import tempfile
 
 RACINE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+#: Ces deux bancs mesurent LE CHEMIN DE CACHE lui-même — précisément ce que ce
+#: rejeu détourne. Ils tombent donc par construction, et les compter comme des
+#: trouvailles reviendrait à rapporter l'effet de l'outil comme un défaut du
+#: produit. Un détecteur qui s'accuse lui-même n'est pas un détecteur.
+#:
+#: Ils ne sont pas ignorés en silence : ils sont NOMMÉS dans le rapport, avec
+#: leur raison, et leur nombre est vérifié — si l'un disparaît ou si un
+#: troisième apparaît, il faut regarder.
+ATTENDUS = {
+    'tests/test_persist.py::test_cache_path_points_to_repo_root':
+        'vérifie que le cache est sous la racine du dépôt — ce rejeu le déplace exprès',
+    'tests/test_correlations_weekly_parity.py::test_le_chemin_du_snapshot_hebdo_n_a_pas_bouge':
+        'compare le chemin de l’instantané hebdomadaire à la racine — même cause',
+}
+
 
 def main() -> int:
     try:
@@ -59,13 +74,27 @@ def main() -> int:
 
     import pytest
     cibles = sys.argv[1:] or ['tests']
-    code = pytest.main(['-q', '-p', 'no:cacheprovider'] + cibles)
+    #  On DÉSÉLECTIONNE les deux bancs qui mesurent le chemin détourné,
+    #  plutôt que de les laisser tomber puis d'expliquer après coup.
+    exclusions = []
+    for nom in ATTENDUS:
+        exclusions += ['--deselect', nom]
+    code = pytest.main(['-q', '-p', 'no:cacheprovider'] + exclusions + cibles)
     persist._BASE_DIR = reel
-    print('\ncode de sortie : %s' % code)
+
+    print('')
+    print('Écartés par construction — ils mesurent le chemin que ce rejeu détourne :')
+    for nom, raison in ATTENDUS.items():
+        print('  · %s' % nom)
+        print('    %s' % raison)
+    print('')
+    print('code de sortie : %s' % code)
     if code:
         print('Ce qui tombe ici dépend de l’état LOCAL de la machine : le banc '
               'doit apporter ses propres données, pas lire celles de '
               'l’utilisateur.')
+    else:
+        print('Aucun banc ne dépend de l’état local de cette machine.')
     return int(code)
 
 
