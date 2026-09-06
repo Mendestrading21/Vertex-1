@@ -122,8 +122,10 @@ analystes de la fiche visibles.
 (`abd7df10`) : « Ce qui a changé », équité et contribution du Portefeuille alimentés ;
 (`d2722b4c`) : verdict, liquidité, mouvement attendu et scénarios de la vue
 Structure calculés par le serveur.
-Restent : trois autorités de décision (programme lot décision) ; Cerveau Claude qui
-affiche des cotations web non réconciliées ; onglets Options non regroupés.
+(`9327ee42`) : cotations LLM réconciliées avec le prix du scan (Système).
+Restent : trois autorités de décision — contrat écrit
+(`VERTEX_LOT_DECISION_CONTRAT.md`), décision humaine attendue ; onglets
+Options non regroupés.
 
 Une information indisponible n'est pas un succès ; une PR n'est pas un
 déploiement ; une donnée simulée n'est pas une source connectée. Ce bilan les
