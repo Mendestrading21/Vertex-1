@@ -96,6 +96,7 @@ Chaque tranche de la mission est un commit revertible sur
 | Honnêteté (verdict hors scan, confirmation du calendrier, entonnoir, hôtes de la fiche) | `240d23b7` | oui (touche `vertex/static` : re-bump requis, voir ci-dessous) |
 | Risque du panier sur les positions déclarées | `08e0a79a` | oui |
 | Réseau hors requête (analystes, cotations, marque de contrat) | `816e6f73` | oui |
+| Chaîne d'options hors requête | `0b293dc5` | oui (touche `vertex/static` : re-bump requis) |
 
 Après un revert touchant `vertex/static`, bumper `td-shell-vN`
 (`vertex/app/routes/system.py`), `SHELL_VERSION` (`vertex/ui/shell/__init__.py`)
