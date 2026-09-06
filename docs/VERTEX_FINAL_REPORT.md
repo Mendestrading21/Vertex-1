@@ -108,6 +108,18 @@ TradingView (secret absent), Anthropic (clé absente).
    comportement au connect dépend de la version ; la session marché seulement
    protège, mais une version future pourrait déplacer la poignée de main).
 3. Relire et fusionner (ou non) la PR #867.
+4. Lot décision (autorité unique) : valider `VERTEX_LOT_DECISION_CONTRAT.md`
+   (§9) avant tout code moteur.
+5. Onglets Options : le contrat cible sept sous-vues (Vue d'ensemble, Chaîne,
+   Volatilité, Scanner, Scénarios, Positions, Événements) ; la page en sert
+   neuf, chacune son onglet, par décision antérieure explicite (lot 38 :
+   « plus aucune vue orpheline », gardiens `test_options_visual`). Proposition
+   à valider : Radar + Scanner LEAPS → **Scanner** (bascule interne),
+   Structure → **Scénarios** (verdict + scénarios + payoff), Positionnement →
+   **Chaîne** (OI, murs, GEX avec la table), les autres inchangées ; chaque
+   ancienne URL `?view=` redirigée vers son nouvel onglet + ancre. Non
+   implémenté : c'est un choix d'architecture d'information qui inverse une
+   décision documentée.
 
 ## 10. Défauts consignés, non traités cette nuit (par priorité)
 
