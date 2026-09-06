@@ -81,4 +81,60 @@ def factor_exposures(stock: dict, bench_returns: list[float] | None = None) -> d
     capex = stock.get('capex_to_revenue')
     out['INVESTMENT'] = {'value': round(-capex, 3) if capex is not None else None,
                          'note': 'négatif du capex/CA (conservatisme d’investissement)'}
+
+    #  CHAQUE FACTEUR DIT CE QUI LUI MANQUE — mesuré le 2026-09-06.
+    #
+    #  L'unique appelant de production (`engines/portfolio_context`) construit
+    #  `factor_input = {symbole: {'returns': [...]}}` : il ne transmet AUCUNE
+    #  donnée fondamentale. Sur les dix facteurs, seuls MARKET, BETA, MOMENTUM
+    #  et LOW_VOL peuvent donc porter une valeur ; les six autres sont None en
+    #  permanence, et l'appelant traduisait cela par une raison unique et vague,
+    #  « preuve facteur indisponible pour les positions couvertes ».
+    #
+    #  Ce n'est pas faux, c'est INEXPLOITABLE : le lecteur ne peut pas savoir si
+    #  la donnée manque à la source, si elle n'a pas été demandée, ou si le
+    #  calcul a échoué. Le modèle est le seul à savoir ce que chaque facteur
+    #  exige ; il le publie donc, et l'absence cesse d'être une seule couleur.
+    for facteur, entrees in REQUIS.items():
+        item = out.get(facteur)
+        if item is None:
+            continue
+        item['requiert'] = list(entrees)
+        if item['value'] is None and entrees:
+            manquantes = [c for c in entrees if stock.get(c) in (None, '', [])]
+            if manquantes:
+                item['manquant'] = manquantes
+                item['note'] = '%s — entrée(s) absente(s) : %s' % (
+                    item['note'], ', '.join(manquantes))
     return out
+
+
+#: Ce que chaque facteur EXIGE du dictionnaire `stock`. Un facteur sans exigence
+#: (BETA) dépend d'un autre paramètre, nommé dans sa propre note.
+REQUIS = {
+    'MARKET': ('returns',),
+    'BETA': (),
+    'SIZE': ('market_cap',),
+    'VALUE': ('pe', 'pb'),
+    'QUALITY': ('roe', 'margin'),
+    'GROWTH': ('revenue_growth',),
+    'MOMENTUM': ('returns',),
+    'LOW_VOL': ('returns',),
+    'PROFITABILITY': ('margin',),
+    'INVESTMENT': ('capex_to_revenue',),
+}
+
+
+def couverture_entrees(stock: dict) -> dict:
+    """Quelles entrées le dictionnaire `stock` porte-t-il réellement ?
+
+    Rend {entrée: bool} pour toutes les entrées citées par `REQUIS`, plus le
+    compte des facteurs calculables. Sert à un appelant qui veut DIRE, sans
+    deviner, pourquoi une exposition est incomplète.
+    """
+    entrees = sorted({c for cs in REQUIS.values() for c in cs})
+    presentes = {c: stock.get(c) not in (None, '', []) for c in entrees}
+    calculables = [f for f, cs in REQUIS.items()
+                   if not cs or any(presentes.get(c) for c in cs)]
+    return {'entrees': presentes, 'facteurs_calculables': sorted(calculables),
+            'facteurs_totaux': len(REQUIS)}

@@ -11,7 +11,9 @@ note vivait dans `detail['sub']['fundamental']`. `st_timing` était du même
 tonneau : zéro assignation, deux lectures, une note de timing promise et jamais
 servie.
 
-Cet outil croise, sur tout le dépôt :
+Cet outil croise, sur tout le dépôt — `terminal.py` COMPRIS, car c'est le plus
+gros producteur de clés du produit et l'oublier revient à calomnier ses
+consommateurs :
 
 - les clés LUES : `d.get('x')`, `d['x']`, `d.get('x', défaut)`, `'x' in d` ;
 - les clés ÉCRITES : `d['x'] = …`, `{'x': …}`, `dict(x=…)`, `d.setdefault('x',…)`,
@@ -114,22 +116,36 @@ def fichiers(racine: str, ext=('.py',)):
                 yield os.path.join(dossier, n)
 
 
+#: Modules de la RACINE du dépôt. `terminal.py` est le plus gros producteur de
+#: clés du produit (il construit les lignes de tableau du scan) : l'oublier
+#: faisait accuser à tort cinq clés de `opportunities/funnel.py` — mesuré, elles
+#: sont bien posées à terminal.py:669-675. Un détecteur qui ignore le principal
+#: producteur ne détecte pas, il calomnie.
+MODULES_RACINE = ('terminal.py',)
+
+
 def analyser(racines: list[str]) -> dict:
     lues: dict[str, list[tuple[str, int]]] = {}
     ecrites: set[str] = set()
+    a_lire = []
     for racine in racines:
-        for f in fichiers(racine):
-            try:
-                with open(f, encoding='utf-8') as h:
-                    arbre = ast.parse(h.read(), filename=f)
-            except (SyntaxError, UnicodeDecodeError):
-                continue
-            v = _Lecture()
-            v.visit(arbre)
-            ecrites |= v.ecrites
-            rel = os.path.relpath(f, RACINE).replace(os.sep, '/')
-            for cle, ligne in v.lues.items():
-                lues.setdefault(cle, []).append((rel, ligne))
+        a_lire.extend(fichiers(racine))
+    for nom in MODULES_RACINE:
+        chemin = os.path.join(RACINE, nom)
+        if os.path.isfile(chemin):
+            a_lire.append(chemin)
+    for f in a_lire:
+        try:
+            with open(f, encoding='utf-8') as h:
+                arbre = ast.parse(h.read(), filename=f)
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        v = _Lecture()
+        v.visit(arbre)
+        ecrites |= v.ecrites
+        rel = os.path.relpath(f, RACINE).replace(os.sep, '/')
+        for cle, ligne in v.lues.items():
+            lues.setdefault(cle, []).append((rel, ligne))
     return {'lues': lues, 'ecrites': ecrites}
 
 
