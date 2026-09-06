@@ -33,6 +33,7 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 | `e5c1a042` | test desk aligné, journal de nuit | `git revert` |
 | `240d23b7` | honnêteté : verdict hors scan non fabriqué, confirmation du calendrier servie, entonnoir Marchés, hôtes de la fiche Analyse (coque vx-shell-5, SW v292) | `git revert` puis re-bump |
 | `08e0a79a` | risque du panier sur les positions déclarées (`POST /api/risk`), Portefeuille et Opportunités | `git revert` |
+| `816e6f73` | réseau hors requête : analystes (cache + fond), cotations (worker en fond, `en_attente`), marque de contrat depuis le cache, blocs analystes visibles | `git revert` |
 
 ## 4. Pages et champs effectivement couverts
 
@@ -53,13 +54,13 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 
 | Exécution | Résultat |
 |---|---|
-| Suite complète finale (`python -m pytest -q`) | **4422 passed, 181 skipped, 0 failed** (3 min 10 s) ; après la tranche honnêteté : **4435 passed, 180 skipped, 0 failed** ; après la tranche risque du panier : **4442 passed, 180 skipped, 0 failed** |
+| Suite complète finale (`python -m pytest -q`) | **4422 passed, 181 skipped, 0 failed** (3 min 10 s) ; après la tranche honnêteté : **4435 passed, 180 skipped, 0 failed** ; après la tranche risque du panier : **4442 passed, 180 skipped, 0 failed** ; après la tranche réseau hors requête : **4452 passed, 180 skipped, 0 failed** |
 | CI GitHub sur la PR #867 | `safety` pass (12 s), `test` pass (2 min 12 s) |
 | `tests/test_no_orders.py` | 3 passed |
 | `check_ibkr_boundary.py --enforce` (racine entière) | OK, aucun appel sensible |
 | Socket réelle TWS (`VERTEX_TEST_IBKR_LIVE=1`) | 1 passed |
 | Collecte réelle FRED/BCE/BNS (`VERTEX_TEST_RESEAU=1`) | 1 passed (11/11 séries) |
-| Nouveaux tests | `test_ibkr_session_marche_seule` (63), `test_macro_officiel` (12), `test_etiquettes_live_honnetes` (4), `test_fraicheur_serveur` (29), `test_honnetete_verdict_et_calendrier` (12), `test_risque_panier_declare` (7) |
+| Nouveaux tests | `test_ibkr_session_marche_seule` (63), `test_macro_officiel` (12), `test_etiquettes_live_honnetes` (4), `test_fraicheur_serveur` (29), `test_honnetete_verdict_et_calendrier` (12), `test_risque_panier_declare` (7), `test_reseau_hors_requete` (10) |
 
 Tests simulés, contractuels, connexion réelle et observation de fonctionnement
 sont distingués dans chaque fichier (docstring et marqueurs `skipif`).
@@ -110,10 +111,11 @@ Voir `VERTEX_DATA_COVERAGE.md` §13. Traités depuis (commit `240d23b7`) : plus
 aucun verdict fabriqué hors scan (`NON_EVALUE`), niveau de confirmation du
 calendrier servi et affiché tel quel, entonnoir Marchés au vocabulaire du scan,
 `#an-committee`/`#an-catalyst-strip`/`priceDomain` de la fiche Analyse.
-Traité aussi (`08e0a79a`) : risque du panier mesuré sur les positions déclarées.
+Traité aussi (`08e0a79a`) : risque du panier mesuré sur les positions déclarées ;
+(`816e6f73`) : analystes et cotations sans réseau lent dans la requête, blocs
+analystes de la fiche visibles.
 Restent : trois autorités de décision (programme lot décision) ; réseau dans
-les requêtes UI (corrélations, descriptions, analystes, dossier options,
-pos-quotes) ; « Ce qui a changé » et équité portefeuille jamais alimentés ;
+les routes du dossier options (`on_demand.fetch`/`board_with`) ; « Ce qui a changé » et équité portefeuille jamais alimentés ;
 verdict/liquidité calculés dans le JS de la vue Structure ; Cerveau Claude qui
 affiche des cotations web non réconciliées ; onglets Options non regroupés.
 
