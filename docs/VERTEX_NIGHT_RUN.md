@@ -207,5 +207,7 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
   (630 clics) — trois débordements à 390 px trouvés et corrigés
   (`be7a2f2a`), puis 0 problème sur 177 relevés d'affichage et 630 clics ;
   rapport : `VERTEX_AUDIT_CARTES.md`.
+- Instance de travail relancée à 13:59 sur le code final (`68090500`, pid
+  32692) : `status: ok`, `ibkr_live: true` en 50 s.
 - Reprise éventuelle : décisions humaines (`VERTEX_FINAL_REPORT.md` §9),
   dont l'installation du chien de garde en tâche planifiée.
