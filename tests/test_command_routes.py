@@ -101,8 +101,24 @@ def test_command_exposes_unavailable_portfolio_controls_without_changing_decisio
 # ─── /api/portefeuille ───
 
 def test_portefeuille_empty_without_rows(client):
+    """Sans ligne de scan, la route ne CONSTRUIT rien — et le dit.
+
+    Ce banc épinglait `== {}`, c'est-à-dire exactement le défaut : une charge
+    vide dont personne ne peut dire si le portefeuille est vide ou si le calcul
+    n'a pas tourné. Mesuré le 2026-09-06 en exerçant les 184 règles du runtime.
+    Ce qui doit rester vrai, c'est qu'AUCUNE ligne de portefeuille n'est
+    fabriquée ; ce qui change, c'est que l'absence est nommée.
+    """
     scan_state['rows'] = []
-    assert client.get('/api/portefeuille').get_json() == {}
+    charge = client.get('/api/portefeuille').get_json()
+    assert charge.get('disponible') is False, charge
+    assert 'motif' in charge and len(charge['motif']) > 30, charge
+    assert charge.get('read_only') is True
+    #  Le capital demandé revient : l'appelant sait que sa requête a été lue.
+    assert isinstance(charge.get('capital'), int), charge
+    #  Et surtout : rien n'est construit.
+    for interdit in ('positions', 'lignes', 'allocation', 'total'):
+        assert interdit not in charge, (interdit, charge)
 
 
 def test_le_double_de_build_portfolio_SUIT_la_vraie_signature():
