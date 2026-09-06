@@ -43,6 +43,19 @@ comme une réponse.
 | une prose qui contredit sa sortie | la documentation d'une route déclarait `NON_IMPLÉMENTÉ` un canal que la même fonction sert `ACTIF` |
 | une comparaison qui classe par forme | la récence des dépêches comparait des chaînes brutes : le `T` d'une date ISO battait l'espace d'une date courtier, donc l'événement fusionné héritait du plus ANCIEN |
 
+## 2 bis. Les défauts GRAVES fermés
+
+Ceux-là rendaient un chiffre ou un geste faux, pas seulement muet.
+
+| Page ou moteur | Ce qui était faux |
+| --- | --- |
+| Opportunités | le clic sur la matrice secteur × statut appliquait les filtres de la MAUVAISE cellule : « Technology · Radar » filtrait Industrials / Rejetée |
+| Marchés | « Signaux d'achat (univers) » affichait une PART comme un COMPTE — faux d'un facteur cinq |
+| Performance | la barre de contexte annonçait la mauvaise population sur quatre sous-vues sur six : une seule barre servait les six |
+| Moteurs | `decision_packet` servait une CONSTANTE (3.0, la reformulation de la construction de TP3) comme rapport gain/risque, ce qui neutralisait une garde dure de la constitution. Mesuré ensuite sur huit titres : la garde s'allume sur sept |
+| Sources | le verrou de session IBKR ne couvrait que la façade ; le client bas niveau exposait 27 méthodes interdites, dont `reqPositions`, `reqAccountSummary`, `reqExecutions` et `reqPnL` |
+| Positions | le plan de travail franchissait une garde dure au moyen d'une autorisation qu'il s'accordait lui-même |
+
 ## 3. Ce qui a été gagné, en chiffres
 
 | Mesure | Avant | Après |
@@ -54,6 +67,12 @@ comme une réponse.
 | Noms indéfinis dans le paquet | 1 (plantage en attente) | 0 |
 | Cartes-graphiques muettes | 1 exception, 1 carte vide | 0 |
 | Canevas jamais dessinés | 0 | 0 |
+| Suite de tests | 4787 passés, 2 échecs | 5100 passés, 0 échec |
+| Version d'actifs | td-shell-v299 | td-shell-v301 |
+
+Les 313 tests de plus ne sont pas du remplissage : chacun tombe sans son
+correctif, et les contrôleurs adverses l'ont vérifié en remettant l'ancien
+corps en mémoire, dépôt intact.
 
 ## 4. Comment c'est vérifié
 
