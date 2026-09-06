@@ -223,6 +223,57 @@ def collecter(fetch: Callable[[str, str], str],
     return [observer(s, fetch) for s in catalogue]
 
 
+# ── Communiqués officiels (circuit PUBLICATIONS, flux RSS publics) ──────────
+#: (source, libellé, URL). Droits : réutilisation avec attribution (BCE, BNS) ;
+#: seuls titre, lien et date sont conservés — jamais le texte des communiqués.
+COMMUNIQUES: tuple[tuple[str, str, str], ...] = (
+    ('BCE', 'Banque centrale européenne — communiqués de presse',
+     'https://www.ecb.europa.eu/rss/press.html'),
+    ('BNS', 'Banque nationale suisse — communiqués ad hoc',
+     'https://www.snb.ch/public/rss/en/adhoc'),
+)
+COMMUNIQUES_PAR_SOURCE = 12
+
+
+def parser_communiques(xml_text: str, source: str, n: int = COMMUNIQUES_PAR_SOURCE) -> list[dict]:
+    """Flux RSS → [{source, title, link, published_at, received_at}].
+
+    Lecture par le parseur DURCI de `news_plus` (DTD et entités refusés, taille
+    bornée), titres et liens assainis au même point que le fil d'actualités ;
+    `published_at` = date FOURNIE par la source, normalisée (None si illisible),
+    jamais inventée."""
+    from vertex.services import news_plus as _np
+    out = []
+    recu = utc_now_iso()
+    for champs in _np._items_surs(xml_text, n):
+        titre = _np._clean_text(str(champs.get('title') or '').strip())
+        lien = _np._lien_sur(champs.get('link') or '')
+        if not titre or not lien:
+            continue
+        out.append({'source': source, 'title': titre, 'link': lien,
+                    'published_at': _np.horodatage_source(champs.get('pubDate')),
+                    'received_at': recu})
+    return out
+
+
+def collecter_communiques(fetch: Callable[[str, str], str]) -> tuple[list[dict], dict]:
+    """Tous les flux → (communiqués dédupliqués par lien, triés par date
+    décroissante, erreurs par source). Un flux en panne n'emporte pas l'autre."""
+    vus, out, erreurs = set(), [], {}
+    for source, _lib, url in COMMUNIQUES:
+        try:
+            for c in parser_communiques(fetch(url, 'application/rss+xml'), source):
+                if c['link'] in vus:
+                    continue
+                vus.add(c['link'])
+                out.append(c)
+        except Exception as exc:  # noqa: BLE001 — la panne est une donnée
+            erreurs[source] = '%s: %s' % (type(exc).__name__, str(exc)[:160])
+    out.sort(key=lambda c: c.get('published_at') or '', reverse=True)
+    return out, erreurs
+
+
+
 __all__ = ['SerieOfficielle', 'Observation', 'CATALOGUE', 'SOURCES', 'url_de',
            'parser_fred', 'parser_bce', 'parser_bns', 'observer', 'collecter',
-           'utc_now_iso']
+           'utc_now_iso', 'COMMUNIQUES', 'parser_communiques', 'collecter_communiques']

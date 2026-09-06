@@ -33,7 +33,13 @@ _BCE = {'FM/B.U2.EUR.4F.KR.MRR_FR.LEV': 'MRR', 'FM/B.U2.EUR.4F.KR.DFR.LEV': 'DFR
         'ICP/M.U2.N.000000.4.ANR': 'HICP'}
 
 
+_RSS = {'https://www.ecb.europa.eu/rss/press.html': 'bce_press.xml',
+        'https://www.snb.ch/public/rss/en/adhoc': 'bns_adhoc.xml'}
+
+
 def _fetch_fixtures(url, accept):
+    if url in _RSS:
+        return (FIX / _RSS[url]).read_text(encoding='utf-8')
     for s in src.CATALOGUE:
         if src.url_de(s) != url:
             continue

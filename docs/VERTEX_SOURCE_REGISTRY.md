@@ -28,6 +28,17 @@ en test · **DÉCLARATIF** = configuré/affiché sans lecteur · **ABSENT** ·
 | **Anthropic (Claude)** | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` / `VERTEX_AI_MODEL` | — | briefs, copilote, traduction, `web_search` avec citations | — | — | budget interne `gateway.allow` ; facturé | conditions API Anthropic ; positions déclarées seulement sur consentement | à la demande | **RÉEL, non configuré** (clé absente : synthèse déterministe servie, enrichissement « indisponible ») | — |
 | **Portefeuille déclaré** | `desk_data.json` local (gitignoré) | — | positions, capital, journal, alertes, notes | — | — | — | propriété de l'utilisateur ; jamais écrasé par une source externe | à la saisie | **RÉEL, saisie seule** | — |
 
+## Communiqués officiels (P5, 2026-09-06)
+
+| Source | Flux | Droits | Cadence | Test réel |
+|---|---|---|---|---|
+| BCE — communiqués de presse | `https://www.ecb.europa.eu/rss/press.html` (RSS 2.0, ~15 items) | réutilisation avec attribution (site BCE) ; titre, lien, date seulement | avec le collecteur macro (6 h) | 200, fixture `tests/fixtures/macro_officiel/bce_press.xml` |
+| BNS — communiqués ad hoc | `https://www.snb.ch/public/rss/en/adhoc` (RSS, ~35 items ; autres flux publics : `interestRates`, `events`, `exchangeRates`) | réutilisation avec mention de la source ; titre, lien, date seulement | idem | 200, fixture `bns_adhoc.xml` |
+
+Lecture par le parseur durci (DTD/entités refusés, taille bornée), hôtes en
+liste blanche du collecteur, dédoublonnage par lien, date de la source
+normalisée (UTC quand le flux la déclare), affichage Marchés › Macro.
+
 ## Écarts de configuration et de droits relevés
 
 - `IBKR_ACCOUNT_ID` et `IBKR_MARKET_DATA_MODE` sont proposés dans

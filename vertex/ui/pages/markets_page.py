@@ -100,6 +100,11 @@ _VIEW_CONTENT = {
     <span class="vx-chart-question">Que publient la Fed, la BCE et la BNS, et à quelle date ?</span></div>
   <div id="vx-mk-macro-officiel-body"><div class="vx-skeleton" style="height:180px"></div></div>
 </section>
+<section class="vx-card vx-mt3 vx-mk-macro" id="vx-mk-communiques" aria-label="Communiqués officiels">
+  <div class="vx-card-header"><span class="vx-card-title">Communiqués officiels — BCE, BNS</span>
+    <span class="vx-chart-question">Qu'ont publié les banques centrales de la zone euro et de la Suisse ?</span></div>
+  <div id="vx-mk-communiques-body"><div class="vx-skeleton" style="height:120px"></div></div>
+</section>
 <div class="vx-hero-grid vx-mt4">
   <div id="vx-mk-yield"></div>
   <aside class="vx-insight-rail" style="grid-template-columns:minmax(0,1fr)">
@@ -693,11 +698,31 @@ function ageObs(iso){
   const d=new Date(iso.length===7?iso+'-01T00:00:00Z':iso.length===10?iso+'T00:00:00Z':iso);
   return isNaN(d)?null:Math.round((Date.now()-d.getTime())/86400000);
 }
+/* Communiqués officiels (BCE, BNS) : même instantané que les références —
+   titre, lien, date de la source (jamais le texte du communiqué). */
+function paintCommuniques(d){
+  const host=$('vx-mk-communiques-body');if(!host)return;
+  const liste=(d&&d.communiques)||[];const err=(d&&d.communiques_erreurs)||{};
+  if(!liste.length){
+    host.innerHTML=VX.states.empty(Object.keys(err).length?'Flux injoignables : '+Object.keys(err).map(k=>esc(k)+' ('+esc(err[k])+')').join(' · ')
+      :'Aucun communiqué encore collecté : le collecteur de fond passe toutes les '+(d&&d.cadence_min||360)+' min.');
+    return;
+  }
+  host.innerHTML='<ul class="vx-mt1" style="margin:0;padding-left:0;list-style:none">'+liste.slice(0,16).map(c=>
+    '<li class="vx-kv" style="align-items:flex-start;gap:10px"><span class="k" style="flex:0 0 auto"><span class="vx-badge">'+esc(c.source)+'</span> '
+    +'<span class="vx-mono">'+esc(c.published_at?String(c.published_at).slice(0,16).replace("T"," "):"date n/d")+'</span></span>'
+    +'<span class="v" style="text-align:left;white-space:normal"><a href="'+esc(c.link)+'" target="_blank" rel="noopener noreferrer">'+c.title+' ↗</a></span></li>').join('')+'</ul>'
+    +'<div class="vx-table-stamp"><span>'+liste.length+' communiqués · '+(d.communiques_sources||[]).map(x=>'<b>'+esc(x.source)+'</b>').join(' · ')+'</span>'
+    +'<span>'+VX.updateIndicator(d.as_of,'collecteur officiel','delayed')+'</span>'
+    +(Object.keys(err).length?'<span class="vx-warn">'+Object.keys(err).map(k=>esc(k)+' : '+esc(err[k])).join(' · ')+'</span>':'')+'</div>'
+    +'<div class="vx-meta vx-mt2">Dates et titres de la source, réutilisation avec attribution ; le texte des communiqués n’est pas repris.</div>';
+}
 async function loadMacroOfficiel(){
   const host=$('vx-mk-macro-officiel-body');if(!host)return;
   let d=null;
   try{ d=await VX.fetch('/api/macro/officiel',{ttl:60000}); }
   catch(e){ host.innerHTML=VX.states.error('Références officielles injoignables ('+esc(e.message)+')'); return; }
+  paintCommuniques(d);
   const series=(d&&d.series)||[];
   if(!series.length){
     host.innerHTML=VX.states.empty('Aucune collecte encore effectuée : le collecteur de fond passe toutes les '+(d&&d.cadence_min||360)+' min.',null,{title:'Pas encore collecté'});

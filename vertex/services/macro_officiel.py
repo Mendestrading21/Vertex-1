@@ -30,12 +30,14 @@ from vertex.data_sources import macro_officiel as _src
 
 CACHE = 'macro_officiel_cache.json'
 JOB = 'MACRO_OFFICIEL_REFRESH'
-HOTES_AUTORISES = ('fred.stlouisfed.org', 'data-api.ecb.europa.eu', 'data.snb.ch')
+HOTES_AUTORISES = ('fred.stlouisfed.org', 'data-api.ecb.europa.eu', 'data.snb.ch',
+                   'www.ecb.europa.eu', 'www.snb.ch')   # + flux RSS des communiqués
 TAILLE_MAX = 4_000_000     # octets : le cube BNS le plus lourd fait ~0,9 Mo
 TIMEOUT_S = 25
 
 _LOCK = threading.Lock()
 _ETAT: dict = {'as_of': None, 'series': [], 'sources': _src.SOURCES,
+               'communiques': [], 'communiques_erreurs': {},
                'derniere_erreur': None, 'echecs_consecutifs': 0, 'runs': 0,
                'cadence_min': None}
 
@@ -78,12 +80,14 @@ def charger_cache() -> None:
     with _LOCK:
         _ETAT['as_of'] = d.get('as_of')
         _ETAT['series'] = list(d.get('series') or [])
+        _ETAT['communiques'] = list(d.get('communiques') or [])
         _ETAT['restaure_depuis_cache'] = True
 
 
 def _sauver() -> None:
     with _LOCK:
-        d = {'as_of': _ETAT['as_of'], 'series': _ETAT['series']}
+        d = {'as_of': _ETAT['as_of'], 'series': _ETAT['series'],
+             'communiques': _ETAT.get('communiques') or []}
     chemin = os.path.join(_racine(), CACHE)
     tmp = chemin + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as fh:
@@ -99,9 +103,15 @@ def collecter_une_fois(fetch=None) -> dict:
     series = [o.to_dict() for o in obs]
     erreurs = [o for o in obs if o.error]
     ok = len(erreurs) < len(obs)          # au moins une série a répondu
+    #  Communiqués (RSS) : même passage, même cadence ; une panne y est une
+    #  donnée par source et ne touche pas les séries.
+    communiques, comm_err = _src.collecter_communiques(fetch or _fetch)
     with _LOCK:
         _ETAT['as_of'] = _src.utc_now_iso()
         _ETAT['series'] = series
+        if communiques or not _ETAT.get('communiques'):
+            _ETAT['communiques'] = communiques[:2 * _src.COMMUNIQUES_PAR_SOURCE]
+        _ETAT['communiques_erreurs'] = comm_err
         _ETAT['runs'] += 1
         _ETAT['restaure_depuis_cache'] = False
         _ETAT['derniere_erreur'] = ('%d/%d séries en échec : %s' % (
@@ -138,6 +148,8 @@ def snapshot() -> dict:
     """Instantané borné pour l'API : jamais de collecte réseau ici."""
     with _LOCK:
         series = list(_ETAT['series'])
+        communiques = list(_ETAT.get('communiques') or [])
+        comm_err = dict(_ETAT.get('communiques_erreurs') or {})
         as_of = _ETAT['as_of']
         etat = {k: _ETAT.get(k) for k in ('derniere_erreur', 'echecs_consecutifs', 'runs',
                                           'restaure_depuis_cache')}
@@ -150,7 +162,9 @@ def snapshot() -> dict:
     return {'as_of': as_of, 'age_s': age_s, 'cadence_min': cadence_min(),
             'series': series, 'sources': _src.SOURCES,
             'disponibles': sum(1 for s in series if s.get('value') is not None),
-            'total': len(_src.CATALOGUE), 'etat': etat, 'read_only': True}
+            'total': len(_src.CATALOGUE), 'etat': etat, 'read_only': True,
+            'communiques': communiques, 'communiques_erreurs': comm_err,
+            'communiques_sources': [{'source': s, 'libelle': l, 'url': u} for s, l, u in _src.COMMUNIQUES]}
 
 
 def boucle() -> None:
