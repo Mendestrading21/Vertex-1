@@ -45,7 +45,7 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 | `99c5c1fa` | P3 : procédure de maintenance de l'alimentation dans le skill maître | `git revert` |
 | `e0649f98` | P4 : gardiens navigateur réels (Chromium, sonde, base QA), débordement Système et contraste Aujourd'hui corrigés (coque vx-shell-9, SW v296) | `git revert` puis re-bump ; Chromium reste dans le cache utilisateur |
 | `c90daa19` | P5 : communiqués officiels BCE/BNS (RSS) → carte Marchés › Macro ; sonde navigateur durcie | `git revert` |
-| `852af488` | chien de garde local (non installé), job CI `navigateur` | `git revert` |
+| (commit suivant) | chien de garde local (non installé), job CI `navigateur` en proposition (`docs/propositions/`) | `git revert` |
 
 ## 4. Pages et champs effectivement couverts
 
@@ -139,7 +139,10 @@ TradingView (secret absent), Anthropic (clé absente).
 5. Chien de garde local : `tools/ops/veille_vertex.ps1` existe et est testé ;
    l'inscrire en tâche planifiée (runbook §1) est ta décision — ce dépôt ne
    modifie pas la configuration de l'ordinateur.
-6. Onglets Options : le contrat cible sept sous-vues (Vue d'ensemble, Chaîne,
+6. Job CI `navigateur` : à copier depuis `docs/propositions/ci_navigateur_job.yml`
+   dans `.github/workflows/ci.yml` (le jeton de la session n'a pas le droit
+   `workflow`).
+7. Onglets Options : le contrat cible sept sous-vues (Vue d'ensemble, Chaîne,
    Volatilité, Scanner, Scénarios, Positions, Événements) ; la page en sert
    neuf, chacune son onglet, par décision antérieure explicite (lot 38 :
    « plus aucune vue orpheline », gardiens `test_options_visual`). Proposition

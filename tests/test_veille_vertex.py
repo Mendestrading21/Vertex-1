@@ -36,9 +36,12 @@ def test_le_runbook_le_documente():
     assert 'veille_vertex.ps1' in rb and 'décision humaine' in rb
 
 
-def test_la_ci_fait_mesurer_les_gardiens_navigateur():
-    with open(os.path.join(_ROOT, '.github', 'workflows', 'ci.yml'), encoding='utf-8') as f:
-        ci = f.read()
-    assert 'navigateur:' in ci and 'playwright install --with-deps chromium' in ci
-    assert 'VERTEX_MESURE_BASE: http://127.0.0.1:5003' in ci
-    assert 'run_qa_instance.py --port 5003' in ci
+def test_la_proposition_de_job_ci_navigateur_est_complete():
+    """Le jeton de la session n'a pas le droit `workflow` : le job est livré
+    en proposition (docs/propositions/), ci.yml reste inchangé jusqu'à ce que
+    l'humain l'applique."""
+    with open(os.path.join(_ROOT, 'docs', 'propositions', 'ci_navigateur_job.yml'), encoding='utf-8') as f:
+        prop = f.read()
+    assert 'navigateur:' in prop and 'playwright install --with-deps chromium' in prop
+    assert 'VERTEX_MESURE_BASE: http://127.0.0.1:5003' in prop
+    assert 'run_qa_instance.py --port 5003' in prop
