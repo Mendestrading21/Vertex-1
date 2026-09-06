@@ -222,9 +222,33 @@ def enrich_option(p: dict, quote: dict | None, underlying_quote: dict | None = N
         issues.append('VEGA_SIGN_INCONSISTENT')
 
     # Divergence broker/modèle (§12)
+    #
+    #  CE CONTRÔLE CROISÉ NE S'EXÉCUTE PAS, et il faut le DIRE plutôt que de
+    #  laisser son silence passer pour un accord. Mesuré le 2026-09-06 par
+    #  balayage des lectures et des écritures du dépôt : `broker_delta` et
+    #  `model_delta` ne sont écrits nulle part en production — seul
+    #  `tests/test_position_intelligence.py` les fabrique. Le producteur réel
+    #  (`recalculator`) construit `{'source': 'BROKER_GREEKS', 'delta', 'gamma',
+    #  'theta', 'vega'}` : un seul jeu de Greeks, celui du courtier.
+    #
+    #  Conséquence : `BROKER_MODEL_GREEK_DIVERGENCE` n'a jamais pu s'allumer.
+    #  Une garde muette se lit comme une garde satisfaite — c'est exactement
+    #  l'inverse. La couverture est donc publiée à côté du verdict (invariant 6),
+    #  et le jour où les deux deltas seront servis, la comparaison reprend sans
+    #  rien changer d'autre.
     bd, md = g.get('broker_delta'), g.get('model_delta')
-    if bd is not None and md is not None and abs(bd - md) >= 0.12:
-        issues.append('BROKER_MODEL_GREEK_DIVERGENCE')
+    if bd is not None and md is not None:
+        p['data_quality']['divergence_greeks'] = {
+            'evaluee': True, 'ecart_delta': round(abs(bd - md), 4), 'seuil': 0.12}
+        if abs(bd - md) >= 0.12:
+            issues.append('BROKER_MODEL_GREEK_DIVERGENCE')
+    else:
+        manquants = [n for n, v in (('broker_delta', bd), ('model_delta', md)) if v is None]
+        p['data_quality']['divergence_greeks'] = {
+            'evaluee': False, 'manquants': manquants,
+            'motif': 'un seul jeu de Greeks est servi (%s) : la comparaison '
+                     'broker/modèle n’a pas été exécutée'
+                     % (p.get('greeks_source') or 'UNAVAILABLE')}
 
     #  UNE SYNTHÈSE QUI CONTREDIT SON PROPRE DÉTAIL. Mesuré sur une option à
     #  échéance illisible avec marque 6,00 : `overall: 'OK'`,
