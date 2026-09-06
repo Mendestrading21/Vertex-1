@@ -191,6 +191,155 @@ function enrich(pos,quotes){
     return Object.assign({},t,{mark,underSpot,value,invested,pl,plAbs,delayed:VX.quotes.differee(q)});
   });
 }
+/* ── DEUX TIRETS MUETS, MESURÉS LE 06/09/2026 ─────────────────────────────
+   Les deux KPI ci-dessous rendaient « — » sans jamais dire POURQUOI, si bien
+   qu'« aucun risque » et « je ne sais pas » s'écrivaient pareil. Les deux
+   fonctions sont PURES (aucun accès réseau, aucun DOM) : le banc les exécute
+   avec des entrées synthétiques et prouve chaque branche.
+
+   1. Risque événementiel (/portfolio?view=options). Le test lisait
+      `t.entrySnap.earnings_dte` — un champ qu'AUCUN producteur n'écrit : le
+      formulaire de déclaration pose `entrySnap {stop, tgt, date}`
+      (vx-entities.js:545) et rien d'autre. Le KPI valait donc `false` par
+      construction et affichait « — » sur 100 % des portefeuilles, avec un
+      sous-titre « earnings par position ci-dessous » qui promettait une
+      colonne absente du tableau (en-têtes mesurés : Contrat, Qté, Coût,
+      Marque, P&L, DTE, Stop sous-jacent).
+
+      CONTRÔLE ADVERSE DU 06/09/2026 — la première réparation a remplacé ce
+      champ mort par une LECTURE de /api/positions/state (`days_to_earnings`),
+      supposée servir la date. Mesure : elle ne la sert pas pour un CONTRAT.
+      `days_to_earnings` naît à `None` dans models.option_position (ligne 216)
+      et n'a qu'un seul écrivain dans tout le dépôt — calculator.py ligne 50,
+      À L'INTÉRIEUR de `enrich_stock` (lignes 15-53) ; `enrich_option`
+      (111-268) ne l'écrit jamais. Mesuré en appelant `recalculate_all` sur un
+      desk AAPL {1 CALL + 10 actions} avec un scan qui publie
+      `earnings_dte: 5` : l'ACTION reçoit `days_to_earnings 5`, le CONTRAT
+      reçoit `None`. Sur l'instance QA, 2 contrats sur 2 : `None`.
+      Le champ mort avait donc été remplacé par une lecture morte.
+
+      Et cette lecture n'était pas gratuite : `/api/positions/state` fait
+      coter TOUT le desk par le worker `posq` (positions_api.py `_quotes`,
+      `timeout=45`), sur un panier DIFFÉRENT de celui de /api/pos-quotes déjà
+      demandé ici — donc hors du memo de 15 s, donc un SECOND aller-retour
+      courtier ajouté au rendu de cette vue. Le « ~10 ms » certifié par la
+      première réparation a été relevé sous NO_IBKR=1, c'est-à-dire dans la
+      seule configuration où `_quotes` rend `{}` d'emblée (le fichier le dit
+      lui-même, positions_api.py lignes 103-108) ; le coût mesuré par ce même
+      fichier avec IBKR actif est « 27 s puis 19 s sur une seule page ».
+      L'aller-retour est donc retiré, et la capacité nommée pour ce qu'elle
+      est : NON_IMPLÉMENTÉE côté producteur.
+
+   2. Bêta (/portfolio?view=risk). `risk.beta` valait `null` et le KPI rendait
+      « — · pondéré ». La MÊME réponse /api/portfolio/team sert pourtant
+      `risk.beta_coverage` — mesuré ce jour :
+      {known_positions:0, total_positions:1, coverage_pct:0.0,
+       missing_symbols:['KO'], partial:true} — que la page n'a jamais lue.
+      Un bêta absent parce que le titre n'en déclare pas n'est pas un bêta
+      absent parce qu'aucune position n'est déclarée.
+
+   Aucun chiffre n'est inventé : ces fonctions ne font que NOMMER l'état de la
+   donnée servie. */
+
+/* Chevauchement résultats × durée de vie du contrat. `contrats` : liste de
+   {dte, earningsDte} déjà extraite du serveur (aucune estimation locale).
+   Convention alignée sur engines/earnings_option_overlap : des résultats
+   tombent dans la vie du contrat si earningsDte <= dte. */
+function pfEtatEvenementiel(contrats){
+  const list=Array.isArray(contrats)?contrats:[];
+  if(!list.length)return{valeur:'n/d',sous:'aucun contrat ouvert',cls:'vx-muted'};
+  /* Le producteur ne publie AUCUNE date de résultats pour un contrat (mesuré :
+     `enrich_option` n'écrit jamais `days_to_earnings`). « Le calendrier n'est
+     pas encore arrivé » serait une automatisation en attente ; ce n'en est pas
+     une, c'est une capacité qui n'existe pas. */
+  if(list.some(c=>c&&c.nonPublie))
+    return{valeur:'NON_IMPLÉMENTÉ',
+           sous:`aucune date de résultats publiée par contrat (${list.length} ouvert(s))`,
+           cls:'vx-muted'};
+  if(list.some(c=>c&&c.indisponible))
+    return{valeur:'non mesuré',sous:'état des positions injoignable — échéances non lues',cls:'vx-muted'};
+  const connus=list.filter(c=>c&&c.earningsDte!=null);
+  const inconnus=list.length-connus.length;
+  const manque=inconnus?` · ${inconnus} contrat(s) sans date de résultats`:'';
+  if(!connus.length)
+    return{valeur:'date inconnue',
+           sous:`calendrier de résultats non servi pour ${list.length} contrat(s)`,
+           cls:'vx-muted'};
+  const couvrants=connus.filter(c=>c.dte!=null&&c.earningsDte<=c.dte);
+  if(couvrants.length){
+    const plus=Math.min.apply(null,couvrants.map(c=>c.earningsDte));
+    return{valeur:'à vérifier',
+           sous:`${couvrants.length} contrat(s) couvrant des résultats · au plus tôt dans ${plus} j${manque}`,
+           cls:'vx-warn'};
+  }
+  return{valeur:'aucun chevauchement',
+         sous:`résultats connus hors de la vie des contrats${manque}`,
+         cls:'vx-muted'};
+}
+
+/* HHI : même faute que le Bêta, mesurée le 06/09/2026 sur une instance QA
+   dont le compartiment actions est vide (`weights` = {KO: 0.0, _CASH: 100.0},
+   `invested_pct` 0.0). Le moteur rend alors `hhi: null` — et le KPI affichait
+   « — » SOUS un sous-titre qui décrit la base du calcul (« compartiment
+   actions, poids renormalisés à 100 % »), c'est-à-dire qui affirme une
+   méthode pour un calcul qui n'a pas eu lieu. La base n'a de sens qu'avec un
+   indice ; sans lui, c'est la CAUSE qu'il faut servir. */
+function pfEtatHhi(hhi,base,poids){
+  if(hhi!=null)
+    return{valeur:hhi,sous:base?('indice · '+base):'indice · base non servie'};
+  const p=poids||{};
+  const actions=Object.keys(p).filter(k=>k!=='_CASH');
+  const investies=actions.filter(k=>+p[k]>0);
+  if(!actions.length)
+    return{valeur:'n/d',sous:'aucune position action déclarée — indice non défini'};
+  if(!investies.length)
+    return{valeur:'n/d',
+           sous:`aucune position action valorisée (${actions.length} titre(s) à poids nul) — indice non défini`};
+  return{valeur:'n/d',sous:'indice non servi par le moteur de risque'};
+}
+
+/* Drawdown portefeuille — MÊME FAUTE, MÊME INSTRUCTION, laissée intacte par la
+   première réparation : `_rk('Drawdown', … 'n/d', 'pic')`. Le sous-titre récite
+   la BASE d'un calcul qui n'a pas lieu, exactement le défaut nommé pour le HHI
+   deux lignes plus haut.
+
+   Mesuré le 06/09/2026 sur le payload EXACT que cette page envoie
+   (`{positions, option_positions, cash, simulated}`) : la réponse rend
+   `drawdown_pct: null`. Ce n'est pas une donnée en retard : la page n'envoie
+   JAMAIS `peak_equity`, et `PortfolioSnapshot.drawdown_pct` (models.py ligne
+   66-70) rend None sans pic. L'absence est donc structurelle et à 100 % des
+   rendus — et sa cause est connue de l'appelant lui-même, qui sait ce qu'il a
+   transmis. `recalculator.py` la nomme déjà côté serveur (« trésorerie et pic
+   d'équité non déclarés ») ; l'écran, lui, disait « pic ». */
+function pfEtatDrawdown(dd,picTransmis){
+  if(dd!=null)return{valeur:dd+' %',sous:'depuis le pic d’équité déclaré',cls:'vx-muted'};
+  if(!picTransmis)
+    return{valeur:'n/d',
+           sous:'pic d’équité non déclaré — le drawdown portefeuille n’est pas évaluable',
+           cls:'vx-muted'};
+  return{valeur:'n/d',sous:'drawdown non servi par le moteur de risque',cls:'vx-muted'};
+}
+
+/* Bêta pondéré : la valeur ET sa couverture, toutes deux servies par
+   risk_engine.portfolio_risk. */
+function pfEtatBeta(beta,couverture){
+  const c=couverture||null;
+  if(beta!=null){
+    if(c&&c.partial&&(c.missing_symbols||[]).length)
+      return{valeur:beta,
+             sous:`pondéré · partiel : ${c.known_positions}/${c.total_positions} titre(s) — sans bêta : ${(c.missing_symbols||[]).join(', ')}`,
+             cls:'vx-warn'};
+    return{valeur:beta,
+           sous:c?`pondéré · ${c.known_positions}/${c.total_positions} titre(s)`:'pondéré',
+           cls:'vx-muted'};
+  }
+  if(!c)return{valeur:'n/d',sous:'couverture bêta non servie par le moteur',cls:'vx-muted'};
+  if(!c.total_positions)
+    return{valeur:'n/d',sous:'aucune position action déclarée',cls:'vx-muted'};
+  return{valeur:'n/d',
+         sous:`incalculable — bêta non déclaré pour ${(c.missing_symbols||[]).join(', ')||c.total_positions+' titre(s)'}`,
+         cls:'vx-muted'};
+}
 /* Trois conventions coexistent chez le courtier lui-meme et ne donnent pas le
    meme chiffre. Le libelle dit LAQUELLE a servi — sans lui, un prix affiche est
    un chiffre sans origine, et un ecart avec le releve du courtier reste
@@ -917,6 +1066,15 @@ async function renderOptions(){
   const gDelta=(og&&og.delta!=null)?((og.delta>0?'+':'')+VX.fmt.num(og.delta,0)):'n/d';
   const gTheta=(og&&og.theta!=null)?(VX.fmt.num(og.theta,0)+' $/j'):'n/d';
   const gVega=(og&&og.vega!=null)?('vega '+VX.fmt.num(og.vega,0)+' $/pt'):(og?'chaîne à charger':'IBKR requis');
+  /* Échéances de résultats : AUCUN aller-retour. Rien à lire — mesuré, cf. le
+     bloc « CONTRÔLE ADVERSE » plus haut : aucun producteur n'écrit
+     `days_to_earnings` sur un contrat, et la route qui le porterait fait coter
+     tout le desk par le worker `posq`. Le jour où `enrich_option` publiera la
+     date, le banc `test_le_desk_ne_publie_pas_la_date_de_resultats_d_un_contrat`
+     tombera : c'est là qu'il faudra rebrancher la lecture, et les branches
+     « à vérifier » / « aucun chevauchement » de la fonction, déjà écrites et
+     déjà gardées, redeviendront atteignables. */
+  const ev=pfEtatEvenementiel(rich.map(()=>({nonPublie:true})));
   /* CONTAMINATION CROISÉE, mesurée : renderOptions appelle quotesFor(opts) PUIS
      quotesFor(pos) — les deux écrivent les MÊMES globales, si bien que
      `window.__pfFallback` reflétait ici le repli de TOUT le portefeuille. Une
@@ -938,7 +1096,7 @@ async function renderOptions(){
       ${H('DTE moyen',dteAvg!==null?dteAvg+' j':'n/d','constitution : 60-270, préf. 90-210')}
       ${H('Delta total',gDelta,gCov,(og&&og.delta>0)?'vx-pos':(og&&og.delta<0)?'vx-neg':'')}
       ${H('Theta quotidien',gTheta,gVega,(og&&og.theta<0)?'vx-neg':'')}
-      ${H('Risque événementiel',rich.some(t=>t.entrySnap&&t.entrySnap.earnings_dte!=null)?'à vérifier':'—','earnings par position ci-dessous')}
+      ${H('Risque événementiel',ev.valeur,ev.sous,ev.cls)}
     </div>
     <section class="vx-card vx-mb3" aria-label="Allocation du capital options">
       <div class="vx-chart-head"><span class="vx-chart-title">Capital engagé par contrat</span>
@@ -953,6 +1111,13 @@ async function renderOptions(){
     <div class="vx-table-wrap vx-table-cards"><table class="vx-table"><thead><tr>
       <th>Contrat</th><th class="vx-num">Qté</th><th class="vx-num">Coût</th><th class="vx-num">Marque</th>
       <th class="vx-num">P&L</th><th class="vx-num">DTE</th><th>Stop sous-jacent</th><th></th></tr></thead><tbody>
+    ${/* STOP SOUS-JACENT : deux tirets muets relevés dans le DOM le 06/09/2026,
+         sur 2 lignes sur 2 — dans la colonne même dont l'en-tête a été lu plus
+         haut pour prouver qu'aucune colonne « earnings » n'existait. `VX.fmt.nd`
+         rend « — » sans cause, si bien qu'un stop NON DÉCLARÉ (le seul cas
+         possible ici : `option_position` ne lit que `entrySnap.stop`) s'écrit
+         comme une donnée perdue. Un stop manquant se corrige par une
+         déclaration ; encore faut-il que l'écran le demande. */''}
     ${rich.map(t=>{
       const dte=t.exp?Math.round((new Date(t.exp)-Date.now())/86400000):null;
       return `<tr>
@@ -963,7 +1128,9 @@ async function renderOptions(){
       <td data-label="Marque" class="vx-num">${t.mark!==null?VX.fmt.price(t.mark):'n/d'}${marqueNote(t)}</td>
       <td data-label="P&L" class="vx-num ${t.pl>0?'vx-pos':t.pl<0?'vx-neg':''}">${t.pl!==null?VX.fmt.pct(t.pl,1):'n/d'}</td>
       <td data-label="DTE" class="vx-num ${dte!==null&&dte<=7?'vx-warn':''}">${dte!==null?dte+' j':'—'}</td>
-      <td data-label="Stop">${VX.fmt.nd(t.entrySnap&&t.entrySnap.stop)}</td>
+      <td data-label="Stop">${(t.entrySnap&&t.entrySnap.stop!=null)
+        ?VX.fmt.nd(t.entrySnap.stop)
+        :'<span class="vx-muted">non déclaré</span>'}</td>
       <td><div class="vx-row-actions">
         <button class="vx-btn vx-btn-sm vx-btn-primary" data-opt-analyze="${t.id}">Analyser</button>
         <button class="vx-btn vx-btn-icon vx-btn-ghost" data-position-menu="${t.id}" aria-label="Actions position ${t.sym}">⋯</button>
@@ -1233,11 +1400,12 @@ async function renderRisk(){
       var _rk=function(l,v,d,cls){return '<div class="vx-card vx-card--compact vx-kpi vx-col-3"><span class="vx-kpi-label">'+l+'</span><span class="vx-kpi-value" style="font-size:22px">'+(v==null?'—':v)+'</span>'+(d?'<span class="vx-kpi-delta '+(cls||'vx-muted')+'">'+d+'</span>':'')+'</div>';};
       var _rh=$('pf-risk-kpis');
       if(_rh)_rh.innerHTML=
-        _rk('HHI',risk.hhi!=null?risk.hhi:'—',
-            esc(risk.hhi_basis?'indice · '+risk.hhi_basis:'indice · base non servie'),
-            (_hhi!=null&&_hhi>=66)?'vx-neg':'')
-        +_rk('Bêta',risk.beta!=null?risk.beta:'—','pondéré')
-        +_rk('Drawdown',(risk.drawdown_pct!=null)?(risk.drawdown_pct+' %'):'n/d','pic')
+        (function(){var h=pfEtatHhi(risk.hhi,risk.hhi_basis,risk.weights);
+            return _rk('HHI',h.valeur,esc(h.sous),(_hhi!=null&&_hhi>=66)?'vx-neg':'');})()
+        +(function(){var b=pfEtatBeta(risk.beta,risk.beta_coverage);
+            return _rk('Bêta',b.valeur,esc(b.sous),b.cls);})()
+        +(function(){var dw=pfEtatDrawdown(risk.drawdown_pct,payload.peak_equity!=null);
+            return _rk('Drawdown',dw.valeur,esc(dw.sous),dw.cls);})()
         +_rk('Pire scénario',_worst!=null?VX.fmt.pct(_worst,1):'—','stress',(_worst!=null&&_worst<0)?'vx-neg':'');
       /* Barres de poids par position (risk.weights réel + cash + surpondérations) —
          remplit la synthèse et rend la concentration lisible d'un coup d'œil. */

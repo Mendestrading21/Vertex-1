@@ -117,12 +117,37 @@ def test_force_event_wakes_loops():
 
 
 def test_partial_refresh_forces_real_cycles_outside_demo():
+    """Hors démo, `refresh` POSE réellement le signal, et sa phrase suit sa mesure.
+
+    CONTRÔLE ADVERSE — ce gardien avait cessé de garder. Il cherchait la
+    sous-chaîne `'forcé'`; depuis que le rapport nomme l'absence d'exécutant, la
+    ligne servie sur un processus sans boucle est « signal posé, mais aucune
+    boucle news n'a signalé qu'elle écoute … : rien ne sera **forcé** tant
+    qu'elle ne tourne pas ». Mesuré : `'forcé' in action` valait `True` sur les
+    DEUX domaines et sur la phrase qui NIE le forçage — l'assertion passait quel
+    que soit le comportement, donc elle ne mesurait plus rien.
+
+    Ce qu'elle mesure maintenant, en propriété et non en sous-chaîne : le fait
+    durable (l'événement est posé) et la cohérence entre la promesse et
+    l'exécutant observé. Elle tombe dans les deux sens — si le rapport promet
+    « cycle forcé » sans exécutant (le défaut d'origine), et s'il refuse de
+    l'annoncer alors qu'une boucle attend.
+    """
     _wire(scan={'scan_ts': time.time()}, demo=False, ibkr=False)
     live_engine.force_event('news').clear()
     live_engine.force_event('calendar').clear()
     out = live_engine.refresh(['news', 'calendar'])
-    acts = {l['domain']: l['action'] for l in out['report']['lines']}
-    assert 'forcé' in acts['news'] and 'forcé' in acts['calendar']
+    lignes = {l['domain']: l for l in out['report']['lines']}
+    for domaine in ('news', 'calendar'):
+        ligne = lignes[domaine]
+        promet = 'cycle forcé' in ligne['action']
+        observe = ligne['executant'] == 'boucle_a_l_ecoute'
+        assert promet is observe, (
+            '%s : le rapport %s un cycle forcé alors que l\'exécutant mesuré est '
+            '%r — action=%r' % (domaine, 'promet' if promet else 'refuse d\'annoncer',
+                                ligne['executant'], ligne['action']))
+    #  Le fait durable, lui, ne dépend d'aucun exécutant : hors démo le signal
+    #  EST posé. C'est ce que ce test gardait à l'origine, et il le garde encore.
     assert live_engine.force_event('news').is_set()
     assert live_engine.force_event('calendar').is_set()
 

@@ -169,6 +169,41 @@ _VIEW_CONTENT = {
     <span class="vx-dim" style="font-size:12px">configur&eacute; &ne; connect&eacute; &middot; jamais LIVE sans preuve</span></div>
   <div id="vx-conn-summary-body">%%LOADING%%</div>
 </section>
+<style id="vx-sys-kpis-css">
+/*  LA BANDE DE CONFIANCE ANNONCE QUATRE TUILES ET N'EN DIMENSIONNAIT AUCUNE.
+
+    Mesure (Chromium, instance de mesure, 6 sept. 2026, service worker
+    neutralise pour lire la feuille REELLEMENT servie) : `.vx-kpi-strip` est
+    une grille de DOUZE colonnes (`vertex-2-0.css` §21) et ses tuiles doivent
+    donc porter une classe de portee. Celles-ci, produites par `_kp()`, n'en
+    portaient aucune : chacune occupait UNE colonne sur douze.
+
+        largeur   tuile   elements en debordement horizontal
+        1920 px    68 px   11
+        1600 px    52 px   14
+        1440 px    44 px   16
+        1280 px    37 px   16
+
+    « 8/8 », « operationnels », « aucun ordre » sortaient de leur boite : les
+    quatre indicateurs de confiance de la page de verite etaient illisibles
+    sur toute la plage bureau. En dessous de 1025 px la coque reduit deja la
+    grille et le defaut disparaissait — il ne se voyait qu'au grand ecran.
+
+    La bande sait combien de tuiles elle porte : `data-max-kpis="4"`. On lui
+    donne QUATRE colonnes, deux dans la bande 1025-1279 px ou la colonne
+    hote est trop etroite pour quatre, et deux en mobile — la ou la feuille
+    partagee les mettait deja. La regle est scopee a cet identifiant : aucune
+    autre bande du produit ne bouge. La cause commune (des tuiles sans portee
+    dans une grille a douze colonnes) reste a traiter chez son proprietaire,
+    la feuille partagee.  */
+#vx-content #vx-sys-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (min-width:1025px) and (max-width:1279px){
+  #vx-content #vx-sys-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:720px){
+  #vx-content #vx-sys-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+</style>
 <div class="vx-hero-grid vx-mt4">
   <div class="vx-kpi-strip" id="vx-sys-kpis" data-max-kpis="4" aria-label="Quatre indicateurs de confiance"><div class="vx-skeleton" style="height:70px"></div></div>
   <aside class="vx-insight-rail" aria-label="Santé du système">
@@ -781,14 +816,84 @@ async function loadConnections(){
 
   /* Stockage & santé */
   if(hz){
-    const ok=hz.ok!==false&&(hz.status==='ok'||hz.ok===true||hz.status===undefined);
-    ($('vx-conn-store-badge')||{}).innerHTML=statusBadge(ok?'live':'offline',ok?'sain':'dégradé');
+    /*  « OK » PAR DEFAUT SUR LA PAGE DE VERITE.
+
+        La ligne testait :
+
+            hz.ok!==false && (hz.status==='ok' || hz.ok===true
+                              || hz.status===undefined)
+
+        Le dernier terme declare SAIN un corps qui ne dit RIEN de sa sante.
+        Mesure (Chromium, `/healthz` intercepte sur l'instance de mesure,
+        6 sept. 2026, service worker neutralise) :
+
+            corps servi              badge     ligne « Sante serveur »
+            {}                       sain      OK          <- faux
+            {"build":"X"}            sain      OK          <- faux
+            {"status":"degraded"}    degrade   degrade     <- juste
+            {"ok":false}             degrade   degrade     <- juste
+
+        Le defaut n'est donc pas la panne : c'est le SILENCE. Un serveur qui
+        ne se prononce pas etait compte comme un serveur qui va bien, sur
+        l'ecran meme ou l'utilisateur vient verifier que le reste ne ment pas.
+        L'invariant separe absence, zero et erreur ; il les separe ici aussi.
+
+        Trois etats, tous DERIVES de ce que le corps dit :
+          sain      il l'affirme (`status:'ok'`, ou `ok:true` sans `status`) ;
+          degrade   il l'affirme (`ok:false`, ou un `status` autre que 'ok') ;
+          non dit   il n'affirme rien — Vertex ne conclut pas a sa place.
+        `ok:false` prime sur `status` : un corps qui se contredit est traite
+        par son affirmation la plus defavorable, jamais par la plus flatteuse.
+
+        DEUX BORDS MESURES APRES COUP (Chromium, /healthz intercepte, 6 sept.
+        2026), ou ce partage disait encore quelque chose de faux :
+
+            corps servi     rendu precedent
+            {"status":""}   « degrade — code serveur :  »   <- verdict sans preuve
+            {"ok":0}        « ne porte ni status ni ok »    <- il porte `ok`
+
+        Un `status` vide n'AFFIRME rien : le compter comme une degradation est
+        l'erreur symetrique de celle qu'on corrige ici, et la ligne affichait
+        un « code serveur » vide — une accusation sans piece. Il rejoint le
+        silence. Et l'explication du silence ne NIE plus une cle presente : elle
+        montre ce que le corps portait vraiment.  */
+    const _st=(hz.status===undefined||hz.status===null)?'':String(hz.status).trim();
+    const _sante=(hz.ok===false)?'degrade'
+      :(_st?(_st.toLowerCase()==='ok'?'sain':'degrade')
+           :(hz.ok===true?'sain':'inconnu'));
+    /*  Ce que le corps portait REELLEMENT parmi les deux cles de verdict. */
+    const _vues=['status','ok'].filter(function(k){
+      return Object.prototype.hasOwnProperty.call(hz,k);});
+    const _detail=_vues.map(function(k){
+      return k+'='+JSON.stringify(hz[k]);}).join(', ');
+    const _b={sain:['live','sain'],degrade:['offline','dégradé'],
+              inconnu:['frozen','état non rapporté']}[_sante];
+    ($('vx-conn-store-badge')||{}).innerHTML=statusBadge(_b[0],_b[1]);
+    const _ligne={
+      sain:'<span class="vx-pos">OK</span> <span class="vx-meta">&mdash; rapport&eacute; par /healthz</span>',
+      /*  Le code montre l'affirmation QUI A DECIDE, pas la premiere trouvee :
+          sur un corps contradictoire (`status:'ok'` + `ok:false`) afficher
+          « code serveur : ok » a cote de « degrade » donnait un badge et une
+          preuve qui se contredisent a l'ecran. */
+      degrade:'<span class="vx-neg">d&eacute;grad&eacute;</span> <span class="vx-meta">&mdash; code serveur&nbsp;: '
+        +esc(hz.ok===false?'ok=false':_st)+'</span>',
+      inconnu:'<span class="vx-muted">non rapport&eacute;e</span>'}[_sante];
     ($('vx-conn-store')||{}).innerHTML=
-      kv('Sant&eacute; serveur',ok?'<span class="vx-pos">OK</span>':'<span class="vx-neg">d&eacute;grad&eacute;</span>')
+      kv('Sant&eacute; serveur',_ligne)
+      +(_sante==='inconnu'
+        ?'<div class="vx-help vx-mt1 vx-mb1">/healthz a r&eacute;pondu, mais '
+         +(_vues.length
+           ?'son corps porte <span class="vx-mono">'+esc(_detail)
+            +'</span>&nbsp;— aucun verdict lisible'
+           :'son corps ne porte ni <span class="vx-mono">status</span> ni '
+            +'<span class="vx-mono">ok</span>')
+         +'&nbsp;: l&#8217;&eacute;tat du serveur est <b>inconnu</b>, pas bon. Aucun verdict n&#8217;est '
+         +'d&eacute;duit d&#8217;un silence.</div>':'')
       +(st?kv('Build',esc(st.build||'—')):'')
       +kv('Donn&eacute;es perso','localStorage navigateur &harr; blob desk_data.json (last-writer-wins)')
       +kv('Sauvegardes','backup quotidien desk_backup_* c&ocirc;t&eacute; serveur')
-      +`<div class="vx-card-footer">${VX.updateIndicator(Date.now(),'/healthz',ok?'live':'error')}</div>`;
+      +`<div class="vx-card-footer">${VX.updateIndicator(Date.now(),'/healthz',
+        _sante==='sain'?'live':(_sante==='degrade'?'error':'fallback'))}</div>`;
   }else{
     ($('vx-conn-store')||{}).innerHTML=VX.states.error('/healthz injoignable');
     ($('vx-conn-store-badge')||{}).innerHTML=statusBadge('offline','hors ligne');

@@ -30,18 +30,36 @@
       stat('Réf. manquante', VXf.nd(s.data_required)) + '</div>';
   }
 
+  /* TROIS ABSENCES DIFFERENTES S'ECRIVAIENT DU MEME TIRET — mesure du
+     06/09/2026. Sur une instance QA fraiche, `/api/tracking/<id>/performance`
+     rend `benchmark_return_pct: null` et `alpha_pct: null` (SPY pas encore
+     cote) alors que `return_pct` vaut 0,0 : les colonnes SPY et Alpha
+     affichaient « — », soit exactement ce qu'affiche un suivi sans prix de
+     reference, et exactement ce qu'affiche un suivi dont la performance n'a
+     pas pu etre lue du tout. Trois causes, un seul signe.
+
+     `pct()` reste pour les lignes cloturees, ou le chiffre final est fige.
+     Ici chaque absence dit la SIENNE. */
+  function pctCause(v, cause) {
+    if (v == null) return '<span class="vx-muted">' + esc(cause) + '</span>';
+    var cls = v >= 0 ? 'vx-pos' : 'vx-neg';
+    return '<span class="' + cls + '">' + (v >= 0 ? '+' : '') + VXf.num(v, 2) + ' %</span>';
+  }
   function activeRow(t, p) {
     var ref = t.reference_price;
+    //  `p` absent = la route de performance n'a pas repondu pour CE suivi.
+    //  Ce n'est pas « pas de reference » : la cause est en amont.
+    var muet = p ? null : 'non lu';
     return '<tr>' +
       '<td><b>' + esc(t.symbol) + '</b>' + (t.entity_type === 'OPTION' ? ' <span class="vx-muted">OPT</span>' : '') + '</td>' +
       '<td>' + absDate(t.started_at) + '</td>' +
       '<td>' + (ref != null ? VXf.num(ref, 2) : '<span class="vx-muted">réf. requise</span>') +
       (t.reference_price_type ? ' <span class="vx-muted">(' + esc(t.reference_price_type) + ')</span>' : '') + '</td>' +
-      '<td>' + (p && p.current_price != null ? VXf.num(p.current_price, 2) : '—') + '</td>' +
-      '<td>' + pct(p && p.return_pct) + '</td>' +
-      '<td>' + pct(p && p.benchmark_return_pct) + '</td>' +
-      '<td>' + pct(p && p.alpha_pct) + '</td>' +
-      '<td>' + pct(p && p.mfe_pct) + ' / ' + pct(p && p.mae_pct) + '</td>' +
+      '<td>' + (p && p.current_price != null ? VXf.num(p.current_price, 2) : '<span class="vx-muted">' + (muet || 'non coté') + '</span>') + '</td>' +
+      '<td>' + pctCause(p && p.return_pct, muet || 'réf. requise') + '</td>' +
+      '<td>' + pctCause(p && p.benchmark_return_pct, muet || 'réf. SPY n/d') + '</td>' +
+      '<td>' + pctCause(p && p.alpha_pct, muet || 'sans réf. SPY') + '</td>' +
+      '<td>' + pctCause(p && p.mfe_pct, muet || 'n/d') + ' / ' + pctCause(p && p.mae_pct, muet || 'n/d') + '</td>' +
       '<td>' + esc(t.strategy_decision_at_start || '—') + '</td>' +
       '</tr>';
   }
@@ -97,6 +115,24 @@
     });
   }
 
+  /* « A REVOIR » ET « SUIVIS ACTIFS » RENDAIENT LE MEME ECRAN — mesure du
+     06/09/2026 sur l'instance QA : memes sections visibles
+     (summary/chart/active), meme titre, meme question, meme unique ligne
+     NVDA. La table `montre` ci-dessous donnait deja `attention` et `active`
+     a l'identique. Deux onglets, un seul ecran : le second ne repond a rien.
+
+     Ce qui separe reellement les deux est SERVI, pas invente : `/api/tracking`
+     rend un statut par suivi, et `DATA_REQUIRED` designe litteralement le
+     suivi qu'on ne peut pas mesurer faute de prix de reference (la table
+     ecrit deja « ref. requise » sur cette ligne). « A revoir » liste donc ce
+     qui attend une donnee ; « Suivis actifs » liste tout l'actif.
+
+     Aucun seuil de performance n'entre ici : « sous-performe SPY » serait un
+     jugement invente par la page, pas un etat de la donnee. */
+  function aReVoir(t) {
+    return t.status === 'DATA_REQUIRED' || t.reference_price == null;
+  }
+
   /* Sous-vue demandee. Les trois sections restent dans le DOM : un seul appel
      reseau les remplit toutes, et masquer coute moins qu'un second aller-retour. */
   function vueCourante() {
@@ -105,8 +141,11 @@
   }
   function appliquerVue() {
     var v = vueCourante();
+    /* Le graphique « performance vs SPY » repond a la question de l'onglet
+       ACTIF. Dans « A revoir », les lignes retenues sont justement celles
+       sans prix de reference : il n'aurait aucune serie a tracer. */
     var montre = {
-      attention: ['vx-trk-summary', 'vx-trk-chart', 'vx-trk-active'],
+      attention: ['vx-trk-summary', 'vx-trk-active'],
       active: ['vx-trk-summary', 'vx-trk-chart', 'vx-trk-active'],
       archives: ['vx-trk-summary', 'vx-trk-stopped']
     }[v] || ['vx-trk-summary', 'vx-trk-chart', 'vx-trk-active'];
@@ -139,10 +178,33 @@
       var items = (d && d.trackings) || [];
       peindreFraicheur(d);
       if (sEl) sEl.innerHTML = summaryHtml((d && d.summary) || {});
-      var active = items.filter(function (t) { return t.status === 'ACTIVE' || t.status === 'DATA_REQUIRED'; });
+      var actifs = items.filter(function (t) { return t.status === 'ACTIVE' || t.status === 'DATA_REQUIRED'; });
       var stopped = items.filter(function (t) { return t.status === 'STOPPED'; });
+      /* La sous-vue choisit sa POPULATION, et le titre dit laquelle : sans ce
+         couple, « A revoir » affichait le tableau complet sous le titre
+         « Suivis actifs » — l'onglet ne changeait rien et le titre mentait. */
+      var vue = vueCourante();
+      var attention = vue === 'attention';
+      var active = attention ? actifs.filter(aReVoir) : actifs;
+      var tEl = document.getElementById('vx-trk-active-title');
+      var qEl = document.getElementById('vx-trk-active-question');
+      if (tEl) tEl.textContent = attention ? 'À revoir' : 'Suivis actifs';
+      if (qEl) qEl.textContent = attention
+        ? 'Quels suivis attendent une donnée avant de pouvoir être mesurés ?'
+        : 'Que valent ces idées depuis qu’elles sont marquées ?';
       if (!active.length) {
-        aEl.innerHTML = (window.VX && VX.states) ? VX.states.empty('Aucun suivi actif. Marque une idée « Suivre » depuis Opportunités ou une analyse.') : 'Aucun suivi.';
+        /* Trois vides DISTINCTS : rien de suivi · rien a revoir alors que des
+           suivis existent · rien d'actif. Un seul « Aucun suivi » melangeait
+           « je n'ai rien a te signaler » et « tu n'as rien enregistre ». */
+        var cause = attention
+          ? (actifs.length
+              ? 'Les ' + actifs.length + ' suivi(s) actif(s) ont tous un prix de référence : rien n’attend de donnée.'
+              : 'Aucun suivi actif — donc rien à revoir.')
+          : 'Aucun suivi actif. Marque une idée « Suivre » depuis Opportunités ou une analyse.';
+        aEl.innerHTML = '<div class="vx2-state" data-kind="empty" role="status">'
+          + '<span class="vx2-state-ghost" aria-hidden="true"><i></i><i></i><i></i><i></i></span>'
+          + '<p class="vx2-state-title">' + (attention ? 'Rien à revoir' : 'Aucun suivi actif') + '</p>'
+          + '<p class="vx2-state-cause">' + esc(cause) + '</p></div>';
       } else {
         // charge la performance de chaque suivi (séquentiel léger)
         Promise.all(active.map(function (t) {
@@ -151,7 +213,7 @@
         })).then(function (rows) {
           aEl.innerHTML = table(['Titre', 'Depuis le', 'Référence', 'Actuel', 'Rdt hypo.', 'SPY', 'Alpha', 'MFE / MAE', 'Décision init.'],
             rows.map(function (r) { return activeRow(r.t, r.p); }).join(''));
-          renderPerfChart(rows);
+          if (!attention) renderPerfChart(rows);
         });
       }
       if (stopped.length) {

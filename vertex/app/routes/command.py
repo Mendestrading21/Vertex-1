@@ -233,10 +233,16 @@ def api_portefeuille():
             board=scan_state.get('options_board') or []))
     except Exception as e:                            # noqa: BLE001
         #  Une panne se nomme AUTREMENT qu'une absence : `disponible` reste
-        #  absent ici, `error` dit que le moteur a échoué, et le type de
-        #  l'exception est servi — sans trace, qui exposerait des chemins.
+        #  absent ici, et `error` porte un code STABLE.
+        #
+        #  Le type de l'exception a été servi un instant, puis retiré : le
+        #  gardien `test_aucune_exception_servie` l'a refusé, et il a raison —
+        #  un nom de classe est un détail d'implémentation qui voyage jusqu'au
+        #  client, change au moindre refactoring, et ne dit rien d'utile à qui
+        #  lit. Le code reste stable, la note reste en français, le détail
+        #  reste côté serveur.
         return jsonify({'error': 'portfolio_analysis_unavailable',
-                        'cause': type(e).__name__, 'read_only': True,
+                        'read_only': True,
                         'motif': 'le moteur de portefeuille a échoué sur ce '
                                  'scan — ce n’est pas une absence de données'})
 

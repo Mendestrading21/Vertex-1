@@ -81,6 +81,85 @@ _POPULATIONS = (
 )
 
 
+# ── Ce que CHAQUE vue mesure vraiment ─────────────────────────────────────
+# La barre de contexte etait UNIQUE et annoncait « Trades reels declares »,
+# « Realise — encaisse » et « aucun moteur » sur les SIX vues.
+#
+# Mesure du 06/09/2026 sur /performance?view=track-record (Chromium, 5003) :
+#   barre    = « POPULATION MESUREE Trades reels declares au journal du desk ·
+#               NATURE DU RESULTAT Realise — encaisse · CALCUL Arithmetique sur
+#               vos declarations — aucun moteur »
+#   bannière = « Population : verdicts rendus par les moteurs … Ces chiffres ne
+#               se melangent JAMAIS avec vos trades declares »
+#   carte    = « 1026 verdict(s) enregistre(s) » servis par /api/track-record.
+# L'en-tete de page contredisait donc, sur le meme ecran, la banniere de la vue,
+# la carte servie ET la regle que cette page enonce elle-meme : « un indicateur
+# ne melange jamais deux de ces lignes ». Un en-tete qui nomme la mauvaise
+# population transforme un decompte honnete en chiffre trompeur.
+#
+# Chaque vue declare desormais SA population. Les trois textes restent servis
+# par le module (aucun calcul), et le vocabulaire est repris tel quel de
+# `_POPULATIONS` ci-dessus : une seule verite, ecrite une seule fois.
+_CONTEXTES = {
+    'reels': {
+        'population': '<b>Trades réels déclarés</b> au journal du desk',
+        'nature': 'Réalisé — encaissé, hors frais et dividendes',
+        'calcul': 'Arithmétique sur vos déclarations — <b>aucun moteur</b>',
+    },
+    'decisions': {
+        'population': '<b>Décisions journalisées</b> — en cours et clôturées',
+        'nature': 'Déclaratif — mesure de méthode, pas un résultat encaissé',
+        'calcul': 'Décomptes sur vos déclarations — <b>aucun moteur</b>',
+    },
+    'signaux': {
+        'population': '<b>Verdicts rendus par les moteurs</b> — aucun capital engagé',
+        'nature': 'Théorique — ni frais, ni exécution, ni glissement',
+        #  `.vx2-stamp` est un conteneur flex À GAP : chaque élément inline y
+        #  devient un item séparé. Une virgule collée à `</b>` s'en détachait
+        #  donc visiblement (« moteur , jamais »), vu sur la capture 1600 px.
+        #  Aucune ponctuation ne suit un élément inline dans ces libellés.
+        'calcul': 'Servi par <code>/api/track-record</code> — un <b>moteur</b> '
+                  'et non vos déclarations',
+    },
+    #  CONTRÔLE ADVERSE du 06/09/2026. Le correctif précédent avait rendu
+    #  `track-record` honnête et laissé la MÊME faute sur `overview`, qui est
+    #  la vue d'entrée de la page.
+    #  MESURE (Chromium sur 5003, journal réseau de /performance?view=overview) :
+    #  la vue appelle `/api/skyler/calibration`, `/api/skyler/memory` et
+    #  `/api/journal/postmortem` — plus `/api/skyler/memory/import` sur action —
+    #  pendant que sa barre annonce « CALCUL Arithmétique sur vos déclarations
+    #  — aucun moteur », mot pour mot le libellé de `real`, qui n'appelle
+    #  AUCUNE route. Elle mélange en outre des clôtures encaissées (bande
+    #  d'indicateurs, courbe d'équité) et des décisions journalisées (carte
+    #  « Verdict de discipline », servie par `behavioral()`).
+    #  Une vue qui interroge trois moteurs ne peut pas déclarer n'en interroger
+    #  aucun : le lecteur croirait lire de la seule arithmétique sur ses
+    #  déclarations.
+    'mixte': {
+        'population': '<b>Deux populations réunies</b> — vos déclarations '
+                      'et les verdicts des moteurs',
+        'nature': 'Mélangé — chaque carte nomme la sienne, aucune synthèse '
+                  'ne les additionne',
+        'calcul': 'Vos déclarations <b>et</b> trois moteurs — post-mortem, '
+                  'calibration, mémoire',
+    },
+}
+
+#: Vue → population reellement affichee par cette vue.
+_POPULATION_DE_VUE = {
+    #  `overview` reunit la bande d'indicateurs (clotures avec P&L), le verdict
+    #  de discipline (decisions journalisees) et trois cartes servies par des
+    #  moteurs. Mesure : 4 routes `/api/` atteignables depuis sa branche de
+    #  `boot()`, contre 0 pour `real`.
+    'overview': 'mixte',
+    'real': 'reels',            # bande d'indicateurs = clotures avec P&L
+    'journal': 'decisions',     # chronologie + erreurs = entrees journalisees
+    'learnings': 'decisions',
+    'progression': 'decisions',
+    'track-record': 'signaux',  # /api/track-record = verdicts moteur
+}
+
+
 def _populations() -> str:
     lignes = []
     for pop in _POPULATIONS:
@@ -358,15 +437,36 @@ function ghostEquity(){
 
 /* ═══ OVERVIEW ═══ */
 /* Taille d'echantillon dans la barre de contexte : un taux de reussite sans
-   son `n` ne dit pas s'il vaut quelque chose. */
+   son `n` ne dit pas s'il vaut quelque chose.
+
+   MESURE du 06/09/2026 (Chromium sur 5003, lecture du DOM apres chargement) :
+   la pastille valait « Lecture… » sur journal, learnings, progression ET
+   track-record — indefiniment, parce que `echantillon()` n'etait appelee que
+   pour `overview` et `real`. Quatre vues sur six affichaient donc une valeur
+   promise qui n'arrivait jamais, dans la barre meme qui doit qualifier les
+   chiffres de la page.
+
+   Et le compte n'est pas le meme partout : les vues de discipline comptent des
+   DECISIONS journalisees, les vues de resultat comptent des CLOTURES avec P&L,
+   et « Signaux theoriques » compte des verdicts que seul le moteur possede.
+   Une pastille unique aurait rehabille la confusion que cette page interdit. */
+function marquerEchantillon(mot,etat){
+  const el=$('vx-pf-echantillon');
+  if(el)el.innerHTML='<span class="vx2-badge" data-state="'+etat+'">'+esc(mot)+'</span>';
+}
 function echantillon(){
-  const el=$('vx-pf-echantillon');if(!el)return;
-  const n=trades().length;
+  if(!$('vx-pf-echantillon'))return;
+  /* `track-record` est rempli par loadTrack : le compte de verdicts appartient
+     au moteur, la page ne le devine pas. */
+  if(VIEW==='track-record')return;
+  const surDecisions=(VIEW==='journal'||VIEW==='learnings'||VIEW==='progression');
+  const n=surDecisions?behavioral().n:trades().length;
   const etat=n>=30?'live':n>=5?'delayed':'missing';
-  const mot=n===0?'Aucun trade clôturé déclaré'
-    :(n+' trade'+(n>1?'s':'')+' clôturé'+(n>1?'s':'')
-      +(n<5?' · sous le minimum de 5':n<30?' · échantillon réduit':''));
-  el.innerHTML='<span class="vx2-badge" data-state="'+etat+'">'+mot+'</span>';
+  const nom=surDecisions?('décision'+(n>1?'s':'')+' journalisée'+(n>1?'s':''))
+                        :('trade'+(n>1?'s':'')+' clôturé'+(n>1?'s':''));
+  const mot=n===0?(surDecisions?'Aucune décision journalisée':'Aucun trade clôturé déclaré')
+    :(n+' '+nom+(n<5?' · sous le minimum de 5':n<30?' · échantillon réduit':''));
+  marquerEchantillon(mot,etat);
 }
 /* Attendre un script `defer` qui n'est peut-etre pas servi.
    L'ancienne garde faisait `window.addEventListener('load', fn, {once:true})` :
@@ -732,6 +832,13 @@ async function loadTrack(){
     const tr=await VX.fetch('/api/track-record',{ttl:120000});
     const by=tr.by_verdict||{};
     const rows=Object.entries(by);
+    /* L'echantillon de CETTE vue est servi par le moteur : nombre de verdicts
+       enregistres et nombre resolus. Il n'est ni derive, ni suppose. */
+    const nEnr=Number(tr.entries)||0,nRes=Number(tr.resolved)||0;
+    marquerEchantillon(nEnr===0?'Aucun verdict moteur enregistré'
+      :(nEnr+' verdict'+(nEnr>1?'s':'')+' · '+nRes+' résolu'+(nRes>1?'s':'')
+        +(nRes<5?' · sous le minimum de 5 par verdict':'')),
+      nRes>=5?'live':nRes>0?'delayed':'missing');
     if(!rows.length){
       /* #783/G3 — L'ANCIEN MESSAGE DISAIT « le registre se remplit à chaque
          scan », c'est-à-dire « patience ». Il l'a dit pendant que la jointure
@@ -775,7 +882,8 @@ async function loadTrack(){
           render:(cv)=>VXCharts.bars(cv,_tl,_tv,{colors:_tv.map(v=>v==null?VXCharts.colors.muted:(v>=0?VXCharts.colors.positive:VXCharts.colors.negative)),yFmt:(x)=>x+' %'})});
       }
     }catch(e){}
-  }catch(e){($('vx-pf-track')||{}).innerHTML=VX.states.error('Historique moteur indisponible ('+esc(e.message)+')');}
+  }catch(e){($('vx-pf-track')||{}).innerHTML=VX.states.error('Historique moteur indisponible ('+esc(e.message)+')');
+    marquerEchantillon('Échantillon inconnu — historique moteur injoignable','error');}
 }
 function loadReal(){
   const list=trades();
@@ -999,6 +1107,11 @@ function bindDisclosures(){
 }
 function boot(){
   bindDisclosures();
+  /*  La pastille d'echantillon vit dans l'en-tete, servi sur les SIX vues :
+      elle se remplit donc sur les six, chacune avec SA population. Elle etait
+      cablee sur deux vues seulement et restait sur « Lecture… » sur les quatre
+      autres.  */
+  echantillon();
   if(VIEW==='overview'){
     /*  `loadDiscipline()` etait appelee ICI et definie NULLE PART. Comme elle
         ouvrait la chaine, la vue « overview » du Journal levait des le premier
@@ -1010,7 +1123,7 @@ function boot(){
         `loadMonthlyAndDist` (heatmap mensuelle). La bande gardait donc son
         squelette indefiniment — une donnee promise qui n'arrivait jamais —
         et les deux autres n'avaient meme plus de conteneur ou ecrire.  */
-    loadKpis();echantillon();
+    loadKpis();
     loadHypotheses();loadDist();loadPostmortem();loadCalibration();loadMemory();wireMemoryImport();
     loadEquity();loadDiscipline();}
   else if(VIEW==='journal'){
@@ -1021,7 +1134,7 @@ function boot(){
   else if(VIEW==='learnings'){loadLearnings();}
   else if(VIEW==='progression'){loadProgression();}
   else if(VIEW==='track-record'){loadTrack();}
-  else if(VIEW==='real'){loadReal();echantillon();}
+  else if(VIEW==='real'){loadReal();}
 }
 function whenReady(fn){
   if(window.VXEntities&&(VIEW!=='overview'&&VIEW!=='progression'||(window.VXCharts&&window.Chart)))return fn();
@@ -1046,10 +1159,15 @@ _MENSUEL = vx2.capacite_absente(
              'tranche, elle, ne fait que compter des clôtures : elle reste '
              'affichée ci-dessous.')
 
-def _entete() -> str:
-    """En-tête + contexte. La barre de contexte nomme la POPULATION mesurée :
-    sans elle, un « taux de réussite » se lit comme celui du portefeuille, alors
-    qu'il ne porte que sur les trades déclarés au journal (contrôle 101)."""
+def _entete(view: str) -> str:
+    """En-tête + contexte de la vue demandée.
+
+    La barre nomme la POPULATION mesurée : sans elle, un « taux de réussite » se
+    lit comme celui du portefeuille, alors qu'il ne porte que sur les trades
+    déclarés au journal (contrôle 101). Elle est servie PAR VUE parce que les
+    six vues ne mesurent pas la même chose — voir `_CONTEXTES`.
+    """
+    ctx = _CONTEXTES[_POPULATION_DE_VUE.get(view, 'reels')]
     return (
         vx2.page_header(
             surtitre='Gérer', titre='Performance',
@@ -1058,17 +1176,14 @@ def _entete() -> str:
                                variante='ghost'))
         + vx2.context_bar([
             {'label': 'Population mesurée', 'contenu':
-                '<span class="vx2-stamp"><b>Trades réels déclarés</b> au journal '
-                'du desk</span>'},
+                f'<span class="vx2-stamp">{ctx["population"]}</span>'},
             {'label': 'Nature du résultat', 'contenu':
-                '<span class="vx2-stamp">Réalisé — encaissé, hors frais '
-                'et dividendes</span>'},
+                f'<span class="vx2-stamp">{ctx["nature"]}</span>'},
             {'label': 'Échantillon', 'contenu':
                 '<span id="vx-pf-echantillon">'
                 + vx2.badge_etat('missing', texte='Lecture…') + '</span>'},
             {'label': 'Calcul', 'contenu':
-                '<span class="vx2-stamp">Arithmétique sur vos déclarations — '
-                '<b>aucun moteur</b></span>'},
+                f'<span class="vx2-stamp">{ctx["calcul"]}</span>'},
         ]))
 
 
@@ -1083,7 +1198,7 @@ def render(view: str = 'overview', params: dict | None = None) -> str:
         raw = str(params.get('sym') or '').strip().upper()
         if re.fullmatch(r'[A-Z.\-]{1,7}', raw):
             sym = raw
-    content = (_HEADER.replace('%%ENTETE%%', _entete())
+    content = (_HEADER.replace('%%ENTETE%%', _entete(view))
                .replace('%%TABS%%', _tabs(view))
                + _VIEW_CONTENT[view]
                .replace('%%POPULATIONS%%', _populations())

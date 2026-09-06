@@ -90,6 +90,17 @@ _CONTENT = """
   @media (max-width:680px){.vx-opp-grid{grid-template-columns:1fr}}
   .vx-opp-card{min-width:0}
   .vx-opp-notrade{border-left:3px solid var(--vx-negative)!important;opacity:.92}
+  /* « Scores des résultats » : l'histogramme OCCUPE la carte.
+     Mesuré au navigateur (1600 px) avant correction : carte 481 px de haut
+     pour 160 px de contenu — la carte est étirée par la rangée de grille pour
+     rejoindre « Secteurs des résultats » (481 px), et les ~280 px restants
+     étaient du vide. Les barres avaient une hauteur FIXE de 110 px ; elles
+     prennent maintenant la place réellement disponible. */
+  #op-dist-card{display:flex;flex-direction:column}
+  #op-dist{flex:1;min-height:150px;display:flex}
+  #op-dist .vx-histo{flex:1;display:flex;gap:4px;align-items:stretch;padding:8px 2px}
+  #op-dist .vx-histo>div{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px}
+  #op-dist .vx-histo .bar{width:100%;flex:1;display:flex;align-items:flex-end}
   /* KPI : liseré sémantique comme les tuiles météo du Dashboard */
   .vx-scr-kpis .k{border-left:3px solid transparent}
   .vx-scr-kpis .k[data-tone="pos"]{border-left-color:var(--vx-positive)}
@@ -220,8 +231,20 @@ function heatCell(v,opt){
   if(v==null||!isFinite(n))
     return '<td data-label="'+esc(opt.label||'')+'" class="vx-num">'
       +'<span class="vx2-absent">—</span></td>';
-  const ton=n>=(opt.good!=null?opt.good:70)?'vx-pos'
-    :n>=(opt.mid!=null?opt.mid:40)?'vx-warn':'vx-neg';
+  /* SENS DE LECTURE de l'echelle. Par defaut « haut = bon » : c'est vrai d'un
+     score. Ce n'est PAS vrai d'une intensite d'anomalie, et la colonne
+     « Intensite » des Anomalies passait pourtant par ce sens la.
+     MESURE DU 06/09/2026 sur 5003 : LULU, niveau ALERTE, intensite 100/100,
+     rendue `vx-pos` — couleur calculee `rgb(54,200,137)`, le VERT que la
+     charte reserve au positif. FICO, ALERTE, 100 : idem. Le maximum du
+     desordre etait peint comme une bonne nouvelle.
+     Sens `risque` : haut = rouge, milieu = ambre, bas = AUCUNE couleur — un
+     risque faible n'est pas une bonne nouvelle non plus, juste l'absence de
+     signal, et le vert reste reserve a ce qui est reellement positif. */
+  const haut=(opt.good!=null?opt.good:70),milieu=(opt.mid!=null?opt.mid:40);
+  const ton=(opt.sens==='risque')
+    ? (n>=haut?'vx-neg':n>=milieu?'vx-warn':'')
+    : (n>=haut?'vx-pos':n>=milieu?'vx-warn':'vx-neg');
   return '<td data-label="'+esc(opt.label||'')+'" class="vx-num">'
     +'<span class="vx-mono '+ton+'">'+VX.fmt.num(n,0)+'</span></td>';
 }
@@ -235,17 +258,38 @@ function paintContext(scan){
   const nd='<span class="vx2-absent">\u2014</span>';
   const rows=(scan&&scan.rows)||[];
   const src=(scan&&scan.source)||null;
-  const ts=(scan&&(scan.scan_ts_h||scan.scan_ts||scan.updated))||null;
   const demo=scan&&scan.data_source==='demo';
+  /* \u2500\u2500 FRA\u00ceCHEUR : elle se MESURE, elle ne se d\u00e9clare pas \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+     Mesur\u00e9 le 06/09/2026 : \u00ab Dernier scan \u00bb affichait la cha\u00eene brute
+     `scan_ts_h` (\u00ab 2026-09-06T17:49:23Z \u00bb) pendant que TOUS les pieds de
+     carte de la m\u00eame page disaient \u00ab Il y a 18 min \u00bb, et le badge
+     \u00ab Fra\u00eecheur \u00bb \u00e9crivait \u00ab Diff\u00e9r\u00e9e \u00bb d\u00e8s qu'une source existait \u2014
+     exactement la m\u00eame cha\u00eene \u00e0 18 minutes et \u00e0 six heures. Un indicateur
+     de fra\u00eecheur qui ne d\u00e9pend pas de l'\u00e2ge n'indique pas la fra\u00eecheur.
+
+     Le seuil n'est PAS invent\u00e9 ici : il vient de `VX.freshness.THRESH`
+     (30 min = instantan\u00e9 d'analyse, au-del\u00e0 = \u00e0 actualiser), la table que
+     le reste du produit applique d\u00e9j\u00e0. Sans horodatage, l'\u00e2ge reste
+     inconnu et l'\u00e9cran le dit \u2014 il n'invente pas \u00ab frais \u00bb. */
+  const tsBrut=(scan&&(scan.scan_ts||scan.scan_ts_h))||null;
+  const ms=(window.VX&&VX.freshness&&VX.freshness._ms)?VX.freshness._ms(tsBrut):null;
+  const ageMs=(ms==null)?null:Math.max(0,Date.now()-ms);
+  const etat=(window.VX&&VX.freshness)?VX.freshness.assess({ageMs:ageMs}):null;
+  const perime=!!(etat&&etat.state==='stale');
+  const ageTxt=(ms==null)?'\u00e2ge inconnu':VX.fmt.ago(tsBrut);
   const badge=demo?'<span class="vx2-badge" data-state="demo">D\u00e9mo</span>'
-    :(src?'<span class="vx2-badge" data-state="delayed">Diff\u00e9r\u00e9e</span>'
-         :'<span class="vx2-badge" data-state="missing">Indisponible</span>');
+    :(!src?'<span class="vx2-badge" data-state="missing">Indisponible</span>'
+      :(ms==null?'<span class="vx2-badge" data-state="missing">\u00c2ge inconnu</span>'
+        :'<span class="vx2-badge" data-state="'+(perime?'stale':'delayed')+'" title="'
+          +esc(ageTxt+' \u00b7 seuil du produit : 30 min')+'">'
+          +(perime?'\u00c0 actualiser':'Diff\u00e9r\u00e9e')+'</span>'));
   const grp=(label,contenu)=>'<div class="vx2-context-group">'
     +'<span class="vx2-context-label">'+label+'</span>'+contenu+'</div>';
   const sep='<span class="vx2-context-sep" aria-hidden="true"></span>';
   el.innerHTML=[
     grp('Univers','<span class="vx2-mono">'+(rows.length?VX.fmt.nd(rows.length)+' titres':nd)+'</span>'),
-    grp('Dernier scan','<span class="vx2-mono">'+(ts?esc(String(ts)):nd)+'</span>'),
+    grp('Dernier scan',(ms==null?nd
+      :'<span class="vx2-mono" title="'+esc(VX.fmt.isoFull(tsBrut))+'">'+esc(ageTxt)+'</span>')),
     grp('Source','<span class="vx2-stamp"><b>'+(src?esc(String(src)):'\u2014')+'</b></span>'),
     grp('Fra\u00eecheur',badge)
   ].join(sep);
@@ -352,10 +396,12 @@ async function renderScreener(classe){
   const scan=await VX.fetch('/scan',{ttl:120000});
   paintContext(scan);
   let rows=(scan.rows||[]).filter(r=>r.score!==undefined);
+  const scorees=rows.length;          // AVANT tout filtre de classe
+  let nonClasses=0;
   let bandeau='';
   if(classe){
     const total=rows.length;
-    const nonClasses=rows.filter(r=>classeDe(r.symbol)==='NON_CLASSE').length;
+    nonClasses=rows.filter(r=>classeDe(r.symbol)==='NON_CLASSE').length;
     rows=rows.filter(r=>classeDe(r.symbol)===classe);
     const nom=classe==='ETF'?'ETF':'actions';
     bandeau='<div class="vx2-banner" data-kind="prudence" role="status"><span>'
@@ -370,17 +416,43 @@ async function renderScreener(classe){
       +'</span></div>';
   }
   if(!rows.length){
+    /* DEUX vides distincts, et ils avaient la MÊME phrase.
+       MESURE DU 06/09/2026 sur /opportunities?view=etf : le scan servait
+       513 lignes scorées, dont 0 classée ETF (référentiel curé de 19 ETF,
+       aucun présent dans l'univers scanné) et 461 non classées — et l'écran
+       affichait « le dernier scan n'a produit aucune ligne portant un
+       score ». C'était FAUX, et cela envoyait chercher la panne du côté de
+       la collecte alors que la collecte avait travaillé. Le bandeau qui
+       aurait expliqué le tri était perdu, remplacé par cet état.
+       Chaque nombre ci-dessous est compté sur la charge servie. */
+    const triClasse=!!(classe&&scorees);
     ($('op-body')||{}).innerHTML='<div class="vx2-state" data-kind="empty" role="status">'
       +'<span class="vx2-state-ghost" aria-hidden="true"><i></i><i></i><i></i><i></i></span>'
-      +'<p class="vx2-state-title">'+(classe
-          ?('Aucun '+(classe==='ETF'?'ETF':'titre action')+' scoré dans le scan courant')
-          :'Aucun titre scoré dans le scan courant')+'</p>'
-      +'<p class="vx2-state-cause">L’entonnoir n’a rien à classer : le dernier scan '
-      +'n’a produit aucune ligne portant un score. La barre de contexte '
-      +'ci-dessus dit de quelle source et de quand il date.</p>'
-      +'<div class="vx2-state-actions">'
-      +'<a class="vx2-btn" href="/system?view=data">Ouvrir Système → Données</a></div>'
-      +'</div>';
+      +'<p class="vx2-state-title">'
+      +(triClasse
+        ? ('Aucun '+(classe==='ETF'?'ETF':'titre action')
+           +' dans le scan courant — le scan, lui, a produit des résultats')
+        : 'Aucun titre scoré dans le scan courant')
+      +'</p><p class="vx2-state-cause">'
+      +(triClasse
+        ? ('Le dernier scan a produit <b>'+scorees+'</b> ligne(s) scorée(s), '
+           +'dont <b>0</b> classée(s) '+(classe==='ETF'?'ETF':'action')+'. '
+           +'Le classement vient du <b>référentiel curé</b> de Vertex '
+           +'('+_ETF.size+' ETF, '+_ACT.size+' actions au référentiel sectoriel), '
+           +'pas d’un champ servi par le scan : '
+           +'<b>'+nonClasses+'</b> ligne(s) restent non classées. '
+           +'Ce n’est donc PAS une panne de collecte — c’est une couverture '
+           +'de référentiel, et elle est visible au Radar.')
+        : ('L’entonnoir n’a rien à classer : le dernier scan n’a produit '
+           +'aucune ligne portant un score. La barre de contexte ci-dessus '
+           +'dit de quelle source et de quand il date.'))
+      +'</p><div class="vx2-state-actions">'
+      +(triClasse
+        ? ('<a class="vx2-btn" href="/opportunities?view=screener">Ouvrir le Radar '
+           +'('+scorees+' lignes)</a>'
+           +'<a class="vx2-btn" href="/system?view=data">Système → Données</a>')
+        : '<a class="vx2-btn" href="/system?view=data">Ouvrir Système → Données</a>')
+      +'</div></div>';
     return;}
   const detail=scan.detail||{};
   const byId={};rows.forEach(r=>{if(r&&r.symbol)byId[r.symbol]=r;});   // index partagé (dossier express, revue…)
@@ -485,9 +557,11 @@ async function renderScreener(classe){
     <div class="vx-grid vx-mt4">
       <section class="vx-card vx-col-6" id="op-dist-card"><div class="vx-card-header">
         <span class="vx-card-title">Scores des résultats</span>
+        <span class="vx-badge vx-badge-unit" title="Unité de l’axe">score /100</span>
         <span class="vx-chart-question">Le filtre isole-t-il vraiment le haut du panier ?</span></div>
         <div id="op-dist"></div>
-        <div class="vx-card-foot"><span class="vx-meta" id="op-dist-meta"></span></div></section>
+        <div class="vx-card-foot">${VX.updateIndicator(scan.scan_ts||scan.updated,scan.source,metaMode(scan))}
+          · <span class="vx-meta" id="op-dist-meta"></span></div></section>
       <div class="vx-col-6" id="op-sectors"></div>
     </div>
     <div class="vx-grid vx-mt4">
@@ -631,12 +705,12 @@ async function renderScreener(classe){
     const tot=f.length;
     if(!tot){el.innerHTML=VX.states.empty('Aucun résultat avec ces filtres.');($('op-dist-meta')||{}).textContent='';return;}
     const maxN=Math.max(1,...dist);
-    el.innerHTML='<div style="display:flex;gap:4px;align-items:flex-end;padding:8px 2px">'+dist.map((n,i)=>{
+    el.innerHTML='<div class="vx-histo">'+dist.map((n,i)=>{
       const hh=Math.round(n/maxN*100);
       const col=i>=7?'var(--vx-positive)':i<=2?'var(--vx-negative)':'var(--vx-warning)';
-      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px" role="img" aria-label="score ${i*10}-${i*10+10} : ${n} titres" title="${n} titre(s) entre ${i*10} et ${i*10+10}">
+      return `<div role="img" aria-label="score ${i*10} à ${i*10+10} sur 100 : ${n} titre(s)" title="${n} titre(s) entre ${i*10} et ${i*10+10} points">
         <span style="font-size:9.5px;color:var(--vx-text-dim)">${n||''}</span>
-        <span style="width:100%;height:110px;display:flex;align-items:flex-end"><span style="width:100%;height:${hh}%;background:${col};border-radius:3px 3px 0 0;min-height:2px;opacity:.85"></span></span>
+        <span class="bar"><span style="width:100%;height:${hh}%;background:${col};border-radius:3px 3px 0 0;min-height:2px;opacity:.85"></span></span>
         <span style="font-size:9px;color:var(--vx-text-muted);font-variant-numeric:tabular-nums">${i*10}</span></div>`;}).join('')+'</div>';
     const avg=Math.round(f.reduce((a,r)=>a+(r.score||0),0)/tot);
     ($('op-dist-meta')||{}).textContent='score moyen des résultats : '+avg+' / 100 · '+tot+' titres';
@@ -649,10 +723,25 @@ async function renderScreener(classe){
     const entries=Object.entries(by).map(([s,v])=>[s,Math.round(v.reduce((a,b)=>a+b,0)/v.length),v.length])
       .sort((a,b)=>b[1]-a[1]).slice(0,9);
     if(!entries.length){host.innerHTML='<div class="vx-card">'+VX.states.empty('Aucun secteur dans les résultats filtrés.')+'</div>';return;}
+    /* Même angle mort que la matrice, et il vaut le même aveu : les barres ne
+       couvrent que les titres dont le scan sert un secteur, et seuls les 9
+       premiers secteurs sont tracés. MESURE DU 06/09/2026 : 355 titres sur 513
+       classés, 11 secteurs pour 9 barres — deux secteurs disparaissaient sans
+       un mot. L'unité de l'axe est le SCORE (0-100), pas un compte : le
+       nombre entre parenthèses derrière chaque secteur est son effectif. */
+    const sansSec=f.filter(r=>!r.sector).length;
+    const couverts=entries.reduce((a,e)=>a+e[2],0);
+    const bornes='barres = score moyen sur 100 · (n) = nombre de titres — '
+      +couverts+' des '+f.length+' titres retenus'
+      +(entries.length<Object.keys(by).length
+        ? (' ; '+(Object.keys(by).length-entries.length)+' secteur(s) au-delà des 9 premiers non tracés')
+        : '')
+      +(sansSec?(' ; '+sansSec+' titre(s) sans secteur servi par le scan'):'');
     VXCharts.sectorCard('op-sectors',{
-      title:'Secteurs des résultats',unit:'titres',question:'Où se concentrent les titres retenus par TES filtres ?',
+      title:'Secteurs des résultats',unit:'score /100',question:'Où se concentrent les titres retenus par TES filtres ?',
       conclusion:entries[0][0]+' en tête ('+entries[0][1]+' de score moyen · '+entries[0][2]+' titres)',
       labels:entries.map(e=>e[0]+' ('+e[2]+')'),values:entries.map(e=>e[1]),height:240,
+      limits:bornes,
       source:scan.source,timestamp:scan.scan_ts||scan.updated,mode:metaMode(scan),
       onSector:(name)=>{state.sector=name.replace(/ \(\d+\)$/,'');persist();syncBar();applyAll();},
       explain:{shows:'Le score moyen par secteur, calculé UNIQUEMENT sur les titres qui passent tes filtres.',
@@ -764,6 +853,16 @@ async function renderScreener(classe){
         if(!en&&!so)return '<div class="vx-dim vx-mt1" style="font-size:12px">Aucun changement d\'actionnables depuis le scan précédent.</div>';
         return '<div class="vx-dim vx-mt1" style="font-size:12px">'
           +(en?'Entrés : '+en:'')+(en&&so?' · ':'')+(so?'Sortis : '+so:'')+'</div>';})()
+      /* Provenance de l'entonnoir. MESURE DU 06/09/2026 : la seule carte du
+         Radar sans aucun horodatage — relevé DOM, zéro `.vx-update-age` dans
+         `#op-funnel` — alors que `/api/opportunities/funnel` SERT `as_of`
+         (1788716963.687, soit l'instant du scan). Un entonnoir qui annonce
+         « 2 actionnables » sans dire de quand il date se lit comme un chiffre
+         de maintenant. Absence d'`as_of` → `VX.updateIndicator` écrit
+         « Âge inconnu », jamais une fraîcheur inventée. */
+      +'<div class="vx-card-footer">'
+      +VX.updateIndicator(fn.as_of||null,'moteur d’entonnoir',metaMode(scan))
+      +(fn.note?' · '+esc(String(fn.note)):'')+'</div>'
       +'</div>';
     if(window.VXCharts&&VXCharts.funnel){
       VXCharts.funnel('op-funnel-viz',{stages:fn.stages.map(s=>({label:s.label,value:s.count})),
@@ -790,16 +889,64 @@ async function renderScreener(classe){
       const v=cnt[sec+'|'+b]||0;
       return {value:v||null,label:v?String(v):'—',title:sec+' · '+b+' : '+v+' titre(s)'};})}))
       .sort((a,b)=>{const t=(x)=>OUT.reduce((acc,bb,i)=>acc+(cnt[x.raw+'|'+bb]||0)*(OUT.length-i),0);return t(b)-t(a);});
+    /* La matrice ne peut ranger QUE les titres dont le scan sert un secteur.
+       MESURE DU 06/09/2026 : 513 lignes retenues, 355 réparties, 158 SANS
+       secteur servi — la somme de la matrice valait donc 355 face au KPI
+       « 513 titres retenus » affiché juste au-dessus, sans un mot pour
+       expliquer les 158 manquants. Le pied porte maintenant le compte : il
+       est calculé, jamais écrit en dur. */
+    const sansSec=f.filter(r=>!r.sector).length;
+    const bornes='compte de titres par secteur et statut, sur TES filtres — '
+      +'la matrice totalise '+(f.length-sansSec)+' des '+f.length+' titres retenus'
+      +(sansSec?(' ; '+sansSec+' titre(s) n’ont AUCUN secteur servi par le scan '
+                 +'et ne figurent dans aucune ligne'):'');
+    /* ÉCHELLE DE COULEUR — deux corrections, mesurées le 06/09/2026.
+       1. Le maximum venait de `Object.values(cnt)`, or `cnt` porte AUSSI les
+          seaux des titres sans secteur (clé « |Rejetée »…), qui ne sont
+          affichés nulle part. Mesuré : maximum 64 pris sur un seau invisible
+          alors que la plus grosse cellule VISIBLE vaut 36 — toute la matrice
+          était tirée vers le bas de la rampe (relevé du fond de la cellule
+          « Technology · Rejetée : 28 » : rgba(237,101,92,0.15)). L'échelle se
+          calibre maintenant sur ce qui est RÉELLEMENT peint.
+       2. Une rampe divergente vert/rouge sur un COMPTE fait dire à la couleur
+          ce que le compte ne dit pas : 36 « Proche » ressortait vert (bon) et
+          28 « Rejetée » rouge (mauvais) alors que les deux sont des effectifs.
+          `heatmap.js` prévoit exactement ce cas — `scale:'sequential'`, une
+          seule teinte pour une donnée non signée, la même règle que l'IV. */
+    const maxVisible=rows2.reduce((m,r)=>r.cells.reduce(
+      (n,c)=>Math.max(n,c.value||0),m),0);
     VXCharts.heatmapCard('op-heat',{
       title:'Carte secteur × statut',unit:'titres',question:'Dans quels secteurs vivent les dossiers les plus avancés ?',
       conclusion:'Colonne Actionnable = prêt · cliquer une cellule applique les deux filtres.',
-      columns:OUT,rows:rows2,min:0,max:Math.max(4,...Object.values(cnt)),
+      columns:OUT,rows:rows2,min:0,max:Math.max(4,maxVisible),scale:'sequential',
       fmt:(v)=>v==null?'—':String(v),
       source:scan.source,timestamp:scan.scan_ts||scan.updated,mode:metaMode(scan),
-      limits:'compte de titres par secteur et statut, sur TES filtres'});
-    /* clic cellule → filtre secteur+statut */
-    host.querySelectorAll('tbody tr').forEach((tr,ri)=>{
-      [...tr.querySelectorAll('td')].slice(1).forEach((td,ci)=>{
+      limits:bornes});
+    /* ── Clic cellule → filtre secteur + statut ──────────────────────────
+       MESURE DU 06/09/2026 sur 5003 (513 lignes, 11 secteurs) : le clic
+       appliquait DEUX filtres décalés d'un cran.
+
+       `heatmapCard` (charts/heatmap.js) écrit sa ligne d'en-tête DANS le
+       `<table>`, sans `<thead>` : le navigateur l'enferme donc dans le
+       `<tbody>` avec les données, et le libellé de chaque ligne est un
+       `<th>`, pas un `<td>`.
+         · `tbody tr` comptait l'en-tête → décalage d'une LIGNE ;
+         · `.slice(1)` sautait la première cellule de données → décalage
+           d'une COLONNE, et la colonne « Rejetée » n'était JAMAIS câblée
+           (mesuré : `style.cursor` = `default` sur toute la colonne).
+
+       Mesuré avant : clic sur la cellule titrée « Technology · Radar :
+       3 titre(s) » → `bucket=Rejetée`, `sector=Industrials`, compteur
+       « 20 / 513 titres ». Après : `Technology` / `Radar`, 3 titres.
+
+       On indexe donc les lignes qui PORTENT des données, et le décalage de
+       colonne est MESURÉ sur la ligne elle-même : un rendu qui écrirait le
+       libellé en `<td>` reste correctement câblé, sans nouveau réglage. */
+    const trData=[...host.querySelectorAll('table tr')].filter(tr=>tr.querySelector('td'));
+    trData.forEach((tr,ri)=>{
+      const tds=[...tr.querySelectorAll('td')];
+      const dec=Math.max(0,tds.length-OUT.length);
+      tds.slice(dec).forEach((td,ci)=>{
         td.style.cursor='pointer';
         td.addEventListener('click',()=>{
           const raw=rows2[ri]&&rows2[ri].raw;
@@ -811,13 +958,39 @@ async function renderScreener(classe){
 /* ── Donut verdicts des résultats ── */
   function paintVerdicts(f){
     const host=$('op-verdicts');if(!host)return;
-    const cnt={};f.forEach(r=>{const v=VERD_FR[r.verdict]||r.verdict||'n/d';cnt[v]=(cnt[v]||0)+1;});
+    /* On garde le code BRUT du verdict à côté de son libellé : c'est lui qui
+       porte le ton canonique, et le libellé seul ne suffit pas à le retrouver. */
+    const cnt={},brut={};
+    f.forEach(r=>{const v=VERD_FR[r.verdict]||r.verdict||'n/d';
+      cnt[v]=(cnt[v]||0)+1;if(brut[v]===undefined)brut[v]=r.verdict;});
     const ks=Object.keys(cnt);
     if(!ks.length){host.innerHTML='<div class="vx-card">'+VX.states.empty('Aucun verdict.')+'</div>';return;}
-    const tone={'ACHAT':'#36c889','SURVEILLER':'#c0b79f','ATTENDRE':'#dda23b','ÉVITER':'#ed655c'};
+    /* MESURE DU 06/09/2026 : la table de tons était indexée en MAJUSCULES
+       ('ACHAT', 'ÉVITER'…) alors que `VERD_FR` rend le libellé CANONIQUE du
+       vocabulaire ('Achat', 'Éviter'…). `tone[k]` valait donc toujours
+       `undefined` et les quatre parts sortaient de la même couleur de repli —
+       relevé Chart.js : backgroundColor = ["#8f8a83","#8f8a83","#8f8a83",
+       "#8f8a83"] pour Achat / Surveiller / Éviter / Attendre. Un donut de
+       verdicts sans vert ni rouge ne dit plus rien de ce que pense le moteur.
+
+       La couleur vient maintenant du TON canonique (`window.__VXVOCAB`), la
+       même source que `verdictDir` : plus de table parallèle à tenir à jour,
+       et un verdict ajouté au moteur arrive coloré. Un ton inconnu reste
+       neutre — on ne devine pas un sens. */
+    const cc=(window.VXCharts&&VXCharts.colors)||{};
+    function couleurDe(dec){
+      const e=(window.__VXVOCAB||{})[dec]||{};const t=String(e.tone||'');
+      if(t.indexOf('green')>=0)return cc.positive||'#36c889';
+      if(t.indexOf('red')>=0)return cc.negative||'#ed655c';
+      if(t.indexOf('amber')>=0)return cc.warning||'#dda23b';
+      if(t.indexOf('blue')>=0)return cc.info||cc.brand||'#c9ced8';
+      return cc.neutral||'#8f8a83';
+    }
     VXCharts.donutCard('op-verdicts',{title:'Verdicts des résultats',unit:'titres',
       question:'Que pense le moteur de TA sélection ?',
-      labels:ks,values:ks.map(k=>cnt[k]),colors:ks.map(k=>tone[k]||'#8f8a83'),height:200,
+      labels:ks,values:ks.map(k=>cnt[k]),colors:ks.map(k=>couleurDe(brut[k])),height:200,
+      limits:'couleur = ton canonique du verdict (vert achat · rouge éviter · '
+        +'ambre attente · argent surveillance)',
       source:scan.source,timestamp:scan.scan_ts||scan.updated,mode:metaMode(scan)});
   }
   /* ── Application globale des filtres ── */
@@ -964,8 +1137,11 @@ async function renderOptions(){
       <div class="vx-col-6" id="op-ivdte"></div>
       <section class="vx-card vx-col-6" id="op-mix-card"><div class="vx-card-header">
         <span class="vx-card-title">Répartition du board</span>
+        <span class="vx-badge vx-badge-unit" title="Unité">contrats</span>
         <span class="vx-chart-question">Terme × sens — où vit l’offre de contrats ?</span></div>
-        <div id="op-mix"></div></section>
+        <div id="op-mix"></div>
+        <div class="vx-card-footer">${VX.updateIndicator(scan.scan_ts||scan.updated,scan.options_source||scan.source,metaMode(scan))}
+          · <span id="op-mix-base"></span></div></section>
     </div>
     <div class="vx-card vx-mt4"><div class="vx-card-header"><span class="vx-card-title">Contrats du board</span>
       <span class="vx-chart-question">Cliquer une ligne simule le contrat (payoff, scénarios, décote temps).</span></div>
@@ -1093,7 +1269,21 @@ async function renderOptions(){
     const B=['court','moyen','long'];
     const cnt={};f.forEach(c=>{const k=(c.bucket||'?')+'|'+c.type;cnt[k]=(cnt[k]||0)+1;});
     const tot=f.length||1;
-    if(!f.length){el.innerHTML=VX.states.empty('Aucun contrat.');return;}
+    /* « Répartition du board » était la seule carte de la vue Options sans
+       provenance — relevé DOM du 06/09/2026 : aucun élément de classe
+       vx-update-age dans #op-mix-card, alors qu'elle compte exactement le
+       même board que ses voisines. Le pied la date désormais, et il porte
+       aussi la BASE du pourcentage : le filtre COURANT, pas le board entier.
+       Sans ce rappel, « 48 % moyen terme » se lit comme une propriété du
+       board alors que c'est une propriété de la sélection. */
+    const hb=(t)=>{const e=$('op-mix-base');if(e)e.textContent=t;};
+    if(!f.length){el.innerHTML=VX.states.empty('Aucun contrat.');hb('0 contrat retenu par les filtres');return;}
+    /* Trois barres pour trois termes : un contrat servi avec un autre terme
+       (ou sans terme) ne rentre dans aucune barre. Mesuré le 06/09/2026 :
+       96 contrats, 96 rangés — mais un reste muet serait indétectable. */
+    const dansB=B.reduce((a,b)=>a+(cnt[b+'|CALL']||0)+(cnt[b+'|PUT']||0),0);
+    hb('base des pourcentages : '+f.length+' contrat(s) du filtre sur '+board.length+' au board'
+       +(f.length>dansB?(' · '+(f.length-dansB)+' sans terme court/moyen/long, hors barres'):''));
     el.innerHTML=B.map(b=>{
       const ca=cnt[b+'|CALL']||0,pu=cnt[b+'|PUT']||0,t=ca+pu;
       if(!t)return '';
@@ -1378,16 +1568,35 @@ async function renderAnomalies(){
           <span class="vx-meta" style="flex:0 0 46%;white-space:normal">${esc(l)}</span>
           <span style="flex:1;height:7px;border-radius:99px;background:var(--vx-surface-0);overflow:hidden">
             <i style="display:block;height:100%;width:${Math.max(4,w)}%;background:var(--vx-brand);border-radius:99px"></i></span>
-          <b class="vx-mono" style="flex:0 0 26px;text-align:right">${n}</b></div>`;}).join('')+'</div>':'';
+          <b class="vx-mono" style="flex:0 0 26px;text-align:right">${n}</b></div>`;}).join('')
+      /* Cette carte comptait des anomalies sans dire de QUEL scan elles
+         viennent : relevé DOM du 06/09/2026 — aucun `.vx-update-age` dans
+         `#op-anom-types` ni dans `#op-anom`, sur une vue entièrement dérivée
+         de `/scan`. Le compte porte aussi sa base (le filtre courant). */
+      +'<div class="vx-card-footer">'
+      +VX.updateIndicator(scan.scan_ts||scan.updated,scan.source,metaMode(scan))
+      +' · compte d’occurrences sur les '+f.length+' titre(s) du filtre'
+      +(Object.keys(types).length>topT.length
+        ? (' · '+(Object.keys(types).length-topT.length)+' autre(s) type(s) non tracé(s)'):'')
+      +'</div></div>':'';
+    /* Les deux colonnes chiffrées sont des échelles sur 100 ; sans l'unité au
+       titre, « 100 » et « 27 » ne disent pas de quoi ils sont la mesure.
+       L'INTENSITÉ se lit en sens RISQUE (voir `heatCell`) : mesuré avant, une
+       intensité de 100 sur un titre en ALERTE sortait verte. */
     ($('op-anom')||{}).innerHTML=f.length?`<div class="vx-table-wrap vx-table-cards"><table class="vx-table"><thead><tr>
-      <th>Titre</th><th>Niveau</th><th>Anomalies</th><th class="vx-num">Intensité</th><th class="vx-num">Score</th><th></th></tr></thead><tbody>
+      <th>Titre</th><th>Niveau</th><th>Anomalies</th>
+      <th class="vx-num">Intensité <span class="vx-meta">/ 100</span></th>
+      <th class="vx-num">Score <span class="vx-meta">/ 100</span></th><th></th></tr></thead><tbody>
       ${f.slice(0,60).map(r=>`<tr data-clickable data-open-analysis="${r.symbol}">
         <td data-label="Titre"><span class="vx-ticker">${r.symbol}</span></td>
         <td data-label="Niveau"><span class="vx-badge" style="color:${r.anomaly_lvl==='ALERTE'?'var(--vx-negative)':r.anomaly_lvl==='ACTIF'?'var(--vx-warning)':'var(--vx-text-dim)'}">${esc(r.anomaly_lvl||'—')}</span></td>
         <td data-label="Anomalies">${(r.anomalies||[]).slice(0,3).map(a=>`<span class="vx-badge" title="${esc(typeof a==='object'?(a.k||''):'')}">${esc(typeof a==='string'?a:(a.lbl||a.k||''))}</span>`).join(' ')}</td>
-        ${heatCell(r.anomaly_score,{label:'Intensité',good:55,mid:25})}
-        ${heatCell(r.score,{label:'Score',good:72,mid:56})}
-        <td>${rowActions(r.symbol)}</td></tr>`).join('')}</tbody></table></div>`
+        ${heatCell(r.anomaly_score,{label:'Intensité / 100',good:55,mid:25,sens:'risque'})}
+        ${heatCell(r.score,{label:'Score / 100',good:72,mid:56})}
+        <td>${rowActions(r.symbol)}</td></tr>`).join('')}</tbody></table>
+      <div class="vx-card-footer">${VX.updateIndicator(scan.scan_ts||scan.updated,scan.source,metaMode(scan))}
+        · ${Math.min(60,f.length)} ligne(s) affichée(s) sur ${f.length}
+        · intensité et score : échelles du moteur, 0 à 100</div></div>`
       :VX.states.empty('Aucune anomalie ne correspond à ce filtre.');
   }
   document.querySelectorAll('[data-lvl]').forEach(b=>b.addEventListener('click',()=>{

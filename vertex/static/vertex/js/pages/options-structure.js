@@ -44,17 +44,41 @@
      vide ne distingue pas « rien à montrer » de « la lecture a échoué ».
      Un seul endroit nomme donc l'absence, pour que le prochain état dégradé
      ne puisse pas en oublier un. */
+  /* Le 3e champ dit si l'hôte doit fabriquer SA carte. MESURE du 2026-09-06
+     (Chromium 1600 px, `/options?view=structure`) : le gabarit encadre
+     `vx-os-payoff` et `vx-os-greeks` dans une `<section class="vx-card">`,
+     mais pas `vx-os-scenarios` ni `vx-os-compare` — dont les rendus NOMINAUX,
+     eux, fabriquent la leur (`renderScenarios`, `renderCompare`). Leur motif
+     d'absence flottait donc en texte nu entre deux cartes : mesuré à 44,75 px
+     et 76,75 px, `closest('.vx-card')` nul et zéro carte à l'intérieur, contre
+     84,5 px dans une carte pour le verdict voisin. C'est la règle que la vue
+     Positionnement applique depuis HOTES_GEX ; elle manquait ici, et le
+     nouveau motif de `renderCompare` la manquait avec elle. */
   var HOTES_STRUCTURE = [
-    ['vx-os-scenarios', 'Pas de scénarios'],
-    ['vx-os-compare', 'Pas de comparaison de structures'],
-    ['vx-os-payoff', 'Pas de courbe de P&amp;L'],
-    ['vx-os-greeks', 'Pas de greeks de position'],
+    ['vx-os-scenarios', 'Pas de scénarios', true],
+    ['vx-os-compare', 'Pas de comparaison de structures', true],
+    ['vx-os-payoff', 'Pas de courbe de P&amp;L', false],
+    ['vx-os-greeks', 'Pas de greeks de position', false],
   ];
+  /* Encadre le contenu quand le gabarit ne le fait pas — un seul endroit, pour
+     que l'absence, le chargement et la panne tiennent le même rang visuel. */
+  function peindreStructure(hote, dedans) {
+    /* Accepte l'entrée de la liste ou son seul identifiant : un appelant qui
+       désignerait un hôte par son RANG casserait au premier réordonnancement. */
+    var h = (typeof hote === 'string')
+      ? (HOTES_STRUCTURE.filter(function (x) { return x[0] === hote; })[0] || [hote, '', false])
+      : hote;
+    var el = $(h[0]); if (!el) return;
+    el.innerHTML = h[2] ? ('<section class="vx-card">' + dedans + '</section>') : dedans;
+  }
   function nommerAbsenceStructure(motif, enPanne) {
     HOTES_STRUCTURE.forEach(function (h) {
-      var el = $(h[0]); if (!el) return;
-      el.innerHTML = (enPanne ? VX.states.error(h[1] + ' : ' + motif)
-                              : '<div class="vx-empty">' + h[1] + ' : ' + motif + '.</div>');
+      /*  Le motif servi par le moteur finit souvent déjà par un point
+          (« aucun contrat pour ce titre dans le board. ») : la phrase se
+          terminait alors par « board.. » — mesuré à l'écran le 2026-09-06.  */
+      var phrase = h[1] + ' : ' + motif + (/[.!?…]\s*$/.test(motif) ? '' : '.');
+      peindreStructure(h, enPanne ? VX.states.error(phrase)
+                                  : '<div class="vx-empty">' + phrase + '</div>');
     });
   }
 
@@ -65,10 +89,9 @@
     vHost.innerHTML = '<div class="vx-skeleton" style="height:150px"></div>';
     /* Chargement : les quatre hôtes disent qu'ils travaillent. Deux d'entre
        eux restaient à '' — indiscernable d'une carte qui n'a rien à dire. */
-    ($('vx-os-scenarios')||{}).innerHTML = '<div class="vx-empty">Calcul…</div>';
-    ($('vx-os-compare')||{}).innerHTML = '<div class="vx-empty">Calcul…</div>';
-    ($('vx-os-payoff')||{}).innerHTML = '<div class="vx-empty">Calcul…</div>';
-    ($('vx-os-greeks')||{}).innerHTML = '<div class="vx-empty">Calcul…</div>';
+    HOTES_STRUCTURE.forEach(function (h) {
+      peindreStructure(h, '<div class="vx-empty">Calcul…</div>');
+    });
     Promise.all([VX.fetch('/api/options/strategies/' + encodeURIComponent(sym), { ttl: 60000 }), board()])
       .then(function (r) {
         var d = r[0], bd = r[1];
@@ -286,7 +309,23 @@
   /* Comparaison de structures (LOT I) — matrice claire, pas un radar. */
   function renderCompare(d, bd) {
     var host = $('vx-os-compare'); if (!host) return;
-    var rows = d.strategies || []; if (rows.length < 2) { host.innerHTML = ''; return; }
+    var rows = d.strategies || [];
+    /* MESURE du 2026-09-06 (Chromium, `/options?view=structure`, NVDA
+       pré-sélectionné depuis le tableau) : le volet « Comparer les contrats et
+       voir la méthode » s'ouvrait sur 0 octet. Cause : `innerHTML = ''` dès que
+       le moteur rend moins de deux structures — un vide SANS motif, dans le
+       chemin NOMINAL cette fois, pas dans un état dégradé. Le volet promet une
+       comparaison ; s'il n'y a rien à comparer, il le dit et donne le compte. */
+    if (rows.length < 2) {
+      /*  Le rendu nominal ci-dessous fabrique sa `<section class="vx-card">` ;
+          ce motif-là partait sans, et flottait en texte nu (mesuré 76,75 px,
+          `closest('.vx-card')` nul). Même point d'encadrement que l'absence.  */
+      peindreStructure('vx-os-compare',
+        '<div class="vx-empty">Pas de comparaison de structures : le moteur n’en construit qu’'
+        + (rows.length === 1 ? 'une seule (' + esc(rows[0].label || 'structure') + ')' : 'aucune')
+        + ' depuis le tableau — une comparaison exige au moins deux structures, et aucune n’est inventée pour remplir la table.</div>');
+      return;
+    }
     var head = ['Structure', 'Coût/risque max', 'Gain max', 'Breakeven', 'Delta', 'Theta', 'Vega', 'PoP', 'DTE', 'Liquidité', 'Asymétrie', 'Adéquation'];
     var body = rows.map(function (s) {
       var an = analyseDe(s) || {};

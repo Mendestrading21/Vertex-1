@@ -12,7 +12,7 @@ import datetime as _dt
 
 from flask import Blueprint, jsonify, request
 
-from vertex.app.config import DEMO_MODE
+from vertex.app.config import DEMO_MODE, IBKR_ENABLED
 from vertex.app.state import scan_state
 from vertex.options import overview as _ov
 from vertex.options import interpretation as _oi
@@ -134,6 +134,137 @@ def _view_put(kind, sym, ts, val):
     return val
 
 
+#: Ce qui remplit `scan_state['options_chain_full']`, mesuré et non supposé :
+#: `terminal.py::_IbkrChainSide._df` (branche courtier) et `demo.demo_chain_full`
+#: (mode démonstration). Aucun autre écrivain dans le dépôt — donc, source
+#: coupée, la chaîne large n'arrivera JAMAIS, et le dire est une mesure.
+_SOURCE_CHAINE_LARGE = 'IBKR (données de marché, lecture seule)'
+
+
+def _absence_chaine_large(sym, quoi, etat):
+    """Pourquoi la chaîne large manque — MESURÉ, jamais supposé.
+
+    ## Le défaut, mesuré le 2026-09-06
+
+    Trois routes — `/api/options/max-pain/<sym>`, `/api/options/chain-grid/<sym>`
+    et `/api/options/surface/<sym>` — servaient une phrase FIXE :
+
+    ```json
+    {"available": false,
+     "note": "Chaîne large indisponible (TWS fermé, hors séance, ou titre pas
+              encore chargé)."}
+    ```
+
+    Aucune de ces trois causes n'était mesurée. Relevé sur l'instance de test
+    (`NO_IBKR=1`, `DEMO=0`) : `IBKR_ENABLED` valait **False** — la source de la
+    chaîne large était coupée par la configuration, TWS n'a jamais été
+    contacté, et la séance n'a jamais été consultée. La réponse affirmait donc
+    trois causes dont **aucune** n'était la bonne, et l'écran les répétait mot
+    pour mot (`options-symbol.js` rend `d.note` tel quel).
+
+    Pire : `_chaine.prechauffer(sym)` RENVOIE l'état de la collecte — sa
+    docstring dit explicitement « rend l'état, pour que l'appelant puisse le
+    joindre à sa réponse au lieu d'avaler l'échec » — et les trois routes
+    jetaient cette valeur de retour. Mesuré, deux appels successifs sur AAPL :
+    `{'etat': 'MISSING', 'chargement_en_cours': True}` puis
+    `{'etat': 'LIVE', 'chargement_en_cours': False}`. Deux états distincts,
+    tous deux racontés par la même phrase.
+
+    ## Ce que cette fonction sert
+
+    Cinq motifs EXCLUSIFS, chacun adossé à une mesure, du plus définitif au
+    plus circonstanciel : une source désactivée (rien n'arrivera, et c'est la
+    configuration du processus qui le dit), une collecte en cours (réessayer),
+    une persistance qui a échoué (`scan_state['chaine_non_persistee']`, posé
+    par le monolithe et lu par personne jusqu'ici), aucune chaîne large jamais
+    enregistrée dans ce processus (l'absence n'est alors PAS une mesure sur ce
+    titre), ou une collecte aboutie ailleurs mais sans contrat pour ce titre.
+
+    `available` et `note` restent en place : `options-symbol.js` les lit, et un
+    aveu plus honnête ne doit pas casser l'écran qu'il corrige.
+
+    ⛔ Le texte d'exception ne traverse PAS la frontière HTTP : `Meta.erreur`
+    (`snapshot.py`) et `chaine_non_persistee['erreur']` portent tous deux
+    `'%s: %s' % (type(exc).__name__, exc)`. On sert le FAIT de l'échec, jamais
+    sa formulation Python.
+    """
+    sym = str(sym or '').upper()
+    etat = etat or {}
+    en_cours = bool(etat.get('chargement_en_cours'))
+    #  La SOURCE d'abord — `chargement_en_cours` ne mesure PAS la chaîne large.
+    #
+    #  `prechauffer` rend l'état du magasin d'instantanés du board ÉTROIT
+    #  (`on_demand.fetch` → `legacy_engine.best_for_symbol`). Ce chargement-là
+    #  ne remplit `options_chain_full` que par un seul chemin : `terminal.py`
+    #  substitue `legacy_engine.yf` par la passerelle IBKR (`terminal.py:1571`),
+    #  dont `option_chain` persiste la chaîne large. Source coupée, la collecte
+    #  de fond passe par yfinance et n'écrira JAMAIS `options_chain_full`.
+    #
+    #  MESURE du 2026-09-06 sur l'instance de contrôle (5003, `NO_IBKR=1`),
+    #  premier appel sur trois titres froids — ZTS, PAYX, CDW :
+    #  `raison: CHARGEMENT_EN_COURS`, `retry_s: 8`, « rechargez dans quelques
+    #  secondes », et dans LA MÊME charge `source_activee: false`. Une charge
+    #  qui se contredit, et une invitation à réessayer que rien ne peut
+    #  satisfaire — exactement la cause inventée que cette fonction remplace,
+    #  revenue par l'ordre des branches. La configuration est mesurée et
+    #  définitive : elle passe devant.
+    source_coupee = not IBKR_ENABLED and not DEMO_MODE
+    echec_persistance = (scan_state.get('chaine_non_persistee') or {}).get(sym)
+    if source_coupee:
+        raison = 'SOURCE_DESACTIVEE'
+        note = ('%s : la chaîne large vient de %s, désactivée dans cette '
+                'configuration — aucune collecte de chaîne large n’a été '
+                'tentée, et aucune n’aboutira tant qu’elle le reste.'
+                % (quoi, _SOURCE_CHAINE_LARGE))
+    elif en_cours:
+        raison = 'CHARGEMENT_EN_COURS'
+        note = ('%s : la chaîne large de %s est en cours de collecte — '
+                'rechargez dans quelques secondes.' % (quoi, sym))
+    elif echec_persistance:
+        raison = 'PERSISTANCE_ECHOUEE'
+        note = ('%s : la chaîne large de %s a été reçue mais n’a pas pu être '
+                'enregistrée (échéance %s, côté %s) — motif au journal serveur.'
+                % (quoi, sym, echec_persistance.get('echeance') or '?',
+                   echec_persistance.get('cote') or '?'))
+    elif etat.get('erreur'):
+        raison = 'COLLECTE_EN_ERREUR'
+        note = ('%s : la dernière collecte de la chaîne de %s a échoué — '
+                'motif au journal serveur, rien n’est estimé.' % (quoi, sym))
+    elif not (scan_state.get('options_chain_full') or {}):
+        #  Même discrimination que `entrees_statut` sur `/api/options/
+        #  event-risk` — « personne ne l'a » et « les autres l'ont, pas
+        #  celui-ci » sont deux états, et l'un des deux seulement autorise à
+        #  conclure sur CE titre. MESURE : source active mais
+        #  `options_chain_full` absent de `scan_state` (démarrage à froid,
+        #  avant la première rotation), la branche suivante affirmait « la
+        #  collecte de la chaîne large de AAPL A ABOUTI sans aucun contrat »
+        #  alors qu'aucune collecte n'avait encore rien enregistré, pour aucun
+        #  titre. Un chiffre absent était présenté comme un résultat.
+        raison = 'AUCUNE_COLLECTE_ENREGISTREE'
+        note = ('%s : aucune chaîne large n’a encore été enregistrée dans ce '
+                'processus — ni pour %s ni pour un autre titre. L’absence '
+                'n’est donc pas une mesure sur %s.' % (quoi, sym, sym))
+    else:
+        raison = 'AUCUN_CONTRAT_COLLECTE'
+        note = ('%s : la collecte de la chaîne large a abouti pour d’autres '
+                'titres mais n’a rendu aucun contrat pour %s. Ce titre n’est '
+                'pas couvert par la rotation, ou n’a pas de chaîne '
+                'exploitable.' % (quoi, sym))
+    return jsonify({
+        'symbol': sym, 'available': False,
+        'raison': raison, 'note': note,
+        'chargement_en_cours': en_cours,
+        #  Réessayer n'a de sens que si quelque chose peut arriver : la source
+        #  coupée, `retry_s` promettait 8 s pour une chaîne qui n'arrivera pas.
+        'retry_s': 8 if (en_cours and not source_coupee) else None,
+        'source_chaine_large': _SOURCE_CHAINE_LARGE,
+        'source_activee': bool(IBKR_ENABLED or DEMO_MODE),
+        'collecte_en_erreur': bool(etat.get('erreur') or echec_persistance),
+        'as_of': _as_of(), 'ts': _ts_epoch(),
+        'read_only': True,
+    })
+
+
 def _max_pain(sym):
     """Max pain + murs d'OI + PCR RÉELS depuis la chaîne LARGE persistée
     (scan_state['options_chain_full'], remplie par le worker IBKR). None honnête sinon."""
@@ -187,15 +318,15 @@ def _max_pain(sym):
 @bp.route('/api/options/max-pain/<sym>')
 def options_max_pain(sym):
     """Max pain / murs d'OI / PCR sur la chaîne LARGE réelle (IBKR). Déclenche un
-    fetch on-demand (qui persiste la chaîne via le worker) puis calcule. État vide
-    honnête si TWS fermé / hors séance / titre pas chargé — jamais inventé."""
+    fetch on-demand (qui persiste la chaîne via le worker) puis calcule. L'absence
+    est NOMMÉE par une mesure — voir `_absence_chaine_large` — jamais inventée."""
     sym = (sym or '').upper()[:12]
-    #  NON bloquant : la collecte part en fond (defaut P0.1, 28-48 s).
-    _chaine.prechauffer(sym)
+    #  NON bloquant : la collecte part en fond (defaut P0.1, 28-48 s). La valeur
+    #  de retour est CONSERVEE : c'est la seule mesure de l'etat de collecte.
+    etat = _chaine.prechauffer(sym)
     mp = _max_pain(sym)
     if mp is None:
-        return jsonify({'symbol': sym, 'available': False,
-                        'note': 'Chaîne large indisponible (TWS fermé, hors séance, ou titre pas encore chargé).'})
+        return _absence_chaine_large(sym, 'Open interest par strike', etat)
     mp['available'] = True
     return jsonify(mp)
 
@@ -249,16 +380,15 @@ def _chain_grid(sym):
 @bp.route('/api/options/chain-grid/<sym>')
 def options_chain_grid(sym):
     """Grille de chaîne (strikes × échéances) RÉELLE depuis la chaîne large IBKR
-    (greeks courtier). Déclenche un fetch on-demand puis sérialise. État vide
-    honnête si TWS fermé / titre pas chargé — jamais inventé. En DÉMO : chaîne
+    (greeks courtier). Déclenche un fetch on-demand puis sérialise. L'absence est
+    NOMMÉE par une mesure — voir `_absence_chaine_large`. En DÉMO : chaîne
     synthétique clairement étiquetée."""
     sym = (sym or '').upper()[:12]
     #  NON bloquant : la collecte part en fond (defaut P0.1, 28-48 s).
-    _chaine.prechauffer(sym)
+    etat = _chaine.prechauffer(sym)
     g = _chain_grid(sym)
     if g is None:
-        return jsonify({'symbol': sym, 'available': False,
-                        'note': 'Chaîne large indisponible (TWS fermé, hors séance, ou titre pas encore chargé).'})
+        return _absence_chaine_large(sym, 'Grille de chaîne', etat)
     g['available'] = True
     return jsonify(g)
 
@@ -303,14 +433,14 @@ def _surface(sym):
 @bp.route('/api/options/surface/<sym>')
 def options_surface(sym):
     """Surface de volatilité (strike × échéance) + skew + structure par terme sur
-    la chaîne large réelle. État vide honnête si TWS fermé / titre pas chargé."""
+    la chaîne large réelle. L'absence est NOMMÉE par une mesure — voir
+    `_absence_chaine_large`."""
     sym = (sym or '').upper()[:12]
     #  NON bloquant : la collecte part en fond (defaut P0.1, 28-48 s).
-    _chaine.prechauffer(sym)
+    etat = _chaine.prechauffer(sym)
     s = _surface(sym)
     if s is None:
-        return jsonify({'symbol': sym, 'available': False,
-                        'note': 'Surface indisponible (chaîne large injoignable — TWS fermé / titre pas chargé).'})
+        return _absence_chaine_large(sym, 'Surface de volatilité', etat)
     return jsonify(s)
 
 
@@ -576,7 +706,30 @@ def options_vol_charts(sym):
 
 @bp.route('/api/options/event-risk/<sym>')
 def options_event_risk(sym):
-    """Risque d'événement pour le meilleur contrat d'un titre."""
+    """Risque d'événement pour le meilleur contrat d'un titre.
+
+    ## Deux des quatre entrées n'ont AUCUN producteur — mesuré, pas supposé
+
+    La route lit `detail['earnings_in_days']` et `detail['ex_dividend_days']`.
+    Relevé le 2026-09-06 sur une charge `/scan` RÉELLE (513 titres, capturée
+    sur l'instance de contrôle) : une entrée de `detail` porte 66 clés, et
+    **aucune** des 513 ne porte l'une de ces deux-là — la seule clé contenant
+    « div » est `rsi_div`. Balayage du dépôt : aucun écrivain non plus, ni dans
+    `terminal.py`, ni dans `vertex/`.
+
+    Conséquence : `interpret_event_risk` recevait `None` sur les deux dates à
+    **chaque** appel, rendait `status: 'INCONNU'` et l'incertitude « Dates
+    d'événement inconnues » — une phrase qui se lit comme « on a regardé le
+    calendrier et il est vide », alors que le calendrier n'a jamais été lu. Une
+    entrée non câblée et une absence mesurée sont deux états distincts
+    (invariants 4 et 6) ; seul le second autorise « inconnu ».
+
+    Ce qui change ici : la route DIT lesquelles de ses entrées existent, sans
+    toucher au moteur d'interprétation ni inventer de date. Elle ne branche
+    volontairement pas `cal_state` : la seule source d'échéances disponible
+    (`cal_cache.json`) donne la MÊME date à AAPL, NVDA, MSFT, META, GOOGL et
+    AMZN — s'en servir remplacerait une absence honnête par une date fausse.
+    """
     sym = (sym or '').upper()[:12]
     board = _board_for(sym)
     contracts = sorted([c for c in board if str(c.get('sym', '')).upper() == sym
@@ -584,12 +737,57 @@ def options_event_risk(sym):
                        key=lambda c: c.get('quality', 0), reverse=True)
     detail = (scan_state.get('detail') or {}).get(sym) or {}
     top = contracts[0] if contracts else {}
-    d = _oi.interpret_event_risk(
-        sym, earnings_in_days=detail.get('earnings_in_days'),
-        ex_dividend_days=detail.get('ex_dividend_days'),
-        right=top.get('type'), dte=top.get('dte'),
-        source='SCAN', as_of=_as_of())
-    return jsonify({'symbol': sym, 'interpretation': d})
+    entrees = {
+        'earnings_in_days': detail.get('earnings_in_days'),
+        'ex_dividend_days': detail.get('ex_dividend_days'),
+        'right': top.get('type'),
+        'dte': top.get('dte'),
+    }
+    d = dict(_oi.interpret_event_risk(
+        sym, earnings_in_days=entrees['earnings_in_days'],
+        ex_dividend_days=entrees['ex_dividend_days'],
+        right=entrees['right'], dte=entrees['dte'],
+        source='SCAN', as_of=_as_of()))
+    #  Les quatre entrées n'ont pas la même origine, donc pas les mêmes états
+    #  possibles — les confondre produirait justement le genre de verdict
+    #  uniforme que ce bloc existe pour défaire.
+    #
+    #  · `earnings_in_days` / `ex_dividend_days` viennent de `scan_state
+    #    ['detail']`. NON_CABLEE = aucune entrée de `detail`, sur tout
+    #    l'univers, ne porte cette clé : elle n'a pas d'écrivain, l'attendre
+    #    pour ce titre-ci n'a aucun sens. ABSENTE = d'autres titres l'ont, pas
+    #    celui-ci : là, c'est bien une absence mesurée.
+    #  · `right` / `dte` viennent du meilleur contrat du board options.
+    #    Absents, ils disent « aucun contrat noté pour ce titre », ce qui est
+    #    une mesure — pas un câblage manquant.
+    detail_toutes = scan_state.get('detail') or {}
+
+    def _statut_detail(cle):
+        if entrees[cle] is not None:
+            return 'MESUREE'
+        produite = any(isinstance(v, dict) and v.get(cle) is not None
+                       for v in detail_toutes.values())
+        return 'ABSENTE' if produite else 'NON_CABLEE'
+
+    statuts = {c: _statut_detail(c)
+               for c in ('earnings_in_days', 'ex_dividend_days')}
+    statuts.update({c: ('MESUREE' if entrees[c] is not None else 'AUCUN_CONTRAT')
+                    for c in ('right', 'dte')})
+    non_cablees = sorted(c for c, s in statuts.items() if s == 'NON_CABLEE')
+    if non_cablees:
+        d['limitations'] = list(d.get('limitations') or []) + [
+            'Entrées non câblées dans le scan : %s — le verdict ne peut pas '
+            'être autre chose qu’INCONNU, et ce n’est pas une mesure de '
+            'l’absence d’événement.' % ', '.join(non_cablees)]
+    return jsonify({
+        'symbol': sym,
+        'interpretation': d,
+        'entrees': entrees,
+        'entrees_statut': statuts,
+        'entrees_non_cablees': non_cablees,
+        'source': 'SCAN', 'as_of': _as_of(), 'ts': _ts_epoch(),
+        'read_only': True,
+    })
 
 
 @bp.route('/api/charts/<path:chart_id>/interpretation')

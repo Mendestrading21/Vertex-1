@@ -139,8 +139,8 @@ _VIEW_CONTENT = {
     <div id="vx-gx-radar">%%LOADING%%</div>
   </section>
 </div>
-<div id="vx-gx-thesis" class="vx-mt3"></div>
-<div id="vx-gx-tiles" class="vx-mt3"></div>
+<div id="vx-gx-thesis" class="vx-mt3"><section class="vx-card"><div class="vx-empty">Thèse de positionnement : aucun sous-jacent choisi — clique une ligne du radar ci-dessus.</div></section></div>
+<div id="vx-gx-tiles" class="vx-mt3"><section class="vx-card"><div class="vx-empty">Synthèse GEX (net, régime, murs, bascule 0-gamma) : aucun sous-jacent choisi.</div></section></div>
 <div class="vx-hero-grid vx-mt3">
   <section class="vx-card vx-hero-main" aria-label="GEX par strike">
     <div class="vx-card-header"><span class="vx-card-title">GEX par strike</span>
@@ -150,7 +150,7 @@ _VIEW_CONTENT = {
   <aside class="vx-card vx-insight-rail" aria-label="Flux notable">
     <div class="vx-card-header"><span class="vx-card-title">Flux notable</span>
       <span class="vx-chart-question">Gros premium négocié du cycle (volume × prime) — pas un flux tick-par-tick.</span></div>
-    <div id="vx-gx-flow"><div class="vx-empty">—</div></div>
+    <div id="vx-gx-flow"><div class="vx-empty">Flux notable : aucun sous-jacent choisi — le gros premium du cycle se lit après l’analyse d’un titre.</div></div>
   </aside>
 </div>
 <details class="vx-disclosure vx-mt3">
@@ -168,7 +168,7 @@ _VIEW_CONTENT = {
       <label class="vx-field" style="max-width:100%"><span>Ta question</span>
         <input id="vx-cp-q" class="vx-input" placeholder="ex. Que dit le positionnement sur ce titre ?" maxlength="500" autocomplete="off"></label>
       <button class="vx-btn vx-btn-sm vx-btn-primary" id="vx-cp-go">Demander au copilote</button>
-      <div id="vx-cp-out" class="vx-mt2"></div>
+      <div id="vx-cp-out" class="vx-mt2"><div class="vx-empty">La réponse du copilote s’affichera ici, ancrée dans les chiffres du positionnement déjà lus — aucune question n’a encore été posée.</div></div>
     </div>
   </section>
   </div>

@@ -149,6 +149,69 @@ def _catalysts(detail: dict) -> dict:
     }
 
 
+def _num(x):
+    """Nombre fini ou None — un 0.0 MESURÉ traverse, une chaîne/NaN devient None."""
+    if x is None or isinstance(x, bool):
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    return v if v == v and v not in (float('inf'), float('-inf')) else None
+
+
+def _reward_risk(detail: dict) -> float | None:
+    """Rapport gain/risque MESURÉ, lu chez son producteur : ``plan['rr_res']``.
+
+    Le corps précédent lisait ``detail['rr'] or plan['rr']``. Or ``plan['rr']``
+    est un LITTÉRAL : ``vertex/engines/analysis.py:265`` écrit ``'rr': 3.0`` en
+    dur, à côté de ``tp3 = last + 3 * risk`` — c'est la reformulation de la
+    construction de TP3, pas une mesure du titre. Et le `detail` d'un scan ne
+    porte AUCUNE clé `rr` de premier niveau (vérifié sur le dict retourné par
+    ``analysis.analyse`` : `rr` n'y figure pas ; seule la LIGNE de tableau la
+    reçoit, via ``strategy_fit._attach_strategy``). Le repli était donc le
+    chemin NORMAL, pour tout l'univers.
+
+    Mesure du défaut, instance 5003, 2026-09-06, 8 titres —
+    ``/api/strategy/decision/<sym>`` contre ``/api/ticker/<sym>`` :
+
+        symbole  technical.reward_risk  scores.asymmetry  plan.rr_res (mesuré)
+        AAPL     3.0                    80.0              1.3
+        MSFT     3.0                    80.0              0.7
+        NVDA     3.0                    80.0              0.2
+        TSLA     3.0                    80.0              1.4
+        AMD      3.0                    80.0              1.7
+        META     3.0                    80.0              1.4
+        GOOGL    3.0                    80.0              2.3
+        AMZN     3.0                    80.0              1.7
+
+    8/8 servaient la même constante ; 7/8 étaient en réalité SOUS le minimum
+    2:1 de la constitution. Conséquences dans ``executive_engine`` :
+      - ``RR_BELOW_MINIMUM`` (``3.0 < 2.0`` faux) ne s'est allumé 0 fois sur 8
+        — la garde dure la plus citée du produit était morte sur tout l'univers,
+        franchie par une valeur SUPPOSÉE et non mesurée ;
+      - ``scores.asymmetry = (3.0 - 1) * 40 = 80.0`` était une constante servie
+        comme une note, et la condition ``asym >= 40`` de la branche
+        ACHETER/RENFORCER était donc satisfaite en permanence.
+
+    ``plan['rr_res'] = (résistance 40 barres − dernier cours) / risque`` est le
+    propriétaire canonique déjà lu par ``decision_stack``, ``evidence``,
+    ``committee``, ``skyler_core`` et ``scanner/weekly``. ``detail['rr']`` reste
+    prioritaire (les LIGNES et le desk le posent depuis ce même `rr_res`), mais
+    par test NUMÉRIQUE et non par `or` : un R:R mesuré à 0.0 est le pire cas
+    possible, pas une absence, et il ne doit plus glisser vers le repli suivant.
+    Sans mesure, la valeur reste None : ``executive_engine`` nomme alors
+    `reward_risk` dans ``unknowns`` et l'asymétrie tombe à 0 — une inconnue,
+    jamais un neutre.
+    """
+    detail = detail or {}
+    direct = _num(detail.get('rr'))
+    if direct is not None:
+        return direct
+    plan = detail.get('plan')
+    return _num(plan.get('rr_res')) if isinstance(plan, dict) else None
+
+
 def _market_regime(scan_state: dict) -> dict:
     """Régime de marché via le mapping CANONIQUE ``market_context.regime_inputs``.
 
@@ -184,7 +247,6 @@ def build(symbol: str, detail: dict | None, scan_state: dict | None) -> dict:
     """
     detail = detail or {}
     scan_state = scan_state or {}
-    plan = detail.get('plan') or {}
     data_quality, quality_complete = _source_quality(scan_state, detail)
     reconciliation, reconciliation_complete = _reconciliation(scan_state, detail)
     guard, guard_complete = _guard(scan_state, detail)
@@ -207,7 +269,9 @@ def build(symbol: str, detail: dict | None, scan_state: dict | None) -> dict:
         'catalysts': _catalysts(detail),
         'technical': {
             'score': detail.get('score'),
-            'reward_risk': detail.get('rr') or (plan.get('rr') if isinstance(plan, dict) else None),
+            # Lecteur canonique — JAMAIS `plan['rr']`, littéral 3.0 (voir
+            # `_reward_risk`). Une absence reste None, nommée par le moteur.
+            'reward_risk': _reward_risk(detail),
             # `st_timing` n'a AUCUN producteur (0 assignation dans le dépôt, 2
             # lectures) : la clé est absente des 66 clés du detail d'un scan réel.
             # Aucune note de timing 0-100 n'est calculée aujourd'hui — scorecard
@@ -244,6 +308,11 @@ def build(symbol: str, detail: dict | None, scan_state: dict | None) -> dict:
 #  restent à brancher (hors périmètre de ce lot).
 read_fundamental = _fundamental
 read_catalysts = _catalysts
+#  `vertex/positions/recalculator.py:191` ÉCRASE `technical.reward_risk` avec
+#  `p['remaining_rr'] or d['rr'] or plan['rr']` : le même repli vers le littéral
+#  3.0, sur le plan de travail des positions détenues. Hors périmètre de ce lot,
+#  mais le lecteur canonique est exporté pour qu'il n'en écrive pas un second.
+read_reward_risk = _reward_risk
 
-__all__ = ['build', 'read_fundamental', 'read_catalysts',
+__all__ = ['build', 'read_fundamental', 'read_catalysts', 'read_reward_risk',
            'INCOMPLETE_PACKET_RULE', 'CRITICAL_SECTIONS']

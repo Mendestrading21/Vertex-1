@@ -34,6 +34,30 @@ def _num(x, default=0.0):
         return default
 
 
+#  LECTEUR UNIQUE du R:R du plan — défini chez `evidence` (couche basse déjà
+#  importée ici), réutilisé tel quel : deux conversions de la même clé, c'était
+#  déjà deux autorités pour un seul nombre.
+#
+#  Ce module lisait ``_num(plan['rr_res'])`` — défaut 0.0 — puis testait
+#  ``if rr and rr < 2.0`` dans la règle 5 ET dans `_tipping_points`. Un 0.0 est
+#  faux en Python : la garde s'éteignait exactement au pire cas mesurable.
+#  Mesuré sur ``evaluate({'price':100,'score':85,'verdict':'BUY',
+#  'confidence':70,'plan':{entry 100, stop 95, tp1 105, tp2 110, tp3 115,
+#  'rr_res': X}})`` :
+#
+#      rr_res absent -> STRONG_BUY      (aucun audit, aucun point de bascule)
+#      rr_res 0.0    -> STRONG_BUY      (aucun audit, aucun point de bascule)
+#      rr_res 0.1    -> WATCH_BREAKOUT
+#      rr_res 1.9    -> WATCH_BREAKOUT
+#      rr_res 2.0    -> STRONG_BUY
+#
+#  Non monotone : 0.1 dégradait, 0.0 — strictement pire — passait en achat fort.
+#  Chez son producteur (`analysis.py:252`), ``rr_res`` vaut 0.0 quand le risque
+#  est nul ou que le cours a rejoint la résistance des 40 barres : « aucune
+#  marge vers la cible », la mesure la plus défavorable, jamais une absence.
+rr_mesure = evidence.rr_mesure
+
+
 def assess_data_quality(detail, *, scan_age_s=None, demo=False):
     """Qualité de donnée du titre : chaque décision porte cette métadonnée."""
     missing = [f for f in ('price', 'score', 'plan') if not detail.get(f)]
@@ -96,7 +120,7 @@ def _market_permission(market, audit):
 def _apply_rules(decision, d, market, option, portfolio, permission, audit):
     """Applique les règles institutionnelles de dégradation (ordre = priorité)."""
     timing = _timing(d)
-    rr = _num((d.get('plan') or {}).get('rr_res'))
+    rr = rr_mesure(d)
 
     # 1. Corrélation portefeuille excessive → aucun risque nouveau.
     if portfolio and _num(portfolio.get('max_correlation')) >= 0.8 and decision in _BUYISH:
@@ -124,9 +148,15 @@ def _apply_rules(decision, d, market, option, portfolio, permission, audit):
 
     # 5. Risque/récompense insuffisant → pas d'achat. Seuil canonique = 2.0
     #    (aligné sur le hard gate ExecutiveEngine — jamais 1,5 concurrent).
-    if rr and rr < 2.0 and decision in {'STRONG_BUY', 'BUY'}:
-        audit.append(f'R:R {rr:.1f} < 2.0 (minimum stratégie) → pas d\'achat, surveiller.')
-        decision = 'WATCH_BREAKOUT'
+    #    Un R:R mesuré à 0.0 est le pire cas, pas une absence : il DOIT dégrader
+    #    (voir `rr_mesure`). Un R:R absent ne se suppose pas conforme.
+    if decision in {'STRONG_BUY', 'BUY'}:
+        if rr is None:
+            audit.append('R:R du plan non mesuré → achat non confirmé, surveiller.')
+            decision = 'WATCH_BREAKOUT'
+        elif rr < 2.0:
+            audit.append(f'R:R {rr:.1f} < 2.0 (minimum stratégie) → pas d\'achat, surveiller.')
+            decision = 'WATCH_BREAKOUT'
 
     # 6. Marché RISK-OFF → jamais d'achat FORT.
     if market and market.get('roro') == 'RISK-OFF' and decision == 'STRONG_BUY':
@@ -206,8 +236,10 @@ def _tipping_points(decision, d, market, portfolio):
     if decision in ('STRONG_BUY', 'DATA_INSUFFICIENT'):
         return []
     out = []
-    rr = _num((d.get('plan') or {}).get('rr_res'))
-    if rr and rr < 2.0:
+    rr = rr_mesure(d)
+    if rr is None:
+        out.append('Un ratio risque/récompense MESURÉ au plan (aucun aujourd’hui)')
+    elif rr < 2.0:
         out.append(f'Un ratio risque/récompense ≥ 2.0 (actuellement {rr:.1f})')
     if _timing(d) == 'EXTENDED':
         out.append('Un repli vers la zone d\'entrée (le titre est sur-étendu)')

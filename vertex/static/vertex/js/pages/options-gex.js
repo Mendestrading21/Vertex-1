@@ -22,6 +22,40 @@
 
   function toneBias(b) { return b === 'haussier' ? 'pos' : b === 'baissier' ? 'neg' : 'neutral'; }
 
+  /* La vue Positionnement porte CINQ hôtes de contenu. MESURE du 2026-09-06
+     (Chromium sur l'instance de contrôle, `/options?view=positioning`) : à
+     l'ouverture, `vx-gx-thesis` et `vx-gx-tiles` rendaient 0 octet et 0 px —
+     vides SANS motif, parce que `load()` n'est appelé que si un ticker actif
+     traîne dans le store. Et après une lecture rendant `gex.empty`,
+     `renderTiles` remettait explicitement `innerHTML = ''` (l. 58) pendant que
+     la thèse et les barres, elles, NOMMAIENT l'absence : trois hôtes qui
+     parlent, deux qui se taisent, pour un seul et même état. Un hôte muet ne
+     distingue pas « rien à montrer » de « la lecture a échoué ».
+     Comme sur la vue Structure, un SEUL endroit nomme l'absence pour que le
+     prochain chemin dégradé ne puisse pas en oublier un.
+     Le 3e champ dit si l'hôte doit fabriquer SA carte : le gabarit encadre
+     déjà `bars`, `flow` et `daily` dans une `<section class="vx-card">`, mais
+     pas `thesis` ni `tiles` — dont le rendu nominal, lui, fabrique la sienne.
+     Sans ce champ, le motif d'absence de ces deux-là flottait en texte nu
+     entre deux cartes (mesuré à la capture 1600 px). */
+  var HOTES_GEX = [
+    ['vx-gx-thesis', 'Pas de thèse de positionnement', true],
+    ['vx-gx-tiles', 'Pas de synthèse GEX', true],
+    ['vx-gx-bars', 'Pas de GEX par strike', false],
+    ['vx-gx-flow', 'Pas de flux notable', false],
+    ['vx-gx-daily', 'Pas d’historique quotidien', false],
+  ];
+  function nommerAbsenceGex(motif, enPanne) {
+    HOTES_GEX.forEach(function (h) {
+      var el = $(h[0]); if (!el) return;
+      var dedans = enPanne
+        ? ((window.VX && VX.states) ? VX.states.error(esc(h[1] + ' : ' + motif))
+                                    : '<div class="vx-error-banner">' + esc(h[1] + ' : ' + motif) + '</div>')
+        : '<div class="vx-empty">' + esc(h[1] + ' : ' + motif) + '.</div>';
+      el.innerHTML = h[2] ? ('<section class="vx-card">' + dedans + '</section>') : dedans;
+    });
+  }
+
   function renderThesis(d) {
     var s = d.synthesis || {}, host = $('vx-gx-thesis');
     if (!host) return;
@@ -55,7 +89,13 @@
   function renderTiles(d) {
     var g = d.gex || {}, host = $('vx-gx-tiles');
     if (!host) return;
-    if (g.empty) { host.innerHTML = ''; return; }
+    /* Vider est muet : le motif du moteur est le même que celui que la
+       thèse et les barres affichent déjà pour ce même état. */
+    if (g.empty) {
+      host.innerHTML = '<section class="vx-card"><div class="vx-empty">Pas de synthèse GEX : '
+        + esc((g.reason || (d.synthesis || {}).reason || 'aucun contrat avec OI + gamma exploitables')) + '.</div></section>';
+      return;
+    }
     var reg = g.regime === 'stabilisant' ? 'Stabilisant (pinning)'
       : g.regime === 'accelerateur' ? 'Accélérateur' : 'Neutre';
     host.innerHTML = '<section class="vx-card"><div class="vx-stats-row">'
@@ -300,12 +340,19 @@
     sym = (sym || '').trim().toUpperCase();
     if (!/^[A-Z.\-]{1,12}$/.test(sym)) { VX.toast && VX.toast('Ticker invalide', 'error'); return; }
     try { if (VX.store) VX.store.set('active_ticker', sym); } catch (e0) {}
-    ($('vx-gx-thesis')||{}).innerHTML = '<section class="vx-card"><div class="vx-empty">Analyse du positionnement de ' + esc(sym) + '…</div></section>';
+    HOTES_GEX.forEach(function (h) {
+      var el = $(h[0]); if (!el) return;
+      var dedans = '<div class="vx-empty">Analyse du positionnement de ' + esc(sym) + '…</div>';
+      el.innerHTML = h[2] ? ('<section class="vx-card">' + dedans + '</section>') : dedans;
+    });
     VX.fetch('/api/options/gex/' + encodeURIComponent(sym), { ttl: 120000 }).then(function (d) {
       renderThesis(d); renderTiles(d); renderBars(d); renderFlow(d); renderDaily(d);
       try { VX.context && VX.context.save && VX.context.save({ selectedSymbol: sym }); } catch (e) {}
     }).catch(function (e) {
-      ($('vx-gx-thesis')||{}).innerHTML = '<section class="vx-card"><div class="vx-error-banner">Chargement impossible : ' + esc(e.message) + '</div></section>';
+      /* Seule la thèse était rafraîchie : les quatre autres hôtes gardaient les
+         chiffres du symbole PRÉCÉDENT sous le titre du nouveau — une valeur
+         fausse, pas une absence. Les cinq disent la panne. */
+      nommerAbsenceGex('la lecture a échoué (' + (e.message || 'erreur inconnue') + ')', true);
     });
   }
 
@@ -320,4 +367,6 @@
   var pre = '';
   try { pre = (VX.store && VX.store.get && VX.store.get('active_ticker')) || ''; } catch (e) {}
   if (pre && inp) { inp.value = pre; load(pre); }
+  else nommerAbsenceGex('aucun sous-jacent choisi — clique une ligne du radar ci-dessus, '
+                        + 'ou saisis un symbole dans la barre de contexte', false);
 })();

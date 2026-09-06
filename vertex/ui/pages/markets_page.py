@@ -296,6 +296,30 @@ const SECONDARY_LABEL={YIELD_CURVE_INVERTED:'Courbe des taux inversée',
   YIELD_CURVE_STEEP:'Courbe des taux pentue',BREADTH_DIVERGENCE:'Divergence de participation',
   DOLLAR_STRENGTHENING:'Dollar en renforcement',DOLLAR_WEAKENING:'Dollar en affaiblissement'};
 const secFr=(t)=>SECONDARY_LABEL[t]||(REGIME_LABEL[t]?REGIME_LABEL[t][0]:t);
+/* Régime du S&P — VOCABULAIRE DISTINCT de VX.regime (qui nomme les régimes du
+   moteur de régimes : TREND_UP, CHOP…). Celui-ci vient de `market_ctx.spy_regime`,
+   dont le seul producteur est `vertex/market/context.py` (ligne 46) : il ne rend
+   que TREND, CHOP ou NEUTRAL. Ces codes sortaient BRUTS à quatre endroits —
+   mesure du 06/09/2026 sur 5003 (scan yfinance peuplé, spy_regime='NEUTRAL') :
+   « Régime S&P 500 · NEUTRAL » (Synthèse, carte Risque du jour), « Régime
+   NEUTRAL — MARCHÉ NEUTRE · RISK-ON… » (conclusion du graphique de référence),
+   « Régime · NEUTRAL » (Macro, Appétit pour le risque). La page Aujourd'hui
+   traduisait déjà le MÊME champ (briefing.py : NEUTRAL → « marché neutre ») :
+   Marchés était le seul écran à laisser passer l'anglais (invariant 8). La table
+   locale portait UP et DOWN, deux valeurs qu'aucun moteur ne produit, et pas
+   NEUTRAL, la seule servie ce jour-là. Un code inconnu reste affiché tel quel :
+   honnête, jamais masqué, jamais inventé. */
+const SPY_REGIME_FR={TREND:'Tendance',CHOP:'Sans direction',NEUTRAL:'Neutre'};
+const spyRegFr=(c)=>SPY_REGIME_FR[c]||c||'n/d';
+/* Verdicts du scan : la table CANONIQUE est déjà servie par la coque
+   (`window.__VXVOCAB`, vertex/engines/recommendation.vocab_js) — même idiome
+   qu'intelligence_page.py. Aucune table locale, qui divergerait au premier
+   verdict ajouté. Mesure du 06/09/2026 : le donut « Répartition des verdicts »
+   concluait « AVOID domine (219 titre(s) sur 513) » et étiquetait ses parts
+   BUY / WATCH / WAIT / AVOID, alors que le vocabulaire canonique dit
+   Achat / Surveiller / Attendre / Éviter. */
+const verdFr=(c)=>{const e=(window.__VXVOCAB||{})[String(c||'').trim().toUpperCase()];
+  return (e&&(e.label||e[0]))||c||'n/d';};
 const SETUP_LABEL={BALANCED:'Équilibrée',BREAKOUT_PULLBACK:'Cassure / pullback',DEFENSIVE:'Défensive',
   MEAN_REVERSION:'Retour moyenne',MOMENTUM:'Momentum',QUALITY_DEFENSIVE:'Qualité défensive',
   CAPITAL_PRESERVATION:'Préservation capital',TAKE_PROFITS:'Prises de bénéfices',
@@ -322,11 +346,10 @@ async function loadRegime(scan){
       const m=mkt(scan);const CO=(window.VXCharts&&VXCharts.colors)||{};
       const sigs=[];
       if(m.vix!=null&&!isNaN(m.vix)){const v=Number(m.vix);
-        sigs.push(sigRail('VIX',v.toFixed(1),(v-10)/30*100,v<15?CO.positive:v<25?CO.warning:CO.negative));}
+        sigs.push(sigRail('VIX',VX.fmt.num(v,1),(v-10)/30*100,v<15?CO.positive:v<25?CO.warning:CO.negative));}
       if(m.breadth!=null&&!isNaN(m.breadth)){const b=Number(m.breadth);
         sigs.push(sigRail('Participation &gt;MM50',Math.round(b)+' <small>%</small>',b,b>=55?CO.positive:b>=45?CO.warning:CO.negative));}
-      if(m.spy_regime)sigs.push(sigText('Régime S&amp;P 500',
-        esc({TREND:'Tendance',CHOP:'Sans direction',UP:'Haussier',DOWN:'Baissier'}[m.spy_regime]||m.spy_regime)));
+      if(m.spy_regime)sigs.push(sigText('Régime S&amp;P 500',esc(spyRegFr(m.spy_regime))));
       if(m.roro)sigs.push(sigText('Risk-on / risk-off',esc(m.roro)));
       ($('vx-mk-regime-body')||{}).innerHTML=
         `<div class="vx-mk-regime-compact">
@@ -428,7 +451,7 @@ function loadRisk(scan){
   ($('vx-mk-risk-body')||{}).innerHTML=
     (m.verdict?`<div style="font-size:14px;line-height:1.7">${esc(m.verdict)}</div>`:'')
     +(m.roro?`<div class="vx-kv vx-mt2"><span class="k">Risk-on / risk-off</span><span class="v">${esc(m.roro)}</span></div>`:'')
-    +(m.spy_regime?`<div class="vx-kv"><span class="k">Régime S&amp;P 500</span><span class="v">${esc(m.spy_regime)}</span></div>`:'')
+    +(m.spy_regime?`<div class="vx-kv"><span class="k">Régime S&amp;P 500</span><span class="v">${esc(spyRegFr(m.spy_regime))}</span></div>`:'')
     +`<div class="vx-card-footer">${VX.updateIndicator(scan&&(scan.scan_ts||scan.updated),(scan&&scan.source)||'scan',modeOf(scan))}</div>`;
 }
 function idxByName(scan){
@@ -616,7 +639,10 @@ function loadMultiIndex(scan){
       invalidate:'Défensives seules en tête — régime prudent.'},
     render:(cv)=>VXCharts.multiLine(cv,labels,
       sets.map(x=>({label:x.n,data:x.spark.slice(-len).map(v=>x.spark[x.spark.length-len]?(v/x.spark[x.spark.length-len]-1)*100:0)})),
-      {yFmt:(v)=>v.toFixed(1)+' %'})});
+      /* Axe en français : `v.toFixed(1)` graduait « -4.0 % / -2.0 % / 0.0 % »
+         (mesuré au navigateur le 06/09/2026) au-dessus d'un tableau qui écrit
+         « -1,28 % ». Deux notations décimales sur le même écran. */
+      {yFmt:(v)=>VX.fmt.pct(v,1,false)})});
 }
 function loadSpyChart(scan){
   const det=(scan&&scan.detail)||{};
@@ -655,7 +681,7 @@ function loadSpyChart(scan){
          « · unité » sur une valeur vide) et le tiroir « Comprendre » le dit. */
       title:title,unit:(hasSpy||hasIdx)?'points d’indice':'',timeframe:closes.length+' séances',
       question:'La tendance de fond reste-t-elle exploitable ?',
-      conclusion:(m.spy_regime==='TREND'?'Tendance intacte':'Régime '+(m.spy_regime||'n/d'))+(m.verdict?' — '+m.verdict:''),
+      conclusion:(m.spy_regime==='TREND'?'Tendance intacte':'Régime '+spyRegFr(m.spy_regime))+(m.verdict?' — '+m.verdict:''),
       labels:closes.map((_,i)=>i-closes.length),values:closes,height:260,
       /* GRAMMAIRE TV (lot 200) : chips Max/Min = les bornes RÉELLES de la série */
       extremes:true,
@@ -718,7 +744,10 @@ function loadYield(scan){
   VXCharts.card('vx-mk-yield',{
     title:'Courbe des taux US',unit:'%',timeframe:'clôture',
     question:'La courbe est-elle normale ou inversée ?',
-    conclusion:spread!=null?('Spread 10a-3m '+(spread>=0?'+':'')+spread.toFixed(2)+' pt — '+(spread<0?'INVERSÉE (signal de récession)':'pentue / normale')):'—',
+    /* « Spread 10a-3m +1.02 pt » — mesuré au navigateur le 06/09/2026, un point
+       décimal anglais dans la conclusion d'une carte dont les KPI voisins
+       écrivent « 4,78 % ». `VX.fmt.num` est le formateur maison (fr-FR). */
+    conclusion:spread!=null?('Spread 10a-3m '+(spread>=0?'+':'')+VX.fmt.num(spread,2)+' pt — '+(spread<0?'INVERSÉE (signal de récession)':'pentue / normale')):'—',
     height:250,source:(scan&&scan.source)||'scan',timestamp:scan&&(scan.scan_ts||scan.updated),mode:modeOf(scan),
     limits:'4 maturités réelles (3M/5A/10A/30A)',
     legend:[{label:'Actuelle',color:cc.info},{label:'Séance préc.',color:cc.neutral}],
@@ -728,9 +757,11 @@ function loadYield(scan){
     render:(cv)=>VXCharts.multiLine(cv,labels,[
       {label:'Actuelle',data:cur,borderColor:cc.info,borderWidth:2.2,pointRadius:3,pointBackgroundColor:cc.info,fill:false},
       {label:'Séance préc.',data:prev,borderColor:cc.neutral,borderWidth:1.4,borderDash:[4,3],pointRadius:0,fill:false}
-    ],{yFmt:(v)=>v+' %'})});
+    /* Graduations mesurées avant correction : « 3.5 % · 4 % · 4.5 % » — la
+       valeur brute de Chart.js concaténée. Le formateur maison rend « 3,50 % ». */
+    ],{yFmt:(v)=>VX.fmt.pct(v,2,false)})});
 }
-async function loadMacroRegime(){
+async function loadMacroRegime(scan){
   /* LOT 603 (dossier 531-A, suite) : un echec ne laisse plus la zone vide et
      muette. Invariant produit : donnee absente -> mention honnete. */
   var s=null,err=null;
@@ -749,11 +780,23 @@ async function loadMacroRegime(){
     +'<div style="font-size:22px;font-weight:800;color:'+(pos?'var(--vx-positive)':'var(--vx-negative)')+'">'+esc(roro)+'</div>'+bar
     +'<div class="vx-flex" style="justify-content:space-between"><span class="vx-meta">RISK-OFF</span><span class="vx-meta">écart '+(gap==null?'n/d':(gap>0?'+':'')+gap)+'</span><span class="vx-meta">RISK-ON</span></div>'
     +'<div class="vx-mt3">'
-    +kv('Régime',esc(s.regime||'—'))
-    +kv('VIX',s.vix!=null?esc(s.vix)+(s.vix_band?' · '+esc(s.vix_band):''):'—')
+    +kv('Régime',esc(s.regime?spyRegFr(s.regime):'—'))
+    +kv('VIX',s.vix!=null?VX.fmt.num(s.vix,1)+(s.vix_band?' · '+esc(s.vix_band):''):'—')
     +kv('&gt; MM50',br.above50!=null?br.above50+' %':'—',brCls(br.above50))
     +kv('&gt; MM200',br.above200!=null?br.above200+' %':'—',brCls(br.above200))
-    +'</div><div class="vx-card-footer"><span class="vx-meta">Écart risk-on/risk-off du moteur (positif = appétit, négatif = aversion). Aucune valeur inventée.</span></div></section>';
+    /* PROVENANCE — cette carte était la SEULE de la vue Macro à ne porter ni
+       source, ni horodatage, ni fraîcheur : mesuré au navigateur le 06/09/2026,
+       les cinq cartes voisines affichaient « Il y a 23 min · yfinance Différé »
+       pendant que le régime, le VIX et la participation d'ici n'avaient aucun
+       âge (invariant 5). Ce qu'elle peint n'est pas une seconde mesure :
+       `/api/market/summary` re-sert `scan.market_ctx` champ pour champ
+       (vertex/app/routes/feeds.py, 'regime'/'vix'/'breadth'/'roro') — vérifié
+       sur 5003 : regime='NEUTRAL', vix=14.5, breadth={above50:48,above200:67},
+       identiques dans /scan. L'instantané qui la date est donc bien le scan,
+       et l'indicateur est celui de toute la page — pas un second vocabulaire. */
+    +'</div><div class="vx-card-footer">'
+    +VX.updateIndicator(scan&&(scan.scan_ts||scan.updated),(scan&&scan.source)||'scan',modeOf(scan))
+    +'<span class="vx-meta">Écart risk-on/risk-off du moteur (positif = appétit, négatif = aversion). Aucune valeur inventée.</span></div></section>';
 }
 /* Références macro OFFICIELLES (FRED, BCE, BNS) — instantané du collecteur de
    fond (/api/macro/officiel). Chaque tuile porte la valeur, l'unité, la DATE
@@ -918,6 +961,19 @@ function loadSectors(scan){
               SCAN_ACTION,'Performance et momentum par secteur');
     ($('vx-mk-sectors-leaders')||{}).innerHTML=
       VX.states.empty('Secteurs non calculés par le dernier scan.');
+    /*  TROISIÈME hôte de cette vue, oublié par les deux passes précédentes.
+        `vx-mk-rotation` est la colonne 8/12 en haut de l'écran (balisage plus
+        haut dans ce fichier) : cette sortie anticipée la laissait INTACTE,
+        donc vide. Mesuré au navigateur le 06/09/2026 sur 5003 (`/scan` sert
+        `sectors: []`, démarrage à froid) : `#vx-mk-rotation` occupait
+        869 × 224 px avec `innerHTML.length === 0` et aucun texte — le seul
+        hôte muet des six vues de Marchés. L'état vide ajouté plus bas ne
+        couvre QUE le cas « secteurs présents mais non cotés » ; il n'est
+        jamais atteint quand le scan n'a aucun secteur, c'est-à-dire dans le
+        cas le plus fréquent. Chaque sortie nomme désormais les trois hôtes
+        que cette vue possède. */
+    emptyCard('vx-mk-rotation','Secteurs non calculés par le dernier scan.',
+              SCAN_ACTION,'Rotation sectorielle — force relative × momentum');
     return;
   }
   VXCharts.heatmapCard('vx-mk-sectors-heat',{
@@ -925,10 +981,23 @@ function loadSectors(scan){
     question:'Quels secteurs attirent le capital aujourd’hui ?',
     conclusion:'Vert = flux entrant, rouge = flux sortant (variation moyenne du jour).',
     columns:['Var. moyenne %','Score','RVOL','Titres'],
+    /* UNE SEULE colonne est colorée, et c'est celle que la conclusion annonce.
+       `heatmapCard` n'a qu'un couple (min,max) pour TOUT le tableau — ici -3/+3,
+       l'échelle d'une variation quotidienne en %. La colonne Score y envoyait
+       des notes de 0 à 100 : `t=clamp((v-0)/3)` sature à 1 dès 3 points.
+       Mesuré au navigateur le 06/09/2026 (9 secteurs) : les NEUF cellules de
+       score sortaient à `rgba(54,200,137,.5)`, le vert maximal — Conso 27 et
+       Santé 48 peints exactement comme Finance 80, sous une légende qui dit
+       « Vert = flux entrant ». Une couleur qui affirme le contraire du chiffre
+       qu'elle recouvre. Score, RVOL et Titres restent des NOMBRES lisibles
+       (leur hiérarchie visuelle vit dans le nuage de rotation juste au-dessus,
+       où le score EST l'axe des abscisses). */
     rows:sectors.map(sec=>({label:esc(sec.sector||'n/d'),cells:[
       {value:sec.avg_change??null,onclick:'/opportunities?view=stocks&sector='+encodeURIComponent(sec.sector||'')},
-      {value:sec.avg_score??null,label:VX.fmt.nd(sec.avg_score)},
-      {value:null,label:VX.fmt.nd(sec.avg_rvol)},
+      {value:null,label:VX.fmt.nd(sec.avg_score)},
+      /* « 0.84 », « 1.15 » : `VX.fmt.nd` rend le nombre BRUT, donc le point
+         décimal anglais, dans la colonne voisine de « -1,28 % ». */
+      {value:null,label:VX.fmt.num(sec.avg_rvol,2)},
       {value:null,label:String(sec.n??'—')}]})),
     min:-3,max:3,fmt:(v)=>v===null?'—':VX.fmt.pct(v),
     source:(scan&&scan.source)||'scan',timestamp:scan&&(scan.scan_ts||scan.updated),mode:modeOf(scan),
@@ -945,16 +1014,31 @@ function loadSectors(scan){
     </tr>`;}).join('')+'</tbody></table>'
     +`<div class="vx-card-footer">${VX.updateIndicator(scan&&(scan.scan_ts||scan.updated),(scan&&scan.source)||'scan',modeOf(scan))}</div>`;
   /* Rotation sectorielle en quadrant (RRG-like) : force relative × momentum */
-  if(window.VXCharts&&sectors.length>=2){
+  /* COORDONNÉES SERVIES, JAMAIS SUPPOSÉES. Un secteur sans score prenait
+     `s.score||50` — un champ que `scan.sectors[]` ne porte pas (mesuré : les
+     clés servies sont sector, avg_change, avg_score, avg_rvol, n, leader), donc
+     TOUJOURS 50 — et un secteur sans variation prenait 0. Le point atterrissait
+     au centre exact des quadrants, indiscernable d'une mesure : reproduit le
+     06/09/2026 en servant un /scan dont « Conso » perd avg_score et avg_change,
+     le point apparaissait à (50 ; 0) sous l'étiquette « Conso ». Les secteurs
+     non cotés sortent du nuage et sont COMPTÉS dans les limites de la carte ;
+     sous deux secteurs cotés, l'hôte ne reste plus vide et muet. */
+  const cotes=sectors.filter(s=>s.avg_score!=null&&s.avg_change!=null);
+  const nonCotes=sectors.length-cotes.length;
+  if(window.VXCharts&&cotes.length<2){
+    emptyCard('vx-mk-rotation','Rotation sectorielle : moins de deux secteurs portent à la fois un score et une variation dans le dernier scan.',
+              SCAN_ACTION,'Rotation sectorielle — force relative × momentum');
+  }else if(window.VXCharts){
     const cc2=VXCharts.colors;
-    const pts=sectors.map(s=>({x:(s.avg_score!=null?s.avg_score:(s.score||50)),y:(s.avg_change!=null?s.avg_change:0),label:s.sector||''}));
+    const pts=cotes.map(s=>({x:s.avg_score,y:s.avg_change,label:s.sector||''}));
     const quadCol=(x,y)=>x>=50?(y>=0?cc2.positive:cc2.warning):(y>=0?cc2.neutral:cc2.negative);
     VXCharts.card('vx-mk-rotation',{
       title:'Rotation sectorielle — force relative × momentum',
       question:'Quels secteurs mènent, lesquels s’essoufflent ?',
       conclusion:'Haut-droit = Leaders (force + momentum) · bas-gauche = Retardataires — cliquer un secteur',
       height:360,source:(scan&&scan.source)||'scan',timestamp:scan&&(scan.scan_ts||scan.updated),mode:modeOf(scan),
-      limits:'force = score moyen · momentum = variation moyenne du jour (univers scanné)',
+      limits:'force = score moyen · momentum = variation moyenne du jour (univers scanné)'
+        +(nonCotes?' · '+nonCotes+' secteur(s) sans score ou sans variation : non placés':''),
       explain:{shows:'Chaque secteur placé par sa force relative (score moyen) et son momentum (variation moyenne du jour).',
         why:'La stratégie surpondère la zone « Leading » (haut-droit) et se méfie du « Lagging » (bas-gauche).',
         confirm:'Un secteur qui migre vers le haut-droit sur plusieurs séances.',invalidate:'Bascule vers le bas-gauche.'},
@@ -1000,7 +1084,16 @@ async function loadBreadth(scan){
     const pct=Math.max(0,Math.min(100,brNum));
     const reading=brNum>=55?'Participation saine — hausse partagée':brNum>=45?'Participation moyenne':'Participation étroite — sélectivité';
     bHost.innerHTML=
-      '<div class="vx-stat-xl"><span class="vx-stat-xl-value vx-mono">'+VX.fmt.num(brNum,0)+' %</span><span class="vx-stat-xl-label">Titres &gt; MM50</span></div>'
+      /* GRAND CHIFFRE + son libellé, forme CANONIQUE (briefing.py) : `.vx-stat-xl`
+         EST le nombre (cockpit.css : 44 px, mono), `.vx-stat-xl-label` est un
+         BLOC en dessous. Cette page les emboîtait dans un `.vx-stat-xl` commun
+         avec deux `<span>` et une classe `.vx-stat-xl-value` qu'AUCUNE feuille
+         ne définit (0 règle dans les cinq CSS servies) : mesuré au navigateur
+         le 06/09/2026, le libellé démarrait exactement à la fin du nombre
+         (valeur x=1053 w=100, libellé x=1153, même ligne) — « 48 %TITRES > MM50 »
+         collé, à 1600 comme à 390 px. */
+      '<div class="vx-stat-xl vx-mono">'+VX.fmt.num(brNum,0)+' %</div>'
+      +'<div class="vx-stat-xl-label">Titres &gt; MM50</div>'
       +'<div class="vx-rail vx-mt2" style="--vx-rail-pos:'+pct.toFixed(0)+'%"><span class="vx-rail-mark"></span></div>'
       +'<div class="vx-rail-scale"><span>0 %</span><span>50 %</span><span>100 %</span></div>'
       +'<div class="vx-insight vx-mt2">'+reading+'</div>'
@@ -1017,7 +1110,15 @@ async function loadBreadth(scan){
         +(bo.above200!=null?kv('Titres > MM200',Math.round(bo.above200)+' %',pc(bo.above200)):'')
         +((bo.adv!=null&&bo.dec!=null)?kv('Avancées / Déclins',bo.adv+' / '+bo.dec,bo.adv>=bo.dec?'vx-pos':'vx-neg'):'')
         +((bo.nh!=null&&bo.nl!=null)?kv('Nouveaux hauts / bas',bo.nh+' / '+bo.nl,bo.nh>=bo.nl?'vx-pos':'vx-neg'):'')
-        +(bo.buy!=null?kv('Signaux d’achat (univers)',bo.buy):'')
+        /* `breadth.buy` est une PART, pas un compte : son producteur écrit
+           `round(100 * nb de verdicts BUY / N)` (vertex/market/context.py).
+           Il était rendu nu — « Signaux d'achat (univers) · 18 » — au milieu de
+           lignes qui SONT des comptes (« Avancées / Déclins · 182 / 331 »).
+           Mesure du 06/09/2026 : 94 verdicts BUY sur 513 titres, soit 18 %, et
+           l'entonnoir de la MÊME vue affichait « 94 · Achats » deux cartes plus
+           bas. Un lecteur lisait donc 18 signaux là où le scan en compte 94.
+           L'unité manquante rendait la valeur fausse d'un facteur cinq. */
+        +(bo.buy!=null?kv('Univers en signal d’achat',Math.round(bo.buy)+' %'):'')
         +`<div class="vx-help vx-mt2">Calculé sur l’univers des leaders scannés (partiel, pas tout le NYSE). Advance/decline cumulés multi-séances non fournis — non affichés plutôt qu’inventés.</div>`;
     }else dEl.innerHTML=VX.states.empty('Détail de participation non fourni par le dernier scan.');
   }
@@ -1044,8 +1145,11 @@ async function loadBreadth(scan){
   if(top.length){
     VXCharts.donutCard('vx-mk-verdicts',{
       title:'Répartition des verdicts du scan',unit:'titres',question:'Le moteur trouve-t-il des dossiers ?',
-      conclusion:top[0][0]+' domine ('+top[0][1]+' titre(s) sur '+rows.length+')',
-      labels:top.map(x=>x[0]),values:top.map(x=>x[1]),height:200,
+      /* Le scan écrit ses verdicts en anglais (BUY/WATCH/WAIT/AVOID, mesuré :
+         513 lignes, 219 AVOID) ; la carte les rendait tels quels, en conclusion
+         comme en légende. `verdFr` lit la table canonique de la coque. */
+      conclusion:verdFr(top[0][0])+' domine ('+top[0][1]+' titre(s) sur '+rows.length+')',
+      labels:top.map(x=>verdFr(x[0])),values:top.map(x=>x[1]),height:200,
       source:(scan&&scan.source)||'scan',timestamp:scan&&(scan.scan_ts||scan.updated),mode:modeOf(scan),
       explain:{shows:'Le décompte des verdicts moteur sur l’univers scanné (max 5 catégories).',
         why:'Beaucoup d’ÉVITER = environnement hostile même si les indices tiennent.',
@@ -1146,13 +1250,20 @@ async function loadVix(scan){
     /* `vx-mk-vix-gauge` reste l'hôte contractuel, mais ne monte plus une jauge
        redondante : il porte désormais la valeur hero. Le rail est l'unique
        visualisation bornée calme ↔ stress. */
+    /* `VX.fmt.nd` rend le nombre TEL QUEL : le plus gros chiffre de la vue
+       s'écrivait « 14.5 » (mesuré au navigateur le 06/09/2026), point décimal
+       anglais, juste au-dessus de « +1,50 % vs hier ». `num(v,1)` francise sans
+       rien arrondir de plus : le moteur sert déjà une décimale
+       (vertex/market/context.py : `round(float(v.iloc[-1]), 1)`). */
     ($('vx-mk-vix-body')||{}).innerHTML=
-      `<div id="vx-mk-vix-gauge" class="vx-markets-vix-stat"><div class="vx-stat-xl"><span class="vx-stat-xl-value vx-mono">${VX.fmt.nd(vix)}</span><span class="vx-stat-xl-label">Indice VIX</span></div></div>`
+      /* Même forme canonique que la participation : « 14,5INDICE VIX » était
+         collé pour la même raison (libellé en `<span>` derrière le nombre). */
+      `<div id="vx-mk-vix-gauge" class="vx-markets-vix-stat"><div class="vx-stat-xl vx-mono">${VX.fmt.num(vix,1)}</div><div class="vx-stat-xl-label">Indice VIX</div></div>`
       +(chg!==null&&chg!==undefined?`<div class="vx-kv"><span class="k">Variation</span><span class="v ${chg>0?'vx-neg':chg<0?'vx-pos':'vx-muted'}">${VX.fmt.pct(chg)} vs hier</span></div>`:'')
       +(band?`<div class="vx-kv"><span class="k">Bande</span><span class="v">${esc(band)}</span></div>`:'')
       +`<div class="vx-stat-xl-label vx-mt3">Calme ↔ Stress</div>`
       +`<div class="vx-rail vx-rail--stress vx-mt2" style="--vx-rail-pos:${stress.toFixed(0)}%"><span class="vx-rail-mark"></span></div>`
-      +`<div class="vx-rail-chipline" style="--vx-rail-pos:${stress.toFixed(0)}%"><span class="vx-rail-chip">${VX.fmt.nd(vix)}</span></div>`
+      +`<div class="vx-rail-chipline" style="--vx-rail-pos:${stress.toFixed(0)}%"><span class="vx-rail-chip">${VX.fmt.num(vix,1)}</span></div>`
       +`<div class="vx-rail-scale"><span>10</span><span>25</span><span>40+</span></div>`
       +`<div class="vx-insight vx-mt2">${reading}. Un VIX en expansion invalide les entrées agressives.</div>`
       +`<div class="vx-card-footer">${VX.updateIndicator(scan&&(scan.scan_ts||scan.updated),(scan&&scan.source)||'scan',modeOf(scan))}</div>`;
@@ -1211,7 +1322,7 @@ async function boot(){
     }catch(e){}
     if(VIEW==='overview'){loadRegime(scan);loadLeader(scan||{});loadRisk(scan);loadSpyChart(scan);}
     else if(VIEW==='indices'){loadStrip(scan);loadMultiIndex(scan);loadMovers(scan);}
-    else if(VIEW==='macro'){loadMacroKpis(scan);loadMacroRegime();loadYield(scan);loadMacroCal();loadMacroOfficiel();}
+    else if(VIEW==='macro'){loadMacroKpis(scan);loadMacroRegime(scan);loadYield(scan);loadMacroCal();loadMacroOfficiel();}
     else if(VIEW==='sectors'){loadSectors(scan);}
     else if(VIEW==='breadth'){loadBreadth(scan);}
     else if(VIEW==='volatility'){loadVix(scan);}

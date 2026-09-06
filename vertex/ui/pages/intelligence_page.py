@@ -268,6 +268,12 @@ function initAnalyst(){
     'Le raisonnement s&rsquo;affichera ici, &eacute;tape par &eacute;tape, une fois l&rsquo;analyse lanc&eacute;e.','');
   if($('vx-analyst-ai'))($('vx-analyst-ai')||{}).innerHTML=vide(
     'L&rsquo;interpr&eacute;tation vient apr&egrave;s le verdict des moteurs — elle ne le pr&eacute;c&egrave;de jamais.','');
+  /*  Tant qu'aucun titre n'est analysé, il n'y a pas de paquet à dater : on le
+      dit, au lieu de laisser « Lecture… » promettre une lecture qui n'aura
+      jamais lieu. Le badge prendra la date du dossier dès `runAnalysis`. */
+  fraicheurIAAbsente('En attente d’un titre',
+    'Aucun dossier n’est ouvert : la fraîcheur affichée est celle du paquet '
+    +'analysé, elle apparaît avec le verdict.');
   /* Suggestions : exemples + tickers récents + raccourcis — rien d'inventé */
 (function(){
   const host=$('vx-analyst-suggestions');if(!host)return;
@@ -311,8 +317,11 @@ async function runAnalysis(sym,question){
       '<a class="vx-btn vx-btn-sm" href="/system?view=data">Lancer un scan (Syst&egrave;me)</a>');
     ($('vx-analyst-audit')||{}).innerHTML=VX.states.empty('Aucun raisonnement disponible sans dossier.');
     if($('vx-analyst-ai'))($('vx-analyst-ai')||{}).innerHTML=VX.states.empty('Aucune interpr&eacute;tation sans dossier.');
+    fraicheurIAAbsente('Titre hors scan',
+      sym+' est absent du scan courant : aucun paquet daté ne le concerne.');
     return;
   }
+  peindreFraicheurIA(strat&&strat.as_of);
   renderVerdict(sym,question,strat,deci);
   renderAudit(strat,deci);
   renderScores(sym,strat);
@@ -462,9 +471,12 @@ let committeeData=null,committeeFilter='';
 async function initCommittee(){
   try{
     committeeData=await VX.fetch('/api/committee-review',{ttl:60000});
+    peindreFraicheurIA(committeeData&&committeeData.as_of);
     renderCommittee();
   }catch(e){
     ($('vx-committee-body')||{}).innerHTML=VX.states.error('Comit&eacute; indisponible ('+esc(e.message)+')');
+    fraicheurIAAbsente('Comité injoignable',
+      '/api/committee-review n’a pas répondu : ' + e.message);
   }
 }
 /* Cellule de tableau avec mini-barre inline (conviction/accord 0-100) — plus
@@ -645,9 +657,18 @@ async function initStrategy(){
         `<span class="vx-badge vx-badge-decision" data-decision="${esc(d)}">${esc(d)}</span>`).join(' ')||'—')
       +`<div class="vx-card-footer">${VX.updateIndicator(Date.now(),'constitution serveur v'+esc(p.version),'delayed')}</div>`;
     ($('vx-strategy-meta')||{}).innerHTML=`<span class="vx-badge">v${esc(p.version)}</span>`;
+    /*  Mesuré : `/api/strategy/profile` rend display_name, profile, strategy_id,
+        style, version, versions_available — AUCUNE date. La constitution est
+        versionnée, pas horodatée : c'est ce que le badge dit, plutôt que de
+        fabriquer une fraîcheur avec `Date.now()`. */
+    fraicheurIAAbsente('Constitution v'+String(p.version),
+      'La constitution est versionnée, pas horodatée : /api/strategy/profile ne '
+      +'porte aucune date. Une modification passe par une nouvelle version.');
     renderGates(raw);
     renderOptionCategories(raw.options_profile||{});
   }catch(e){
+    fraicheurIAAbsente('Constitution injoignable',
+      '/api/strategy/profile n’a pas répondu : ' + e.message);
     const err=VX.states.error('Constitution indisponible ('+esc(e.message)+')');
     ($('vx-strategy-core')||{}).innerHTML=err;
     ($('vx-strategy-gates')||{}).innerHTML=err;
@@ -706,6 +727,15 @@ function renderOptionCategories(op){
 async function initResearch(){
   try{
     const v=await VX.fetch('/api/validator',{ttl:120000});
+    /*  Mesuré : `/api/validator` rend color, degradation, dsr, fold_sharpes,
+        folds_positive_pct, kurtosis, n, n_trials, note, ok, pbo_estimate,
+        psr0, sharpe_ann, skew, sr_in_sample, sr_out_sample, verdict — et
+        aucune date de calcul. Le pied de la carte affiche déjà `Date.now()`
+        comme horodatage, ce qui date la LECTURE et non le calcul ; le badge
+        de contexte ne reprend pas ce raccourci. */
+    fraicheurIAAbsente('Validateur non horodaté',
+      '/api/validator rend ses métriques sans date de calcul : la fraîcheur de '
+      +'cette validation ne peut pas être établie.');
     if(!v.ok){
       ($('vx-research-body')||{}).innerHTML=VX.states.empty(
         'Validation indisponible : '+esc(v.note||'historique insuffisant')+'. '
@@ -765,6 +795,8 @@ async function initResearch(){
     }else ($('vx-research-chart')||{}).innerHTML='';
   }catch(e){
     ($('vx-research-body')||{}).innerHTML=VX.states.error('Validateur indisponible ('+esc(e.message)+')');
+    fraicheurIAAbsente('Validateur injoignable',
+      '/api/validator n’a pas répondu : ' + e.message);
   }
 }
 
@@ -780,6 +812,15 @@ function initMemory(){
 function renderMemory(){
   const notes=(E()&&E().notes())||{};
   const syms=Object.keys(notes).sort();
+  /*  Les thèses sont des données du BUREAU (localStorage, synchronisées via
+      /api/desk) : leur fraîcheur est celle de la dernière écriture locale,
+      `deskTs`. Aucune autre date n'existe pour elles — l'inventer à partir
+      de `Date.now()` daterait l'affichage, pas la donnée. */
+  const _t=Number(localStorage.getItem('deskTs')||0)||null;
+  if(_t)peindreFraicheurIA(_t);
+  else fraicheurIAAbsente('Bureau jamais écrit',
+    'Aucune écriture locale datée (clé deskTs absente) : ces notes n’ont pas '
+    +'encore d’horodatage.');
   if(!syms.length){
     ($('vx-memory-body')||{}).innerHTML=VX.states.empty(
       'Aucune th&egrave;se enregistr&eacute;e — vos notes par titre appara&icirc;tront ici (synchronis&eacute;es via le desk).',
@@ -807,6 +848,12 @@ function initImpacts(){
     if(el)el.textContent='flux '+((VX.liveStatus&&VX.liveStatus())||'—');}
   function paint(){
     const el=$('vx-imp-feed');if(!el)return;
+    /*  Le flux est en direct : sa fraîcheur est celle du DERNIER événement
+        reçu, pas l'instant du rendu. Tant que rien n'est arrivé, il n'y a
+        rien à dater — et l'écrire vaut mieux qu'un badge en attente. */
+    if(feed.length)peindreFraicheurIA(feed[0].ts*1000);
+    else fraicheurIAAbsente('Aucun événement reçu',
+      'Le flux est ouvert mais n’a encore rien émis : il n’y a rien à dater.');
     el.innerHTML=feed.length?feed.slice(0,MAX).map(ev=>`
       <div class="vx-flex" style="padding:6px 0;border-bottom:1px dashed var(--vx-border-soft)">
         <span class="vx-badge" style="color:var(--vx-info)">${esc(ev.channel)}</span>
@@ -912,15 +959,51 @@ async function initDecisions(){
   peindreFraicheurIA(scan&&(scan.scan_ts||scan.updated));
 }
 
-/* La barre de contexte porte la fraicheur de la donnee AFFICHEE. */
+/* ══ FRAÎCHEUR DE LA BARRE DE CONTEXTE ═══════════════════════════════
+   UNE LECTURE ANNONCÉE QUI N'ARRIVAIT JAMAIS.
+
+   La barre déclare « Fraîcheur » et part sur le badge `Lecture…`. Mesure
+   (Chromium, instance de mesure, 6 sept. 2026, les huit sous-vues ouvertes
+   une par une, texte du badge relevé 2,5 s après `load`) :
+
+       Assistant   Lecture…            <- figé
+       Comité      Lecture…            <- figé
+       Recherche   Lecture…            <- figé
+       Mémoire     Lecture…            <- figé
+       Doctrine    Lecture…            <- figé
+       Impacts     Lecture…            <- figé
+       Brief       Horodatage illisible
+       Décisions   « Analyse » (puce réelle)
+
+   `peindreFraicheurIA` n'était appelée que par `initBrief` et
+   `initDecisions` : SIX vues sur huit promettaient une lecture en cours,
+   pour toujours. C'est exactement le défaut que `peindreSante()` a corrigé
+   sur la page Système — « déclarée et remplie par personne » — et il est
+   pire ici : le badge qui ment porte le mot « fraîcheur ».
+
+   Chaque vue peint désormais SA fraîcheur. Celles dont le paquet ne porte
+   aucune date le DISENT, avec la raison : `/api/validator` rend des
+   métriques sans date de calcul, `/api/strategy/profile` une constitution
+   versionnée et non datée. Un tiret muet serait le même silence sous un
+   autre habit ; on nomme l'absence et sa cause. */
 function peindreFraicheurIA(ts){
   const el=$('vx-ia-fresh');if(!el)return;
-  if(!ts){el.innerHTML='<span class="vx2-badge" data-state="missing">Non horodaté</span>';return;}
+  if(!ts){fraicheurIAAbsente('Non horodaté',
+    'Le serveur n’a pas daté ce paquet : son âge ne peut pas être établi.');return;}
   if(window.VX&&VX.freshness){
     const ms=VX.freshness._ms(ts);
     if(ms!=null){el.innerHTML=VX.freshness.chip(VX.freshness.assess({ageMs:Date.now()-ms,live:false}));return;}
   }
-  el.innerHTML='<span class="vx2-badge" data-state="missing">Horodatage illisible</span>';
+  fraicheurIAAbsente('Horodatage illisible',
+    'Le serveur a daté ce paquet dans un format que le navigateur ne sait pas '
+    +'lire (« '+String(ts).slice(0,24)+' ») : l’âge reste inconnu.');
+}
+/* L'absence de date est un ÉTAT, pas un vide : elle porte son libellé court
+   et sa raison complète en infobulle. */
+function fraicheurIAAbsente(libelle,raison){
+  const el=$('vx-ia-fresh');if(!el)return;
+  el.innerHTML='<span class="vx2-badge" data-state="missing" title="'+esc(raison)+'">'
+    +esc(libelle)+'</span>';
 }
 
 

@@ -117,8 +117,45 @@ def decide(packet: dict, profile=None) -> dict:
         asym = round(min(100.0, max(0.0, (rr - 1.0) * 40)), 1)
     else:
         unknowns.append('reward_risk')
-    dq_score = {'FRESH': 100, 'RECENT': 75, 'STALE': 30,
-                'EXPIRED': 0, 'MISSING': 0}.get(dq.get('overall'), 50)
+    #  Vocabulaire CANONIQUE de la fraîcheur : `vertex/data_sources/models.py`
+    #  (FRESH / RECENT / STALE / EXPIRED / MISSING). Le défaut `50` avalait
+    #  silencieusement tout ce qui sort de ces cinq mots. Mesuré, `decide()` sur
+    #  un paquet ne différant que par `data_quality.overall` :
+    #      FRESH 100 · RECENT 75 · STALE 30 · EXPIRED 0 · MISSING 0
+    #      DEMO 50 · CONFLICTED 50 · n_importe_quoi 50
+    #  Une donnée de DÉMONSTRATION (fabriquée — `_source_quality` pose ce label
+    #  dès que `scan_state['source'] == 'demo'`) notait donc 50/100, MIEUX qu'une
+    #  donnée réelle rassise à 30, et exactement comme une étiquette inconnue :
+    #  trois états que l'invariant 5 exige distincts, servis sous le même
+    #  chiffre. Démo et étiquette hors vocabulaire valent 0 — aucune fraîcheur
+    #  prouvée — et l'étiquette non reconnue est en plus NOMMÉE dans `unknowns`.
+    #
+    #  SECOND TOUR — le correctif ci-dessus avait laissé sa propre confusion. La
+    #  garde s'écrivait `if dq and _dq_label not in _DQ_POINTS`, donc un paquet
+    #  SANS bloc `data_quality` (ou avec un bloc vide) tombait dans le `.get(...,
+    #  0)` sans être nommé. Mesuré sur `decide()` :
+    #      bloc ABSENT     -> data_quality 0, unknowns [], aucun audit
+    #      bloc {}         -> data_quality 0, unknowns [], aucun audit
+    #      EXPIRED mesuré  -> data_quality 0, unknowns [], aucun audit
+    #  Trois sorties identiques : l'ABSENCE de preuve devenait indiscernable
+    #  d'une péremption MESURÉE — exactement le défaut reproché au neutre 50,
+    #  déplacé vers 0. (Avant ce lot, l'absence valait 50 : faux aussi, mais
+    #  distinct.) Le score reste 0 dans les deux cas — aucune fraîcheur n'est
+    #  prouvée, ni par un bloc absent ni par une étiquette inconnue — mais les
+    #  deux causes sont désormais NOMMÉES, chacune avec son propre texte.
+    _dq_label = dq.get('overall')
+    _DQ_POINTS = {'FRESH': 100, 'RECENT': 75, 'STALE': 30,
+                  'EXPIRED': 0, 'MISSING': 0, 'DEMO': 0}
+    dq_score = _DQ_POINTS.get(_dq_label, 0)
+    if not dq:
+        unknowns.append('data_quality')
+        audit.append('aucun bloc de qualité de données au paquet — fraîcheur non '
+                     'mesurée, notée 0 (une ABSENCE de preuve, pas une '
+                     'péremption constatée)')
+    elif _dq_label not in _DQ_POINTS:
+        unknowns.append('data_quality')
+        audit.append("étiquette de qualité de données hors vocabulaire canonique "
+                     "(%r) — fraîcheur non prouvée, notée 0" % (_dq_label,))
     risk_score = 100.0
     if guard.get('blocking_rules'):
         risk_score = 0.0

@@ -22,6 +22,14 @@ from vertex.ui.shell import render_shell
 #: Sous-vues réellement distinctes dans la donnée servie. `/api/tracking` rend
 #: trois statuts — ACTIVE, DATA_REQUIRED, STOPPED — et rien d'autre : on n'en
 #: invente pas un quatrième pour remplir une barre d'onglets.
+#:
+#: MESURE DU 06/09/2026 — `attention` et `active` rendaient un écran
+#: RIGOUREUSEMENT identique (mêmes sections visibles, même titre, même
+#: question, mêmes lignes) : deux onglets pour un seul écran. La distinction
+#: est désormais portée par `tracking.js` sur le statut SERVI (DATA_REQUIRED /
+#: référence absente), jamais sur un seuil inventé. Le titre et la question de
+#: la section active sont donc nommés (`vx-trk-active-title` /
+#: `vx-trk-active-question`) pour que la sous-vue dise ce qu'elle filtre.
 _VIEWS = (
     ('attention', 'À revoir'),
     ('active', 'Suivis actifs'),
@@ -109,8 +117,8 @@ _CONTENT = """
 </section>
 <div class="vx-mt3" id="vx-trk-chart"></div>
 <section class="vx2-surface vx-mt3" id="vx-trk-active" aria-label="Suivis actifs">
-  <div class="vx2-card-head"><div><h2 class="vx2-card-title">Suivis actifs</h2>
-    <p class="vx2-card-question">Que valent ces idées depuis qu'elles sont marquées&nbsp;?</p></div></div>
+  <div class="vx2-card-head"><div><h2 class="vx2-card-title" id="vx-trk-active-title">Suivis actifs</h2>
+    <p class="vx2-card-question" id="vx-trk-active-question">Que valent ces idées depuis qu'elles sont marquées&nbsp;?</p></div></div>
   <div id="vx-trk-active-body"><div class="vx2-skeleton" style="height:160px"></div></div>
   <p class="vx-trk-note">Un suivi est une <b>idée marquée</b> : Vertex mesure sa
     performance <b>hypothétique</b> depuis l'horodatage du suivi, contre SPY.

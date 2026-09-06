@@ -337,14 +337,28 @@
   // Nuage qualité × probabilité de profit : chaque contrat placé par sa qualité (X)
   // et sa PoP (Y) ; taille = IV (convexité), violet = PUT / acier = CALL. Le coin
   // haut-droit = contrats de qualité ET à forte probabilité. Données réelles /api.
+  /* Le nuage se VIDAIT en silence dans deux branches terminales : moteur de
+     graphiques absent, et moins de deux contrats traçables. Un emplacement
+     qui s'efface ne dit pas s'il n'a rien à montrer ou s'il a échoué. */
+  function scatterMuet(host, cause) {
+    if (host) host.innerHTML = '<div class="vx-empty">Nuage qualité × probabilité non traçable : ' + esc(cause) + '.</div>';
+  }
   function radarScatter(hostId, rows) {
     var host = document.getElementById(hostId);
-    if (!host || !window.VXCharts || !window.Chart) { if (host) host.innerHTML = ''; return; }
+    if (!host) return;
+    if (!window.VXCharts || !window.Chart) {
+      scatterMuet(host, 'le moteur de graphiques n’est pas chargé — le classement reste lisible dans la table ci-dessous');
+      return;
+    }
     var cc = VXCharts.colors;
     var pts = (rows || []).filter(function (r) { return r.quality != null && r.pop != null; }).map(function (r) {
       return { x: +r.quality, y: +r.pop, sym: r.sym, type: r.type, iv: r.iv, r: 4 + Math.min(9, (r.iv || 30) / 12) };
     });
-    if (pts.length < 2) { host.innerHTML = ''; return; }
+    if (pts.length < 2) {
+      scatterMuet(host, pts.length + ' contrat(s) portent à la fois une qualité et une '
+        + 'probabilité sur ' + (rows || []).length + ' — il en faut au moins 2 pour un nuage');
+      return;
+    }
     var cfg = {
       type: 'scatter', data: { datasets: [{ data: pts,
         pointRadius: function (ctx) { return ctx.raw ? ctx.raw.r : 5; }, pointHoverRadius: 11,
@@ -573,6 +587,21 @@
     var rows = (d.oi_by_strike && d.oi_by_strike.rows) || [];
     if (!rows.length) { (document.getElementById('vx-opt-oi')||{}).innerHTML = '<div class="vx-card"><div class="vx-empty">Open interest indisponible.</div></div>'; return; }
     var brand = col(VC, 'brand', '#c9cdd4'), violet = col(VC, 'violet', '#9c79d0');
+    /*  CONTRE-MESURE du 2026-09-06 (Chromium sur l'instance de controle,
+        `/options?view=volatility`, reponse de `/api/options/vol-charts/NVDA`
+        substituee pour porter les trois cas a la fois) : les cellules de la
+        table avaient bien appris a separer l'absence du zero, mais la
+        CONCLUSION de la meme carte comptait encore `!r.call && !r.put` — une
+        verite de JavaScript, pas une mesure : `!null` vaut `true` comme `!0`.
+        Mesure sur les lignes servies [226 : call 2959 / put ABSENT],
+        [230 : call 0 / put 12], [235 : les deux ABSENTS] — la carte annoncait
+        « 1 a zero des deux cotes » alors que l'unique ligne comptee ne portait
+        AUCUNE valeur d'aucun cote. Un zero affirme sur une absence : c'est
+        exactement ce que la note de la table venait de renoncer a faire.
+        Les deux comptes sont donc separes, et celui des absences ne s'affiche
+        que s'il existe — sinon il ajouterait du bruit a une source complete.  */
+    var zeroRecu = rows.filter(function (r) { return r.call === 0 && r.put === 0; }).length;
+    var sansValeur = rows.filter(function (r) { return r.call == null || r.put == null; }).length;
     var c = VC.card('vx-opt-oi', {
       title: 'Open interest par strike', question: 'Où se concentrent les positions ouvertes ?',
       /*  Le contrat exige que l'OI montre LE ZERO et la PROVENANCE des niveaux
@@ -580,8 +609,9 @@
           ouvert se ressemblent sur une barre : le compte des strikes vides le
           separe, et la limite dit d'ou viennent les niveaux — jamais d'un
           moteur de « murs » que Vertex ne possede pas.  */
-      conclusion: 'CALL vs PUT sur ' + rows.length + ' strike(s) · '
-        + rows.filter(function (r) { return !r.call && !r.put; }).length + ' à zéro contrat ouvert',
+      conclusion: 'CALL vs PUT sur ' + rows.length + ' strike(s) · ' + zeroRecu
+        + ' à zéro reçu des deux côtés'
+        + (sansValeur ? ' · ' + sansValeur + ' sans valeur d’un côté au moins' : ''),
       height: 240, source: 'SCAN', timestamp: volTs(d), mode: 'delayed',
       limits: 'Niveaux agrégés depuis les contrats du scan, strike par strike — '
         + 'aucun « mur » n’est déduit : Vertex ne possède pas de moteur de niveaux. '
@@ -614,13 +644,26 @@
                  { titre: 'OI put', unite: '(contrats)', num: true },
                  { titre: 'Solde call \u2212 put', unite: '(contrats)', num: true }],
       lignes: rows.map(function (r) {
-        var solde = (r.call || 0) - (r.put || 0);
-        /*  ZERO EXPLICITE : un 0 reel s'ecrit « 0 », il ne se tait pas et ne
-            devient pas un tiret. Le tiret est reserve a l'absence.  */
-        return [VXf.nd(r.strike), VXf.num(r.call || 0, 0), VXf.num(r.put || 0, 0),
-                (solde >= 0 ? '+' : '') + VXf.num(solde, 0)];
+        /*  ZERO NON IMPUTE : `r.call || 0` ecrivait « 0 » pour une valeur
+            ABSENTE — l'interface fabriquait donc elle-meme un zero. Un cote
+            absent redevient un tiret ; seul un zero RECU s'ecrit « 0 ».  */
+        var solde = (r.call == null || r.put == null) ? null : (r.call - r.put);
+        return [VXf.nd(r.strike),
+                r.call == null ? '—' : VXf.num(r.call, 0),
+                r.put == null ? '—' : VXf.num(r.put, 0),
+                solde == null ? '—' : ((solde >= 0 ? '+' : '') + VXf.num(solde, 0))];
       }),
-      note: 'Spot ' + VXf.nd(d.spot) + ' \u00b7 « 0 » est un z\u00e9ro mesur\u00e9, pas une absence \u00b7 '
+      /*  MESURE du 2026-09-06 (instance de controle, /api/options/vol-charts/NVDA) :
+          les 3 lignes rendent « put : 0 » alors que le tableau d'options ne porte
+          AUCUN contrat PUT sur NVDA — ces trois zeros sont IMPUTES par
+          l'agregateur (vertex/options/vol_charts.py:92 initialise call et put a
+          0.0), pas observes. La note affirmait pourtant « 0 est un zero mesure,
+          pas une absence » : faux sur 3 cellules sur 3. Tant que la source ne
+          separe pas les deux cas, la note dit ce qu'elle sait, et rien de plus.  */
+      note: 'Spot ' + VXf.nd(d.spot) + ' \u00b7 un tiret = valeur absente de la source \u00b7 '
+        + '« 0 » vient de l\u2019agr\u00e9gation par strike, qui rend le m\u00eame 0 pour '
+        + '\u00ab open interest nul \u00bb et pour \u00ab aucun contrat de ce c\u00f4t\u00e9 \u00e0 ce strike \u00bb : '
+        + 'z\u00e9ro observ\u00e9 et z\u00e9ro imput\u00e9 ne sont pas s\u00e9par\u00e9s en amont \u00b7 '
         + 'niveaux agr\u00e9g\u00e9s depuis les contrats du scan, aucun mur d\u00e9duit.'
     });
   }

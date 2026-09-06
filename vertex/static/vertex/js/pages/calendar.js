@@ -231,7 +231,15 @@
       + '<th class="vx2-sticky-col vx2-num" scope="col">Date</th>'
       + '<th class="vx2-num" scope="col">Échéance <span class="vx2-th-unit">(j)</span></th>'
       + '<th scope="col">Type</th><th scope="col">Événement</th>'
-      + '<th scope="col">Instrument</th><th scope="col">Date</th>'
+      /* La 6e colonne rend `badgeConfirmation(e)` — « Confirmée par
+         l'émetteur », « Approximative », « Non confirmée par l'émetteur ». Son
+         en-tête disait « Date ». Mesure du 06/09/2026 sur 5003 (vue Semaine) :
+         en-têtes servis ['Date','Échéance (j)','Type','Événement','Instrument',
+         'Date','Source'] — DEUX colonnes « Date » — et la cellule sous la
+         seconde valait « Non confirmée par l’émetteur ». Un en-tête qui nomme
+         autre chose que sa colonne est une valeur fausse : le lecteur lit un
+         niveau de confirmation en croyant lire une date. */
+      + '<th scope="col">Instrument</th><th scope="col">Confirmation</th>'
       + '<th scope="col">Source</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div></div>';
   }

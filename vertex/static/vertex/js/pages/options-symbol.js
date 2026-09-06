@@ -32,6 +32,23 @@
   }
   var VIOLET = 'var(--vx-violet)', BRAND = 'var(--vx-brand)';
 
+  /* Les deux graphiques DÉRIVÉS des scénarios (décote temps, sensibilité IV)
+     n'existent que si le pricer rend au moins deux points. MESURE du
+     2026-09-06 (Chromium, `/options/dossier/SPY` sur l'instance de contrôle) :
+     `vx-osym-decay` et `vx-osym-ivsens` rendaient 0 octet et 0 px — deux
+     emplacements déclarés dans le gabarit, montés et jamais peints, sans un
+     mot de cause, alors que les quatre cartes voisines de la même colonne
+     nommaient la leur. Trois chemins mènent là (scénarios absents, moins de
+     deux points, lecture en échec) : un seul endroit les nomme, pour que le
+     prochain n'en oublie pas un. */
+  var HOTES_SIM = [
+    ['vx-osym-decay', 'Décote temps (theta)'],
+    ['vx-osym-ivsens', 'Sensibilité à l’IV'],
+  ];
+  function nommerAbsenceSim(cause) {
+    HOTES_SIM.forEach(function (h) { emptyChart(h[0], h[1], cause); });
+  }
+
   /* ── Scorecard de chaîne (depuis le board réel) ─────────────────── */
   function paintScorecard(board, spot) {
     var host = document.getElementById('vx-osym-scorecard'); if (!host) return;
@@ -277,7 +294,11 @@
     ['STOP', 'BEAR', 'FLAT', 'BASE', 'TP1', 'TP2', 'TP3'].forEach(function (k) { add(k, sc[k]); });
     Object.keys(sc).forEach(function (k) { add(k, sc[k]); });
     add('STOP', sim.at_stop); add('TP1', sim.at_tp1); add('TP2', sim.at_tp2); add('TP3', sim.at_tp3);
-    if (!rows.length) { body('vx-osym-scenarios', empty('Scénarios indisponibles pour ' + SYM + ' (aucun contrat exploitable).')); return; }
+    if (!rows.length) {
+      body('vx-osym-scenarios', empty('Scénarios indisponibles pour ' + SYM + ' (aucun contrat exploitable).'));
+      nommerAbsenceSim('Aucun scénario exploitable pour ' + SYM + ' : ni décote temps ni sensibilité IV ne sont calculables (rien n’est estimé à leur place).');
+      return;
+    }
     var days = Object.keys(rows[0].node).map(Number).sort(function (a, b) { return a - b; });
     /* le conteneur DOIT exister avant heatmapCard (ready peut être synchrone) */
     body('vx-osym-scenarios', '<div id="vx-osym-scenarios-hm"></div>' +
@@ -292,14 +313,18 @@
         limits: 'estimation modèle Black-Scholes — pas une promesse'
       });
       var td = sim.time_decay || [];
-      if (td.length >= 2) VXCharts.card('vx-osym-decay', {
+      if (td.length < 2) emptyChart('vx-osym-decay', 'Décote temps (theta)',
+        'Courbe non traçable : le pricer rend ' + td.length + ' point(s) de décote, il en faut au moins 2.');
+      else VXCharts.card('vx-osym-decay', {
         title: 'Décote temps (theta)',unit:'$ par jour', question: 'Combien le temps grignote-t-il la prime, à spot figé ?', height: 200,
         source: 'scenario_pricer', timestamp: d.ts, mode: 'delayed',
         render: function (cv) { return VXCharts.mount(cv, { type: 'line',
           data: { labels: td.map(function (p) { return 'J+' + p.days; }), datasets: [{ data: td.map(function (p) { return p.value; }), borderColor: VXCharts.colors.warning, backgroundColor: 'rgba(221,162,59,.12)', fill: true, tension: .25, pointRadius: 2 }] },
           options: { scales: { y: { grid: { color: 'rgba(255,255,255,.05)' } }, x: { grid: { display: false } } } } }); } });
       var iv = sim.iv_sensitivity || [];
-      if (iv.length >= 2) VXCharts.card('vx-osym-ivsens', {
+      if (iv.length < 2) emptyChart('vx-osym-ivsens', 'Sensibilité à l’IV',
+        'Courbe non traçable : le pricer rend ' + iv.length + ' point(s) de sensibilité, il en faut au moins 2.');
+      else VXCharts.card('vx-osym-ivsens', {
         title: 'Sensibilité à l’IV', question: 'Quel impact d’une variation d’implicite sur la prime ?', height: 200,
         source: 'scenario_pricer', timestamp: d.ts, mode: 'delayed',
         render: function (cv) { return VXCharts.mount(cv, { type: 'bar',
@@ -350,7 +375,14 @@
     ready(function () {
       list.slice(0, 4).forEach(function (s, i) {
         var pts = s.payoff || []; var host = document.getElementById('vx-osym-strat-pf-' + i);
-        if (!host || pts.length < 2) { if (host) host.innerHTML = ''; return; }
+        /* Effacer l'emplacement n'expliquait rien : le payoff manquait, la
+           carte gardait un trou de 140 px sans cause. */
+        if (!host) return;
+        if (pts.length < 2) {
+          host.innerHTML = '<div class="vx-empty">Courbe de payoff non traçable : le moteur rend '
+            + pts.length + ' point(s) pour cette structure, il en faut au moins 2.</div>';
+          return;
+        }
         VXCharts.mount(host.querySelector('canvas'), { type: 'line',
           data: { labels: pts.map(function (p) { return p.price; }), datasets: [{ data: pts.map(function (p) { return p.pnl; }), borderColor: VXCharts.colors.neutral, borderWidth: 1.8, pointRadius: 0, fill: false,
             segment: { borderColor: function (ctx) { return ctx.p1.parsed.y >= 0 ? VXCharts.colors.positive : VXCharts.colors.negative; } } }] },
@@ -465,7 +497,10 @@
     .catch(function () { ['vx-osym-term', 'vx-osym-cone', 'vx-osym-oi', 'vx-osym-smile'].forEach(function (id) {
       emptyChart(id, 'Volatilité', 'Graphiques de volatilité injoignables.'); }); });
   get('/api/options/scenarios/' + encodeURIComponent(SYM)).then(paintScenarios)
-    .catch(function () { body('vx-osym-scenarios', empty('Scénarios indisponibles.')); });
+    .catch(function () {
+      body('vx-osym-scenarios', empty('Scénarios indisponibles : la lecture a échoué (ce n’est pas une absence de données).'));
+      nommerAbsenceSim('La lecture des scénarios a échoué — ce n’est pas une absence de données, c’est une panne de lecture.');
+    });
   get('/api/options/strategies/' + encodeURIComponent(SYM)).then(paintStrats)
     .catch(function () { body('vx-osym-strats', empty('Stratégies indisponibles.')); });
   // Grille de chaîne (strikes × échéances) — greeks courtier IBKR (chaîne large réelle)

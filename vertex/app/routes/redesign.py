@@ -245,16 +245,29 @@ def make_blueprint(scan_state: dict) -> Blueprint:
                          'what_changed_today': daily['what_changed'],
                          'main_risk': daily['main_risk'],
                          'main_opportunity': daily['main_opportunity']})
-        except Exception as e:
-            base['daily_error'] = str(e)[:120]
+        except Exception:
+            #  CODE STABLE, pas le texte de l'exception. `str(e)[:120]` partait
+            #  dans `jsonify(base)` : un message de bibliotheque, en anglais,
+            #  servi comme etat (meme faute que `IndexError: single positional
+            #  indexer is out-of-bounds` sur `/options/<sym>`, deja corrigee).
+            #  Le motif reste NOMME cote francais ; le detail interne, lui, ne
+            #  traverse plus la frontiere HTTP.
+            base['daily_error'] = 'daily_brief_unavailable'
+            base['daily_error_note'] = ('brief quotidien indisponible — '
+                                        'sections sourcées non calculées, '
+                                        'aucune ligne n’est inventée')
         # Brief éditorial narratif (§10) — texte fluide de séance, sourcé, jamais
         # de fait d'actualité inventé. Fusionné sans casser le schéma historique.
         try:
             from vertex.app.state import news_state
             from vertex.market.editorial import build_narrative
             base['editorial'] = build_narrative(scan_state, news_state)
-        except Exception as e:
-            base['editorial_error'] = str(e)[:120]
+        except Exception:
+            base['editorial_error'] = 'editorial_unavailable'
+            base['editorial_error_note'] = ('éditorial narratif indisponible — '
+                                            'le texte de séance n’est pas '
+                                            'reconstitué à partir d’une '
+                                            'supposition')
         return jsonify(base)
 
     # ── Simulation d'un contrat (moteur scenario_pricer — §35) ───────
@@ -302,8 +315,20 @@ def make_blueprint(scan_state: dict) -> Blueprint:
                                            rate_curve=_entrees.courbe(scan_state))
             sim['entrees'] = _entrees.provenance(scan_state, sym)
             analysis = scenario_pricer.capital_free_analysis(sim, contract)
-        except Exception as exc:
-            return jsonify({'error': f'simulation impossible: {exc}'}), 422
+        except Exception:
+            #  MESURE du 2026-09-06, instance de test (`app.test_client()`) :
+            #  `GET /api/options/simulate?sym=AAPL&spot=100&strike=0&dte=30&mid=5`
+            #  rendait 422 avec `"simulation impossible: float division by
+            #  zero"`, et `...&iv=99999` rendait `"math domain error"`. Deux
+            #  messages de la bibliotheque standard, en anglais, servis comme
+            #  etat : le lecteur n'apprend ni ce qui manque ni quoi corriger.
+            #  Code stable + note francaise ; le detail reste au serveur.
+            return jsonify({
+                'error': 'simulation_impossible',
+                'note': 'le moteur de scénarios n’a pas pu évaluer ce contrat '
+                        'avec ces paramètres (strike, échéance, IV ou prime '
+                        'hors domaine) — aucune valeur n’est inventée',
+            }), 422
         sim['limitations'] = list(sim.get('limitations') or []) + notes
         return jsonify({'symbol': sym, 'contract': contract, 'sim': sim,
                         'capital_free': analysis})

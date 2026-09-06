@@ -61,6 +61,47 @@ _VIEWS = (
     ('comparer', 'Comparer'),
 )
 
+#: La comparaison vit dans la MÉMOIRE DE LA PAGE OUVERTE, et nulle part
+#: ailleurs. C'est une conséquence directe du contrat ci-dessus (« aucune
+#: persistance »), et l'utilisateur doit le lire avant de perdre son travail,
+#: pas après.
+#:
+#: MESURE DU 06/09/2026 (Chromium sur 5003) : depuis « Simple », lancer une
+#: simulation puis cliquer « Ajouter à la comparaison » affichait le message
+#: « Ajouté à la comparaison (1/3). » — une réussite annoncée — SANS aucun
+#: effet visible, la vue Simple ne portant aucune zone de comparaison. En
+#: ouvrant ensuite l'onglet « Comparer », la page répondait « Aucune simulation
+#: à comparer · Lance une simulation depuis Simple ou Avancé, puis Ajouter à la
+#: comparaison » : elle demandait exactement ce qui venait d'être fait.
+#: Deux corrections, aucune persistance créée :
+#:   1. la zone de comparaison est servie SUR les vues qui portent le bouton —
+#:      l'ajout a désormais un effet visible là où on le déclenche ;
+#:   2. la vue « Comparer » dit la vraie cause de son vide au lieu de prescrire
+#:      une boucle que la page ne peut pas tenir.
+_COMPARAISON_CAUSE = (
+    'Une comparaison vit dans la mémoire de la page ouverte : Vertex ne '
+    'possède pas de store de simulations et cette refonte n\'en crée pas. '
+    'Changer de sous-vue recharge la page et la vide donc entièrement. '
+    'Construis et lis la comparaison sans quitter Simple ou Avancé : la zone '
+    'y est servie sous les résultats.'
+)
+
+
+def _zone_comparaison(*, servie: bool) -> str:
+    """Zone de comparaison. `servie` distingue les vues qui portent le bouton
+    (Simple, Avancé) de la vue « Comparer », qui ne peut hériter de rien."""
+    vide = (vx2.etat(
+        titre='Aucune simulation à comparer',
+        cause='Lance une simulation ci-dessus, puis « Ajouter à la '
+              'comparaison ». Trois au maximum : au-delà, la comparaison '
+              'cesse d\'être lisible.',
+        kind='empty')
+        if servie else
+        vx2.etat(titre='Aucune simulation à comparer',
+                 cause=_COMPARAISON_CAUSE, kind='missing'))
+    return ('<div id="vx-sim-compare-zone" data-sim-heritable="'
+            + ('1' if servie else '0') + '">' + vide + '</div>')
+
 #: Classes d'actifs, et l'état RÉEL de leur prise en charge.
 _CLASSES = (
     ('option', 'Options', 'complete'),
@@ -199,6 +240,11 @@ _VIEW_CONTENT = {
         + '</div></div>'
         '<div class="vx2-col-12" id="vx-sim-impact"></div>'
         '<div class="vx2-col-12">'
+        + vx2.surface(_zone_comparaison(servie=True), titre='Comparaison',
+                      question='Trois simulations au maximum, sur la même base '
+                               'de date et de devise.')
+        + '</div>'
+        '<div class="vx2-col-12">'
         + vx2.surface(_HYPOTHESES, titre='Hypothèses',
                       question='Sur quoi ces scénarios reposent-ils ?')
         + '</div></div>'),
@@ -218,6 +264,11 @@ _VIEW_CONTENT = {
         '<div class="vx2-col-12" id="vx-sim-avance"></div>'
         '<div class="vx2-col-12" id="vx-sim-impact"></div>'
         '<div class="vx2-col-12">'
+        + vx2.surface(_zone_comparaison(servie=True), titre='Comparaison',
+                      question='Trois simulations au maximum, sur la même base '
+                               'de date et de devise.')
+        + '</div>'
+        '<div class="vx2-col-12">'
         + vx2.surface(_HYPOTHESES, titre='Hypothèses',
                       question='Sur quoi ces scénarios reposent-ils ?')
         + '</div></div>'),
@@ -225,12 +276,11 @@ _VIEW_CONTENT = {
         '<div class="vx2-grid">'
         '<div class="vx2-col-12">'
         + vx2.surface(
-            '<div id="vx-sim-compare-zone">'
-            + vx2.etat(titre='Aucune simulation à comparer',
-                       cause='Lance une simulation depuis Simple ou Avancé, puis '
-                             '« Ajouter à la comparaison ». Trois au maximum : '
-                             'au-delà, la comparaison cesse d\'être lisible.',
-                       kind='empty')
+            _zone_comparaison(servie=False)
+            + '<div class="vx2-header-actions">'
+            + vx2.bouton('Ouvrir Simple', href='/simulator?view=simple')
+            + vx2.bouton('Ouvrir Avancé', href='/simulator?view=avance',
+                         variante='ghost')
             + '</div>',
             titre='Comparaison',
             question='Trois simulations au maximum, sur la même base de date et de devise.')

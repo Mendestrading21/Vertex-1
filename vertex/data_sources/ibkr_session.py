@@ -20,6 +20,11 @@ protocole, inévitables, ni journalisées ni exposées), sans aucune requête de
 synchronisation, puis VERROUILLE l'instance : toute méthode de compte, de
 portefeuille, de P&L, d'ordre ou d'exécution lève `FrontiereIbkrError`.
 
+Le verrou porte sur les DEUX faces de la session — la façade `IB` **et** le
+client bas niveau `ib.client`, public et porteur des mêmes requêtes. Il ne
+touche pas `ib.wrapper`, qui ne demande rien : il reçoit
+(`surface_client_autorisee` dit pourquoi).
+
 Ce que prouvent les tests (`tests/test_ibkr_session_marche_seule.py`) :
 1. sur une doublure d'`IB`, la connexion n'émet que la poignée de main ;
 2. après verrouillage, chaque méthode interdite lève ;
@@ -90,7 +95,68 @@ METHODES_MARCHE: frozenset[str] = frozenset((
     'getWshMetaData', 'getWshEventData',
 ))
 
+#: Plomberie de TRANSPORT du client bas niveau (`ib_async.Client`). Ces noms
+#: doivent rester appelables : les requêtes de marché du client s'appellent
+#: elles-mêmes `self.send`, `self.sendMsg`, `self.serverVersion`,
+#: `self.isReady`, `self.updateReqId`… Un verrou posé dessus ne fermerait pas
+#: une porte, il casserait toute cotation. Aucune de ces méthodes ne demande de
+#: compte, de position, de P&L, d'ordre ni d'exécution.
+METHODES_CLIENT_TRANSPORT: frozenset[str] = frozenset((
+    'connect', 'connectAsync', 'connectionStats', 'disconnect', 'getReqId',
+    'isConnected', 'isReady', 'reset', 'run', 'send', 'sendMsg',
+    'serverVersion', 'setConnectOptions', 'setServerLogLevel', 'startApi',
+    'updateReqId',
+))
+
 _MARQUE = '_vertex_marche_seulement'
+
+
+def surface_client_autorisee(classe_client) -> frozenset[str]:
+    """Ce qu'une session Vertex a le droit d'appeler sur le client BAS NIVEAU.
+
+    Pourquoi cette fonction existe (mesuré sur `ib_async 2.1.0`, instance `IB()`
+    verrouillée par `verrouiller`) : le verrou ne couvrait que la FAÇADE `IB`.
+    `ib.client` — le même objet, exposé publiquement, celui par lequel cette
+    session ouvre sa socket — gardait **27 méthodes de la surface sensible**
+    intactes et appelables, dont la lecture de positions, le résumé de compte,
+    les exécutions, le P&L, la liste des comptes gérés, la réécriture
+    d'allocation FA et l'exercice d'options. `client.reqPositions()` n'est pas
+    théorique : elle sérialise et envoie le message 61 sur la socket vivante.
+    La docstring du module promettait « VERROUILLE l'instance » ; elle
+    verrouillait la moitié qui se voit.
+
+    La liste n'est pas recopiée — elle est DÉRIVÉE, sans quoi elle dériverait à
+    la première version d'`ib_async` :
+
+    1. la même liste blanche de marché que la façade (`METHODES_MARCHE`) ;
+    2. le transport (`METHODES_CLIENT_TRANSPORT`) ;
+    3. l'ANNULATION d'une requête déjà autorisée. Ce troisième point n'est pas
+       une faveur : `IB.calculateImpliedVolatilityAsync`,
+       `IB.calculateOptionPriceAsync`, `IB.reqHeadTimeStampAsync`,
+       `IB.getWshMetaData` et `IB.getWshEventData` — toutes blanchies —
+       appellent `client.cancelCalculateImpliedVolatility`,
+       `client.cancelCalculateOptionPrice`, `client.cancelHeadTimeStamp`,
+       `client.cancelWshMetaData` et `client.cancelWshEventData` dans leur
+       `finally`. Les verrouiller casserait une capacité de marché autorisée.
+       `cancelPositions` ou `cancelAccountSummary` ne passent pas : leur
+       requête d'origine n'est pas autorisée.
+
+    Le WRAPPER n'est pas touché, et c'est délibéré : ses méthodes sont des
+    RÉCEPTEURS appelés par le décodeur quand un message arrive (`managedAccounts`
+    fait partie de la poignée de main). La frontière porte sur ce que Vertex
+    ÉMET ; couper la réception casserait la connexion sans rien fermer.
+    """
+    publics = {nom for nom in dir(classe_client)
+               if not nom.startswith('_')
+               and callable(getattr(classe_client, nom, None))}
+    autorisees = set(publics & METHODES_MARCHE) | set(publics & METHODES_CLIENT_TRANSPORT)
+    for nom in publics:
+        if not nom.startswith('cancel') or len(nom) <= len('cancel'):
+            continue
+        base = nom[len('cancel'):]
+        if ('req' + base) in autorisees or (base[0].lower() + base[1:]) in autorisees:
+            autorisees.add(nom)
+    return frozenset(autorisees)
 
 
 class FrontiereIbkrError(PermissionError):
@@ -131,6 +197,18 @@ def verrouiller(ib):
         with contextlib.suppress(Exception):   # attribut figé : on n'insiste pas
             wrapper.accounts = []
     client = getattr(ib, 'client', None)
+    #  LE MÊME REFUS PAR DÉFAUT SUR LE CLIENT BAS NIVEAU. `ib.client` est
+    #  public, c'est par lui que cette session ouvre sa socket, et il porte les
+    #  MÊMES requêtes que la façade — verrouiller `ib` seul laissait
+    #  `ib.client.reqPositions()` émettre le message 61 sur une session
+    #  « verrouillée ». Voir `surface_client_autorisee` pour la dérivation.
+    if client is not None:
+        autorisees = surface_client_autorisee(type(client))
+        for nom in dir(type(client)):
+            if nom.startswith('_') or nom in autorisees:
+                continue
+            if callable(getattr(type(client), nom, None)):
+                setattr(client, nom, _interdit('client.' + nom))
     if client is not None and hasattr(client, '_accounts'):
         with contextlib.suppress(Exception):
             client._accounts = []
@@ -198,5 +276,6 @@ def connecter_role(ib, role: str, timeout: float = 4.0,
            ' — %s' % derniere if derniere else ''))
 
 
-__all__ = ['METHODES_INTERDITES', 'METHODES_MARCHE', 'FrontiereIbkrError',
+__all__ = ['METHODES_INTERDITES', 'METHODES_MARCHE', 'METHODES_CLIENT_TRANSPORT',
+           'FrontiereIbkrError', 'surface_client_autorisee',
            'verrouiller', 'est_verrouillee', 'connecter', 'connecter_role']

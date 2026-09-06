@@ -19,6 +19,40 @@ import time
 from vertex.ui.shell import render_shell
 
 
+def _instant_scan(scan_state: dict) -> str | None:
+    """L'instant du scan SOUS UNE FORME QUE LE CLIENT SAIT LIRE, ou `None`.
+
+    Le client n'a qu'un seul analyseur d'horodatage, `VX.freshness._ms`, et il
+    ne lit que ce que `new Date(x)` accepte. Mesuré dans Chromium le
+    06/09/2026 sur le `vx-core.js` servi :
+
+        _ms('2026-09-06T18:32:24Z')  -> 1788719544000
+        _ms('1788719544.6501086')    -> null   (new Date -> « Invalid Date »)
+        _ms('20:32:24')              -> null
+
+    Une époque écrite telle quelle dans un attribut HTML devient donc une
+    CHAÎNE que le client ne sait pas dater — tout en restant *truthy*, donc en
+    autorisant l'affirmation d'un mode servi. C'est exactement le défaut que ce
+    lot corrigeait ailleurs, et la conversion existait déjà dans
+    `build_editorial` seulement : `render()` posait `data-scan-ts` sans elle et
+    rendait « Âge inconnu · comité — daté du scan qui l'a produit Différé »,
+    `data-mode="delayed"`, `data-ts` ABSENT (mesuré). Les deux appelants
+    partagent désormais la même conversion, pour qu'il n'existe plus un endroit
+    où l'on convertit et un endroit où l'on oublie.
+
+    Rend `None` — jamais une chaîne vide, jamais « maintenant » — quand le scan
+    ne date rien : l'absence reste l'absence (invariant 4).
+    """
+    horodatage = (scan_state or {}).get('scan_ts_h')
+    if horodatage:
+        return str(horodatage)
+    epoch = (scan_state or {}).get('scan_ts')
+    if epoch is not None:
+        with contextlib.suppress(Exception):
+            return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(float(epoch)))
+    return None
+
+
 # ── Brief Vertex éditorial (§21) — paquet structuré → ~10 lignes ────────
 def build_editorial(scan_state: dict) -> dict:
     """Brief déterministe composé UNIQUEMENT depuis les données moteur.
@@ -94,6 +128,25 @@ def build_editorial(scan_state: dict) -> dict:
     #  `scan_state['daily_changes']` n'était produit par personne : la liste
     #  restait vide à vie (Vertex IA › delta du brief). Le propriétaire du
     #  « depuis la session précédente » est market_context (base persistée).
+    #  L'INSTANT DU SCAN, SOUS UNE FORME EXPLOITABLE.
+    #  `scan_state['updated']` est une HEURE MURALE nue : mesure du 06/09/2026
+    #  sur 5003, il vaut '19:49:23' — ni date, ni fuseau. Le pied de « Brief du
+    #  marché » le passe à `VX.updateIndicator`, dont `VX.freshness._ms()` ne
+    #  peut rien parser : la carte centrale d'Aujourd'hui affichait « Âge
+    #  inconnu · … Différé », sans info-bulle, pendant que ses huit voisines
+    #  affichaient « Il y a 24 min » depuis le MÊME instant. Un mode servi sans
+    #  âge mesurable est ce que l'invariant 5 interdit.
+    #  Ordre de préférence : `scan_ts_h` (déjà une chaîne ISO — c'est celui que
+    #  `_trace_aujourdhui` retient plus bas), puis `scan_ts` (époque) CONVERTIE
+    #  en ISO, puis `updated` inchangé. La conversion n'est pas cosmétique :
+    #  `as_of` est lu ailleurs comme un TEXTE (`'Daté du '+esc(d.as_of)`), et y
+    #  servir un flottant afficherait « Daté du 1788716963.687278 ».
+    #  La conversion vit dans `_instant_scan` : `render()` en a besoin du mot
+    #  pour mot, et l'avoir écrite ici seulement a produit un `data-scan-ts`
+    #  illisible par le client (voir la mesure dans ce docstring).
+    as_of = (_instant_scan(scan_state) or scan_state.get('updated')
+             or time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+
     changed = []
     with contextlib.suppress(Exception):
         from vertex.engines import market_context as _mcx
@@ -104,7 +157,7 @@ def build_editorial(scan_state: dict) -> dict:
         'lines': lines[:12],
         'word_count': sum(len(l.split()) for l in lines[:12]),
         'changed_since_yesterday': changed[:3] if isinstance(changed, list) else [],
-        'as_of': scan_state.get('updated') or time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+        'as_of': as_of,
         'sources': [source],
         'generator': 'deterministic',
         'missing': missing,
@@ -204,7 +257,7 @@ def _hero_aujourdhui(scan_state: dict) -> str:
         hero=True)
 
 _CONTENT = """
-<div class="vx-page-header">
+<div class="vx-page-header"%%SCANTS%%>
   <div><p class="vx2-eyebrow">Piloter</p><h1>Aujourd’hui</h1>
   <div class="vx-sub">Que dois-je comprendre, surveiller et revoir maintenant ?</div></div>
   <div class="vx-actions">
@@ -844,12 +897,24 @@ function kpiCell(label,d,scan,span){
   const arrow=(chg==null||neu)?'':(chg>0?'▲':chg<0?'▼':'');
   const dtxt=(chg===null||chg===undefined)?'n/d'
     :((d&&d.deltaUnit)?((chg>0?'+':'')+VX.fmt.num(chg,2)+' '+d.deltaUnit):VX.fmt.pct(chg));
-  const vtxt=(val===null||val===undefined)?'—':(VX.fmt.price(val)+((d&&d.unit)?' '+d.unit:''));
+  const absent=(val===null||val===undefined);
+  const vtxt=absent?'—':(VX.fmt.price(val)+((d&&d.unit)?' '+d.unit:''));
+  /*  TIRET EXPLIQUÉ. `loadStrip` filtre les instruments absents avant de
+      rendre ses tuiles ; `loadMarketGrid` rend les DOUZE de sa table quoi
+      qu'il arrive. Mesure du 06/09/2026 sur 5003 : SMI, USD/CHF et ETH
+      sortaient en « — / n/d » avec zéro attribut `title` — un tiret muet, que
+      rien ne distingue d'un zéro, d'une panne ou d'un oubli. La cause est
+      pourtant mesurable sans rien supposer : l'instrument n'est pas dans la
+      charge du scan, et le scan dit qui l'a servie. On la nomme. */
+  const cause=absent?(label+' n’est pas servi par le dernier scan'
+    +((scan&&scan.source)?' (source : '+scan.source+')':'')
+    +' — aucune valeur n’est estimée à la place.'):'';
+  const dtxt2=absent?'non servi':dtxt;
   /* KPI moderne : prix + variation (flèche), sans mini-courbe (page plus épurée). */
-  return `<div class="vx-card vx-card--compact vx-kpi vx-idx-tile" style="grid-column:span ${span||2}" aria-label="${esc(label)}">
+  return `<div class="vx-card vx-card--compact vx-kpi vx-idx-tile" style="grid-column:span ${span||2}" aria-label="${esc(label)}"${absent?` data-absent="1" title="${esc(cause)}"`:''}>
     <span class="vx-kpi-label">${esc(label)}</span>
     <span class="vx-kpi-value">${vtxt}</span>
-    <span class="vx-kpi-delta ${dcls}">${arrow?`<i class="vx-arw">${arrow}</i>`:''}${dtxt}</span></div>`;
+    <span class="vx-kpi-delta ${dcls}">${arrow?`<i class="vx-arw">${arrow}</i>`:''}${dtxt2}</span></div>`;
 }
 async function loadStrip(){
   let scan=null;
@@ -1577,7 +1642,18 @@ async function loadOpportunities(){
     //  L'horodatage de la CHARGE. `VX.fetch` sert un cache de 60 s : dater
     //  la carte de `Date.now()` annoncait « maintenant » sur une reponse
     //  pouvant avoir une minute, et le re-rendu la rajeunissait sans fin.
-    const cTs=(c&&(c.as_of||c.ts||c.updated))||null;
+    /*  Mesure du 06/09/2026 sur 5003 : `/api/command` ne sert NI `as_of`,
+        NI `ts`, NI `updated` — `cTs` valait donc toujours `null` et la carte
+        « Posture du comité » rendait « Âge inconnu · comité Différé », un mode
+        affirmé sur une charge dont l'âge n'était pas mesuré.
+        Repli MESURÉ, pas supposé : `command.py` ne lit que `scan_state`, donc
+        cette charge a exactement l'âge du scan, que le serveur pose dans
+        `[data-scan-ts]` à la construction de la page. Le pied nomme cette
+        provenance au lieu de la faire passer pour l'heure de l'endpoint. */
+    const hdr=document.querySelector('[data-scan-ts]');
+    const tsScan=hdr?hdr.getAttribute('data-scan-ts'):null;
+    const cTs=(c&&(c.as_of||c.ts||c.updated))||tsScan||null;
+    const cSrc=(c&&(c.as_of||c.ts||c.updated))?'comité':(tsScan?'comité — daté du scan qui l’a produit':'comité');
     const stocks=(c.top_stocks||[]).slice(0,6);
     ($('vx-opp-stocks')||{}).innerHTML=stocks.length?'<div class="vx-movergrid" style="grid-template-columns:repeat(auto-fill,minmax(250px,1fr))">'+stocks.map(s=>{
       const vx=s.vertex||{};
@@ -1670,7 +1746,7 @@ async function loadOpportunities(){
           <div style="display:flex;height:12px;border-radius:99px;overflow:hidden;background:var(--vx-surface-0)" role="img" aria-label="Répartition des verdicts du comité">
             ${_ck.map(k=>`<i style="width:${(counts[k]/total*100).toFixed(1)}%;background:${tone[k]||'var(--vx-text-dim)'}"></i>`).join('')}
           </div>
-          <div class="vx-card-footer">${VX.updateIndicator(cTs,isDemo?'démo':'comité',isDemo?'fallback':'delayed')}
+          <div class="vx-card-footer">${VX.updateIndicator(cTs,isDemo?'démo':cSrc,isDemo?'fallback':(cTs?'delayed':''))}
             <span class="vx-meta">${total} dossier(s) passés en revue par le comité</span></div>`;
       }
     }
@@ -1728,15 +1804,47 @@ async function loadAlerts(){
         <span class="vx-grow vx-dim" style="font-size:12px">${esc(a[2]||a[1]||'')}</span>
         <span class="vx-badge" style="color:var(--vx-${danger?'negative':'warning'})">${esc(a[1]||'alerte')}</span>
       </div>`;}).join('');
-    const rows=mine.filter(a=>a.active).slice(0,6).map(a=>{
+    const actives=mine.filter(a=>a.active);
+    const rows=actives.slice(0,6).map(a=>{
       const hit=Object.values(firedMap).find(f=>f.id===a.id);
+      /*  Une alerte DÉCLENCHÉE sans date se lit comme une alerte déclenchée
+          maintenant. La boucle de `terminal.py` persiste pourtant `ts`
+          (époque) et `price` au moment du franchissement : un déclenchement
+          d'il y a trois jours rendait exactement le même badge qu'un
+          déclenchement d'il y a une minute. On sert ce que le serveur a
+          mesuré, et rien de plus. */
+      const quand=hit&&hit.ts?VX.fmt.ago(hit.ts):'';
+      const aQuel=(hit&&hit.price!=null)?(' à '+VX.fmt.price(hit.price)):'';
       return `<div class="vx-flex" style="padding:6px 0;border-bottom:1px dashed var(--vx-border-soft)">
         <button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${esc(a.sym)}">${esc(a.sym)}</button>
         <span class="vx-grow vx-dim" style="font-size:12px">${a.cond==='above'?'franchit':'casse'} ${VX.fmt.price(a.level)} ${esc(a.note||'')}</span>
-        ${hit?'<span class="vx-badge" style="color:var(--vx-warning)">déclenchée</span>':'<span class="vx-badge">armée</span>'}
+        ${hit?`<span class="vx-badge" style="color:var(--vx-warning)" title="${esc('déclenchée'+aQuel+(quand?' · '+quand:''))}">déclenchée${quand?' · '+esc(quand):''}${esc(aQuel)}</span>`
+             :'<span class="vx-badge">armée</span>'}
       </div>`;}).join('');
+    /*  PIED DATÉ. Mesure du 06/09/2026 sur 5003 : la carte « Radar d'alertes »
+        rendait deux alertes de risque et zéro `.vx-update`, quand douze autres
+        cartes de la MÊME page en portaient un. Un radar sans heure ne dit pas
+        si le balayage date de la minute ou de la veille.
+        `/api/alerts/status` sert déjà `ts` (horloge serveur du dernier
+        balayage, évalué toutes les 60 s) : c'est un âge MESURÉ, pas supposé, et
+        c'est lui qui date la carte. Les alertes de risque viennent de
+        `/api/command`, qui ne date pas sa charge — la ligne le nomme au lieu
+        de laisser croire que tout partage la même heure. */
+    const nSrv=((cmd&&cmd.alerts)||[]).length;
+    const pied='<div class="vx-card-footer">'
+      +VX.updateIndicator((fired&&fired.ts)||null,'balayage des alertes',fired&&fired.ts?'delayed':'')
+      /*  Le chemin d'API ne s'affiche pas : « issues de /api/command » était
+          le SEUL texte visible du produit à nommer une route (relevé .py/.js
+          du 06/09/2026 ; l'autre occurrence, analysis_page.py:1402, est une
+          URL de webhook que l'utilisateur doit recopier). Le contrat demande
+          du français clair ; le propriétaire de ces alertes a un nom en
+          français — `command.py` les documente comme « alertes du risk
+          manager ». La provenance reste donc dite, sans jargon. */
+      +` <span class="vx-meta">${nSrv} alerte(s) du moteur de risque — leur source ne les date pas`
+      +` · ${actives.length} alerte(s) déclarée(s) active(s)${actives.length>6?' — 6 affichées':''}</span></div>`;
     ($('vx-alerts')||{}).innerHTML=((srv+rows)||VX.states.empty('Aucune alerte active.'))
-      +'<div class="vx-mt2"><button class="vx-btn vx-btn-sm vx-btn-ghost" onclick="VXEntities.openAddModal(\'\',\'alert\')">+ Créer une alerte</button></div>';
+      +'<div class="vx-mt2"><button class="vx-btn vx-btn-sm vx-btn-ghost" onclick="VXEntities.openAddModal(\'\',\'alert\')">+ Créer une alerte</button></div>'
+      +pied;
   }catch(e){
     /*  Nommer la cause : un « indisponible » nu se lit comme une absence de
         donnee alors que c'etait un defaut de code. Un an durant, personne
@@ -2176,6 +2284,29 @@ def render(scan_state: dict | None = None) -> str:
     content = _CONTENT.replace('%%LOADING%%',
                                '<div class="vx-skeleton" style="height:60px"></div>')
     content = content.replace('%%HERO%%', _hero_aujourdhui(scan_state or {}))
+    #  L'INSTANT DU SCAN, POSÉ DANS LA PAGE.
+    #  `/api/command` ne sert aucun horodatage : mesure du 06/09/2026 sur 5003,
+    #  ses clés sont exactement {alerts, controls_availability, counts,
+    #  decision, exposure, portfolio_score, regime, risk, top_options,
+    #  top_stocks, validation} — ni `ts`, ni `as_of`, ni `updated`. La carte
+    #  « Posture du comité » lisait donc `cTs = null` et affichait
+    #  « Âge inconnu · comité Différé » : un mode servi affirmé sur une charge
+    #  dont l'âge n'était pas mesuré.
+    #  Cet âge est pourtant connu sans le moindre appel réseau : `command.py`
+    #  ne lit QUE `scan_state` (market_ctx, committee, strategy, detail), donc
+    #  la charge du comité a exactement l'âge du scan qui l'a produite. Le
+    #  serveur la pose ici ; le client la lit en repli, et le pied dit d'où
+    #  vient cette date plutôt que de la faire passer pour celle de l'endpoint.
+    #  Attribut ABSENT quand le scan ne date rien : jamais une chaîne vide.
+    #  L'instant part sous la forme QUE LE CLIENT SAIT LIRE : `scan_ts` brute
+    #  (une époque) devenait la chaîne « 1788719544.6501086 », que
+    #  `VX.freshness._ms` rend `null` — truthy pour `cTs`, donc « Différé »
+    #  affirmé, mais « Âge inconnu » affiché et `data-ts` absent (mesuré dans
+    #  Chromium). `_instant_scan` convertit, comme `build_editorial`.
+    ts_scan = _instant_scan(scan_state or {})
+    content = content.replace(
+        '%%SCANTS%%',
+        f' data-scan-ts="{ts_scan}"' if ts_scan else '')
     # `page_label` reste « Dashboard » : le routeur client et plusieurs bancs s'y
     # adossent. L'espace, lui, s'appelle Aujourd'hui — c'est ce que l'utilisateur lit.
     return render_shell(title='Aujourd’hui', active='briefing',

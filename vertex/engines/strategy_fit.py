@@ -121,9 +121,20 @@ def _attach_strategy(rows, detail):
         r['playbook'] = _playbook_of(r)
         sym = r.get('symbol')
         plan = ((detail or {}).get(sym) or {}).get('plan') or {}
+        #  ERREUR D'UNITÉ, MESURÉE. Le repli `rr = r.get('vx_rr')` lisait
+        #  `vertex['rr']`, qui n'est PAS un ratio : `quant_engine.rr_score`
+        #  renvoie une NOTE /100 (`_clamp(rr_real * 32, 0, 100)`, son propre
+        #  commentaire dit « 2:1→64, 3:1→96 »). Mesuré le 6 sept. 2026 sur
+        #  /api/vertex/<sym> (5003) : NVDA 8, MSFT 22, AAPL 41, TSLA 44,
+        #  AMD 55, META 44, GOOGL 64, AMZN 55. Passées dans le repli, ces notes
+        #  donnaient `rr_ok = (note >= 2)` — VRAI sur 8/8, donc un drapeau
+        #  « R:R ≥ 2:1 respecté » allumé en permanence, y compris pour la note 8
+        #  qui encode le pire ratio réel (~0,25:1). Une garde toujours vraie ne
+        #  distingue plus rien.
+        #  Sans ratio MESURÉ (`plan['rr_res']`, seul rapport gain/risque du
+        #  produit), le champ reste None et le drapeau reste faux : une absence,
+        #  jamais un feu vert emprunté à une autre échelle.
         rr = plan.get('rr_res')
-        if rr is None:
-            rr = r.get('vx_rr')
         r['rr'] = rr
         r['rr_ok'] = bool(rr is not None and rr >= 2)
 
