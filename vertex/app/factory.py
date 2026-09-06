@@ -278,12 +278,21 @@ def create_app(*, root_path: str | None = None) -> Any:
         return redirect('/')
 
     # ── Compression ──────────────────────────────────────────────────────────
+    #  Les types dont la compression change quelque chose. Une image ou une
+    #  police sont déjà compressées : les repasser au gzip coûte du temps
+    #  processeur pour zéro octet gagné.
+    _TYPES_JS = ('text/javascript', 'application/javascript',
+                 'application/x-javascript')
+    #  Un fichier servi en flux n'est matérialisé que sous cette borne : au-delà
+    #  (un média, une archive), on le laisse passer plutôt que de le charger en
+    #  mémoire pour rien.
+    _PLAFOND_FLUX = 4 * 1024 * 1024
     @app.after_request
     def _gzip_response(resp):
         """Compresse les grosses réponses (`/scan` pèse ~8 Mo → ~10× moins) —
         décisif sur un iPhone en Wi-Fi."""
         try:
-            if resp.status_code != 200 or resp.direct_passthrough:
+            if resp.status_code != 200:
                 return resp
             if 'gzip' not in (request.headers.get('Accept-Encoding') or ''):
                 return resp
@@ -295,9 +304,32 @@ def create_app(*, root_path: str | None = None) -> Any:
                 #  pourtant illisible — la pire forme de panne, parce que rien
                 #  ne signale d'erreur.
                 return resp
-            ct = resp.content_type or ''
-            if not (ct.startswith('application/json') or ct.startswith('text/html')):
+            #  LES ACTIFS N'ÉTAIENT PAS COMPRESSÉS — mesuré le 2026-09-06.
+            #
+            #  Le filtre ne retenait que JSON et HTML, et sortait d'emblée sur
+            #  `direct_passthrough`, qui est TOUJOURS vrai pour un fichier servi
+            #  par `send_file`. Résultat mesuré sur l'instance : ni
+            #  `/asset/css/bundle.css` (155 ko), ni `vx-core.js` (49 ko), ni
+            #  `chart-core.js` (57 ko) ne portaient `Content-Encoding`.
+            #
+            #  Total première partie : 791 ko servis, 265 ko une fois
+            #  compressés. **526 ko, les deux tiers, payés à chaque chargement
+            #  froid** — sur un téléphone en 4G, c'est la différence entre une
+            #  page qui s'ouvre et une page qu'on attend.
+            #
+            #  Le corps d'un fichier en flux doit être matérialisé avant d'être
+            #  compressé ; on ne le fait que sous une borne, pour ne pas charger
+            #  en mémoire un gros média.
+            ct = (resp.content_type or '').split(';')[0].strip()
+            compressible = (ct.startswith('application/json') or ct == 'text/html'
+                            or ct == 'text/css' or ct in _TYPES_JS
+                            or ct == 'image/svg+xml' or ct == 'text/plain')
+            if not compressible:
                 return resp
+            if resp.direct_passthrough:
+                if (resp.content_length or 0) > _PLAFOND_FLUX:
+                    return resp
+                resp.direct_passthrough = False
             data = resp.get_data()
             if len(data) < 8192:
                 return resp
@@ -309,6 +341,14 @@ def create_app(*, root_path: str | None = None) -> Any:
             resp.headers['Content-Encoding'] = 'gzip'
             resp.headers['Content-Length'] = str(len(gz))
             resp.headers['Vary'] = 'Accept-Encoding'
+            #  L'étiquette d'entité désignait le corps NON compressé. Deux
+            #  corps différents sous une même étiquette, c'est un cache qui peut
+            #  servir l'un pour l'autre ; nginx règle cela depuis toujours par
+            #  un suffixe. On fait pareil, plutôt que de retirer l'étiquette et
+            #  de perdre les requêtes conditionnelles.
+            etag = resp.headers.get('ETag')
+            if etag and 'gzip' not in etag:
+                resp.headers['ETag'] = etag[:-1] + '-gzip"' if etag.endswith('"')                     else etag + '-gzip'
         except Exception:
             #  Une compression ratée ne doit jamais coûter la réponse : on rend
             #  le corps tel quel, qui est toujours valide. `return` explicite
