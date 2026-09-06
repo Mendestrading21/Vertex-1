@@ -92,7 +92,9 @@ def test_aucun_montant_du_desk_local_n_est_dans_un_fichier_suivi():
     valeurs = _valeurs_du_desk()
     if not valeurs:
         pytest.skip('desk local vide ou sans montant significatif')
-    #  Frontières de mot : « 4300 » ne doit pas s'accrocher à « 14300 ».
+    #  Frontières de mot : « 7777 » ne doit pas s'accrocher à « 17777 ».
+    #  L'exemple est neutre à dessein — un gardien qui cite un montant
+    #  réel pour s'expliquer commet la faute qu'il surveille.
     motifs = {v: re.compile(r'(?<![\d.])' + re.escape(v) + r'(?![\d])') for v in valeurs}
     fuites = []
     for rel in _fichiers_suivis():
