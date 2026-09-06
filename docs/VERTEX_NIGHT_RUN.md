@@ -114,7 +114,7 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
 
 - Dernier commit : `git log --oneline -1` ; arbre : `git status` (doit être
   propre hors caches gitignorés).
-- Instance de travail relancée le 06/09 à 02:49 avec `659aec4a` (statut ok,
+- Instance de travail relancée le 06/09 à 07:17 avec `b58b6270` (précédemment 02:49 avec `659aec4a`) (statut ok,
   TWS fermé à cet instant → différé, reconnexion automatique). Sinon :
   relancer `python -m vertex` avec TWS ouvert ; vérifier
   `/healthz` (`ibkr_live`), Système › Jobs (`MACRO_OFFICIEL_REFRESH` ACTIF
