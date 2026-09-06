@@ -92,6 +92,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | `99c5c1fa` | docs(skill) P3 : `references/data-feed-maintenance.md` lié depuis le skill maître |
 | `e0649f98` | test(navigateur) P4 : Chromium installé, sonde (shell headless, `VERTEX_MESURE_BASE`), 53 gardiens réels, deux défauts corrigés (coque vx-shell-9, SW v296) |
 | `c90daa19` | feat(publications) P5 : communiqués BCE/BNS (RSS officiels) collectés en fond, carte Marchés › Macro ; sonde navigateur durcie (page ouverte exigée) |
+| `852af488` | ops(veille) : chien de garde local (non installé), gardiens navigateur en CI (job `navigateur`) |
 
 ## 5. Tests (résultats exacts)
 
@@ -115,6 +116,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | P2 actualités (`1f3b5791`) | `4483 passed, 180 skipped, 0 failed` |
 | P4 navigateur (`e0649f98`) | `4494 passed, 172 skipped, 0 failed` ; gardiens navigateur contre QA : `53 passed` |
 | P5 publications (`c90daa19`) | `4501 passed, 172 skipped, 0 failed` ; collecte réelle : 24 communiqués |
+| Veille + CI navigateur (`852af488`) | `4505 passed, 172 skipped, 0 failed` |
 
 Preuves réelles hors suite : socket TWS (session marché seulement),
 collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
@@ -185,5 +187,9 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
   `ibkr_live: true` en 50 s.
 - P7 : PR #867 passée « prête à relire » (CI verte) ; la fusion reste un acte
   humain.
-- Plan P1–P7 terminé. Reprise éventuelle : décisions humaines
-  (`VERTEX_FINAL_REPORT.md` §9).
+- Plan P1–P7 terminé. Suite (« continue ») : chien de garde local
+  `tools/ops/veille_vertex.ps1` (non installé), job CI `navigateur`
+  (`852af488`) ; seconde observation de 60 min de l'instance relancée à 09:28
+  (pid 4608) en cours.
+- Reprise éventuelle : décisions humaines (`VERTEX_FINAL_REPORT.md` §9),
+  dont l'installation du chien de garde en tâche planifiée.
