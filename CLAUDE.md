@@ -59,11 +59,22 @@ propriétaire du verdict.
 
 ## Architecture de travail
 
-Le runtime au SHA de baseline ne respecte pas encore tous ces invariants : il
-contient notamment des lectures de compte/positions IBKR, plusieurs autorités
-de décision, deux collisions de routes et des jobs déclaratifs. Claude doit les
-traiter comme P0 du programme, jamais prétendre qu'ils sont déjà corrigés parce
-que ce contrat les interdit.
+Le runtime ne respecte pas encore tous ces invariants. La règle reste
+entière : ne jamais prétendre qu'un défaut est corrigé parce que ce contrat
+l'interdit — il faut une MESURE. Symétriquement, un défaut mesuré comme fermé
+ne doit plus être décrit comme ouvert : une doctrine périmée envoie chercher
+des fantômes et fait perdre la confiance dans le reste du texte.
+
+État MESURÉ au 2026-09-06, chaque ligne reproductible :
+
+| P0 du programme | État | Preuve |
+| --- | --- | --- |
+| lectures de compte / positions IBKR | fermé | `check_ibkr_boundary.py --enforce` OK ; verrou vérifié sur un objet `IB` réel, façade ET client bas niveau, zéro méthode interdite appelable |
+| collisions de routes | fermé | `tools/qa/exercer_routes.py` : 0 sur 184 règles, groupées par (chemin, méthode) ; gardé par `tests/test_routes_sans_collision.py` |
+| plusieurs autorités de décision | en cours | le plan de travail des positions passe par `decision_packet.build` ; d'autres doublons restent à chercher |
+| jobs déclaratifs | en cours | les capacités sans exécuteur trouvées à ce jour portent `ETAT = NON_IMPLÉMENTÉ` (`scanner/stages.py`, `ai/tool_registry.py`) |
+
+Ce tableau se met à jour avec une mesure, jamais avec une intention.
 
 - Entrée locale : `python -m vertex`.
 - WSGI : `vertex.runtime:app`.
