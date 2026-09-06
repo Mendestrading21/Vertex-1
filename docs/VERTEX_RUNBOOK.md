@@ -63,6 +63,7 @@ reconnecte quand TWS répond) ; l'ordinateur ne doit pas se mettre en veille
 | Fraîcheur d'une carte | pied de carte : `Il y a N min · source · Différé/Live` ; « Âge inconnu » signifie que la route n'a pas fourni d'époque (jamais l'heure du navigateur) |
 | Erreurs navigateur | console + `POST /api/client-log` (journal serveur) |
 | Journal serveur | sortie console de `python -m vertex` (le bruit `ib_async` est condensé par `ibkr_link.calmer_le_journal_du_courtier`) |
+| Gardiens navigateur | `VERTEX_MESURE_BASE=http://127.0.0.1:5003 pytest tests\test_qa_espaces.py tests\test_couche_visuelle.py tests\test_regles_mortes.py tests\test_boutons_morts_temoins.py` (instance QA lancée ; Chromium : `python -m playwright install chromium`) ; sans base ouverte, ils s'abstiennent et le disent |
 | Frontière IBKR | `.venv\Scripts\python.exe .claude\skills\vertex-2-0\scripts\check_ibkr_boundary.py --enforce` ; `pytest tests\test_ibkr_session_marche_seule.py` ; preuve sur socket réelle : `VERTEX_TEST_IBKR_LIVE=1 pytest tests\test_ibkr_session_marche_seule.py -k vraie_socket` |
 
 ## 4. Reprendre après incident
