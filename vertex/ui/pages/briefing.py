@@ -1962,14 +1962,17 @@ async function loadNews(){
     const src=String(n.publisher||n.pub||'');
     const sym=n.sym||'';
     const link=n.link||'';
-    const hm=((n.time||'').match(/\b(\d{2}:\d{2})/)||[])[1]||'';
+    /* Heure de PUBLICATION (source, normalisée) ; l'heure de réception reste
+       en titre de l'info-bulle. Plusieurs agences pour un même fait = dit. */
+    const hm=(((n.published_at||n.time)||'').match(/(\d{2}:\d{2})/)||[])[1]||'';   /* `T05:20` : pas de frontière de mot avant l'heure */
+    const nsrc=(+n.n_sources||0)>1?` · ${n.n_sources} sources`:'';
     const s=+n.senti||0;
     const dot=s?`<span style="display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px;background:${s>0?'var(--vx-positive)':'var(--vx-negative)'}"></span>`:'';
     return `<article data-senti="${s>0?1:s<0?-1:0}" style="padding:7px 0;border-bottom:1px dashed var(--vx-border-soft)">
       <div style="font-size:12.5px;line-height:1.45;color:var(--vx-text-secondary)">${dot}${t}</div>
       <div class="vx-meta vx-mt1">
         ${sym?`<button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${esc(sym)}" style="padding:0 4px">${esc(sym)}</button> · `:''}
-        ${src}${hm?` · ${hm}`:''}
+        <span title="${n.received_at?'reçu '+esc(n.received_at)+' UTC':''}">${src}${hm?` · ${hm}`:''}${nsrc}</span>
         ${link?` · <a href="${esc(link)}" target="_blank" rel="noopener noreferrer" aria-label="Ouvrir la source">source ↗</a>`:''}
       </div></article>`;
   }).join('')

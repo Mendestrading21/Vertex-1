@@ -1706,7 +1706,14 @@ def _news_loop():
             # NORMALISE COMPLET + le lien : le fil ne l'appelait simplement pas.
             # Dedupe AVANT le tri : on garde le premier arrive, comme avant.
             feed = _news_plus.dedupe_news(feed)
-            feed.sort(key=lambda x: x.get('time') or '', reverse=True)
+            #  Traçabilité (P2) : heure de RÉCEPTION (ici, UTC) distincte de
+            #  l'horodatage de PUBLICATION fourni par la source (normalisé,
+            #  jamais inventé : None si la source n'en donne pas de lisible).
+            _recu = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            for _it in feed:
+                _it['received_at'] = _recu
+                _it['published_at'] = _news_plus.horodatage_source(_it.get('time'))
+            feed.sort(key=lambda x: x.get('published_at') or x.get('time') or '', reverse=True)
             #  Regle produit n°5 : tout texte externe passe par
             #  `sanitize_news` AVANT d'etre servi. Cette branche-ci —
             #  RSS, yfinance, traduction — ne le faisait pas ; seule
@@ -1714,6 +1721,8 @@ def _news_loop():
             #  innerHTML : un titre porteur de balise passait tel quel.
             news_state['items'] = _news_plus.sanitize_news(feed[:45])
             news_state['updated'] = datetime.now().strftime('%H:%M:%S')
+            news_state['ts'] = time.time()                 # époque serveur (âge vivant des cartes)
+            news_state['as_of'] = _recu
             #  La provenance NOMME ses contributeurs, comme le scan : « ibkr »
             #  n'est pas « ibkr+web ». Sans ce compte, un fil bascule
             #  entierement sur le web sans que rien ne change a l'ecran.

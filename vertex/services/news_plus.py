@@ -325,6 +325,31 @@ def sanitize_news(items):
     return out
 
 
+def horodatage_source(t):
+    """Normalise l'horodatage FOURNI par la source en `YYYY-MM-DDTHH:MM` (+ `Z`
+    quand la source déclare GMT/UTC, sinon sans fuseau : on n'invente pas un
+    fuseau). Formats vus dans le fil : IBKR/yfinance `YYYY-MM-DD HH:MM`, RSS
+    RFC 2822 `Sat, 06 Sep 2026 07:00:00 GMT`. None si illisible."""
+    s = str(t or '').strip()
+    if not s:
+        return None
+    m = re.match(r'^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})', s)
+    if m:
+        return '%sT%s' % (m.group(1), m.group(2))
+    try:
+        from email.utils import parsedate_to_datetime
+        d = parsedate_to_datetime(s)
+    except (TypeError, ValueError, IndexError):
+        return None
+    if d is None:
+        return None
+    if d.tzinfo is not None:
+        import datetime as _dt
+        d = d.astimezone(_dt.timezone.utc)
+        return d.strftime('%Y-%m-%dT%H:%MZ')
+    return d.strftime('%Y-%m-%dT%H:%M')
+
+
 def dedupe_news(items):
     """Consolide les doublons **sans perdre les sources**.
 
@@ -386,4 +411,4 @@ def dedupe_news(items):
 
 
 __all__ = ['sentiment', 'aggregate', 'parse_rss', 'rss_news', 'sanitize_news',
-           'dedupe_news', 'nom_publieur', 'CLES_PUBLIEUR']
+           'dedupe_news', 'nom_publieur', 'CLES_PUBLIEUR', 'horodatage_source']
