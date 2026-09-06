@@ -194,7 +194,7 @@ def test_francais_dans_structure():
 # ── 4. Versions de cache : bundle immuable et service worker ────────────────
 def test_la_coque_et_le_service_worker_suivent_le_lot(client):
     from vertex.ui.shell import SHELL_VERSION
-    assert SHELL_VERSION >= 'vx-shell-3'
+    assert int(SHELL_VERSION.rsplit('-', 1)[1]) >= 3, SHELL_VERSION   # numérique : 'vx-shell-10' < 'vx-shell-3' en texte
     html = client.get('/options').get_data(as_text=True)
     assert '/asset/css/bundle.css?v=' + SHELL_VERSION in html
     sw = client.get('/sw.js').get_data(as_text=True)

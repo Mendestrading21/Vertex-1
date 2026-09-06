@@ -91,15 +91,19 @@ def test_la_bande_declare_toujours_moins_de_colonnes_que_le_span_herite():
 
 
 def test_les_tuiles_portent_toujours_le_span_herite():
-    """Le jour où le style en ligne disparaît de `portfolio_page.py`, la règle
-    de neutralisation devient morte — et une règle morte finit par être retirée
-    par quelqu'un qui ne sait plus pourquoi elle existait."""
+    """Audit complet du 2026-09-06 : le style EN LIGNE `grid-column:span 3`
+    ignorait les règles mobiles (quatre tuiles de 81 px à 390 px, débordement
+    mesuré). Il est remplacé par la classe `vx-col-3` — même span dans la
+    grille à douze colonnes, mais les règles responsive s'appliquent. La
+    neutralisation `.vx-kpi-strip > *` garde son objet : la classe spannerait
+    encore 3 dans la bande à 4 colonnes."""
     src = _lire(_PORTFOLIO)
-    n = len(re.findall(r'grid-column:span\s*3', src))
+    assert 'grid-column:span 3' not in src, (
+        "le style en ligne est revenu : les règles mobiles ne s'appliqueraient plus")
+    n = len(re.findall(r'vx-kpi vx-col-3"|vx-card--compact vx-col-3"', src))
     assert n >= 1, (
-        'plus aucune tuile ne porte `grid-column:span 3` en ligne : la règle '
-        '`.vx-kpi-strip > *` du lot 625 n\'a plus d\'objet. La retirer, et '
-        'retirer ce test avec elle.')
+        "plus aucune tuile ne porte `vx-col-3` : la règle `.vx-kpi-strip > *` "
+        "du lot 625 n'a plus d'objet. La retirer, et retirer ce test avec elle.")
 
 
 def test_le_meme_helper_sert_encore_une_grille_a_douze_colonnes():

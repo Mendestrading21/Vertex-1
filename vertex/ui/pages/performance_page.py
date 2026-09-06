@@ -431,11 +431,11 @@ function loadKpis(){
   ];
   ($('vx-pf-kpis')||{}).innerHTML=cells.map(([label,val,cls])=>{
     const tone=cls==='vx-pos'?'pos':cls==='vx-neg'?'neg':'';
-    return `<div class="vx-stat" style="grid-column:span 2" data-tone="${tone}" aria-label="${esc(label)}">
+    return `<div class="vx-stat vx-col-2" data-tone="${tone}" aria-label="${esc(label)}">
       <div class="vx-stat-k">${label}</div>
       <div class="vx-stat-v">${val}</div>
       <div class="vx-stat-sub">journal local · vos déclarations</div></div>`;}).join('')
-    +`<div class="vx-stat" style="grid-column:span 2">
+    +`<div class="vx-stat vx-col-2">
       <div class="vx-stat-k">Source</div>
       <div class="vx-meta" style="font-size:11.5px;margin-top:5px;line-height:1.4">Calculs arithmétiques sur VOS trades déclarés — aucun indicateur de marché.</div></div>`;
   return list;
@@ -553,7 +553,7 @@ function loadHypotheses(){
   const j=(E()?E().journal():[])||[];
   if(!j.length){host.innerHTML=VX.states.emptyDesk('Aucune hypothèse journalisée — chaque décision est une thèse à vérifier.',JOURNAL_ACTION);return;}
   const wins=j.filter(e=>e.result==='WIN'),losses=j.filter(e=>e.result==='LOSS'),open=j.filter(e=>!e.result);
-  const chip=(label,n,cls)=>`<div class="vx-kpi vx-card vx-card--compact" style="grid-column:span 4">
+  const chip=(label,n,cls)=>`<div class="vx-kpi vx-card vx-card--compact vx-col-4">
     <span class="vx-kpi-label">${label}</span><span class="vx-kpi-value ${cls}" style="font-size:24px">${n}</span></div>`;
   const line=(e)=>`<div class="vx-flex" style="padding:7px 0;border-bottom:1px dashed var(--vx-border-soft);gap:10px;align-items:center">
     <button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${esc(e.ticker||'')}">${esc(e.ticker||'—')}</button>

@@ -1751,3 +1751,22 @@ html,body{max-width:100%;overflow-x:clip}
    pastille `white-space:nowrap` faisait déborder le document de 44 px à
    390 px (434 > 390). Elle passe à la ligne au lieu de pousser la page. ── */
 .vx-readonly-shield{white-space:normal;flex-wrap:wrap;max-width:100%;overflow-wrap:anywhere}
+
+/* ── 35. Audit complet du 2026-09-06 (tools/qa/audit_cartes.py, Chromium,
+   118 relevés) : trois débordements à 390 px, corrigés ici. ── */
+/* a) Marchés › Indices : la bande d'indicateurs restait à 4 colonnes à 390 px
+   (tuiles de 83 px, pastille « milieu de plage » de 98 px). Deux colonnes, et
+   la pastille peut passer à la ligne. */
+@media (max-width:640px){
+  #vx-content .vx-kpi-strip{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #vx-content[data-space="markets"] .vx-mk-idx-rel{white-space:normal;max-width:100%}
+  /* c) tuiles KPI en `vx-col-3` (Portefeuille › Options, Vertex IA) : deux par
+     ligne sur mobile plutôt que quatre de 81 px. */
+  #vx-content .vx-grid>.vx-kpi.vx-col-3,#vx-content .vx-grid>.vx-card--compact.vx-col-3{grid-column:span 6}
+}
+/* b) Options › Vue d'ensemble : la règle ≤1440 px (deux colonnes 220px/1fr)
+   suivait la règle ≤900 px dans la cascade et la battait à 390 px — le rail
+   des dimensions débordait (482 > 390). Une colonne sous 900 px, posée APRÈS. */
+@media (max-width:900px){
+  #vx-content .vx-opt-hero-grid{grid-template-columns:minmax(0,1fr)}
+}
