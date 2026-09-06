@@ -89,6 +89,14 @@ TradingView (secret absent), Anthropic (clé absente).
   231 → 233 Mo, 32 threads, stables. Aucune reconnexion observée.
 - Les autres processus Python de la machine appartiennent au monorepo
   « Vertex 1.0 Beta » (`~/.vertex/app`, ports 8000/8001) : non touchés.
+- Relance du 2026-09-06 à 02:49 avec le code de la branche (`659aec4a`) :
+  `/healthz` `status: ok` en 45 s, premier scan à 02:49:34 ; TWS était fermé
+  à cet instant (« injoignable sur 7496/7497/4001/4002 », état normal sans
+  session courtier) → données différées yfinance, étiquetées ; les workers
+  réessaieront les ports à la réouverture de TWS. Observation 5 min :
+  mémoire 262 → 271 Mo, aucun `Traceback` (une 404 yfinance sur un titre,
+  préexistante). L'instance précédente (00:57) était montée à 368 Mo en
+  1 h 40 avec IBKR actif : à surveiller sur la durée.
 - Instance QA (port 5003) arrêtée après les vérifications.
 - Le fonctionnement ne dépend pas de Claude : les boucles sont des threads du
   processus Vertex ; `VERTEX_RUNBOOK.md` décrit démarrage, arrêt, reprise.
