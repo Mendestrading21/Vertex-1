@@ -151,3 +151,40 @@ navigateurs gardent l'ancien bundle immuable.
 Une suite verte ne remplace ni la preuve navigateur (captures 1600 / 1280 /
 1024 / 390 px, console et `/api/client-log` propres), ni la preuve de
 données (source, date, fraîcheur visibles), ni l'acceptation humaine.
+
+### Les cinq balayages transversaux
+
+Ils cherchent des défauts qu'aucun test unitaire ne voit, parce qu'ils vivent
+ENTRE les modules. Les quatre premiers sont déjà tenus par des bancs
+(`test_balayage_statique`, `test_primitives_graphiques`,
+`test_routes_sans_collision`, `test_modules_atteints`) : les lancer à la main
+sert à LIRE le détail, pas à savoir s'ils passent.
+
+```bash
+.venv\Scripts\python.exe tools\qa\balayage_statique.py --racine vertex
+.venv\Scripts\python.exe tools\qa\primitives_manquantes.py
+.venv\Scripts\python.exe tools\qa\modules_non_atteints.py
+.venv\Scripts\python.exe tools\qa\cles_sans_producteur.py --racine vertex
+.venv\Scripts\python.exe tools\qa\exercer_routes.py
+```
+
+| Outil | Ce qu'il trouve | Ce qu'il a trouvé le 2026-09-06 |
+| --- | --- | --- |
+| `balayage_statique` | nom indéfini, import mort, redéfinition silencieuse | un `NameError` en attente dans le memo des cotations, invisible sans IBKR |
+| `primitives_manquantes` | une page appelle un graphique qu'elle ne charge pas | une carte perdue sur Système, et 28 appels sans garde nommée |
+| `modules_non_atteints` | une capacité entière qu'aucun chemin n'exécute | le pipeline du scanner et le registre d'outils Claude, tous deux étiquetés |
+| `cles_sans_producteur` | une clé lue que personne n'écrit | l'anomalie `QUALITY_DETERIORATION`, morte par construction |
+| `exercer_routes` | route en échec, lente, muette, ou à deux propriétaires | zéro collision, cinq charges vides sans motif |
+
+Le dernier fait de VRAIES requêtes (donc du réseau côté sources) : il a sa
+place dans un rapport, pas dans un banc.
+
+### Fins de ligne
+
+```bash
+.venv\Scripts\python.exe tools\qa\normaliser_fins_de_ligne.py --verifier
+```
+
+Un outil d'édition a déjà réécrit `terminal.py` entier en CRLF : le changement
+réel valait 73 lignes, `git diff` en annonçait 2883, et la revue devenait
+impossible. Sans argument, la commande répare au lieu de contrôler.
