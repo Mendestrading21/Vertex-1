@@ -255,7 +255,21 @@
   }
 
   /* ── Stratégies multi-jambes ────────────────────────────────────── */
+  var _stratsRetry = 0;
   function paintStrats(d) {
+    /* Chaîne en cours de chargement en fond (serveur : en_cours) → absence
+       NOMMÉE et un réessai borné hors cache client, jamais une page figée. */
+    if (d && d.en_cours) {
+      body('vx-osym-strats', empty(d.reason || 'Chaîne d’options en cours de chargement…'));
+      if (_stratsRetry < 2 && window.VX && VX.fetch) {
+        _stratsRetry += 1;
+        setTimeout(function () {
+          VX.fetch('/api/options/strategies/' + encodeURIComponent(SYM), { ttl: 0 }).then(paintStrats)
+            .catch(function () { body('vx-osym-strats', empty('Stratégies indisponibles.')); });
+        }, ((d.retry_s || 8) * 1000));
+      }
+      return;
+    }
     var list = (d.strategies || []).filter(function (s) { return s && s.available !== false; });
     if (!list.length) { body('vx-osym-strats', empty(d.reason || 'Aucune stratégie constructible depuis le board pour ' + SYM + '.')); return; }
     // Largeur adaptée au nombre de stratégies : 1 seule → pleine largeur (plus de vide

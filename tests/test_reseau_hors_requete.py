@@ -182,6 +182,61 @@ def test_la_marque_de_contrat_ne_tire_pas_la_chaine_dans_la_requete(monkeypatch)
     assert 'reseau=False' in src
 
 
+# ── Chaîne d'options : magasin non bloquant, jamais dans la requête ─────────
+
+def test_aucune_route_ne_tire_la_chaine_dans_la_requete():
+    """`on_demand.board_with`/`fetch` chargent la chaîne EN LIGNE ; les routes
+    passent par `chaine_a_la_demande.board_avec` (collecte en fond)."""
+    import glob
+    for chemin in glob.glob(os.path.join(_ROOT, 'vertex', 'app', 'routes', '*.py')):
+        src = open(chemin, encoding='utf-8').read()
+        assert '_od.board_with(' not in src, chemin
+        assert '_od.fetch(' not in src, chemin
+
+
+def test_board_avec_complete_sans_bloquer(monkeypatch):
+    from vertex.options import chaine_a_la_demande as ch
+    from vertex.app import snapshot as sn
+    # titre déjà couvert : rien n'est déclenché, le board est rendu tel quel
+    board = [{'sym': 'AAPL', 'strike': 200}]
+    b, meta = ch.board_avec('aapl', board)
+    assert b == board and meta.etat == sn.LIVE
+    # titre absent : le magasin répond MISSING + chargement en fond, sans attendre
+    monkeypatch.setattr(ch, 'contrats', lambda sym, board=None, attendre=False:
+                        ([], sn.Meta(etat=sn.MISSING, rafraichissement_en_cours=True)))
+    t0 = time.time()
+    b2, meta2 = ch.board_avec('ZZZZ', board)
+    assert time.time() - t0 < 0.2 and b2 == board and ch.en_cours(meta2)
+    # contrats arrivés : ajoutés au board, jamais substitués
+    monkeypatch.setattr(ch, 'contrats', lambda sym, board=None, attendre=False:
+                        ([{'sym': 'ZZZZ', 'strike': 10}], sn.Meta(etat=sn.LIVE)))
+    b3, meta3 = ch.board_avec('ZZZZ', board)
+    assert len(b3) == 2 and not ch.en_cours(meta3)
+
+
+def test_strategies_disent_pas_encore_quand_la_chaine_charge(monkeypatch):
+    from vertex.options import chaine_a_la_demande as ch
+    from vertex.app import snapshot as sn
+    from vertex.app.state import scan_state
+    monkeypatch.setitem(scan_state, 'options_board', [])
+    monkeypatch.setattr(ch, 'contrats', lambda sym, board=None, attendre=False:
+                        ([], sn.Meta(etat=sn.MISSING, rafraichissement_en_cours=True)))
+    from vertex.runtime import app
+    app.config['TESTING'] = True
+    with app.test_client() as c:
+        j = c.get('/api/options/strategies/ZZZZ').get_json()
+        assert j['available'] is False and j['en_cours'] is True and j['retry_s'] > 0
+        j2 = c.get('/api/options/chain/ZZZZ').get_json()
+        assert j2['contracts'] == [] and j2['en_cours'] is True
+
+
+def test_les_pages_options_reessaient_quand_la_chaine_charge():
+    for nom in ('options-symbol.js', 'options-structure.js', 'options-intel.js'):
+        src = _src('vertex', 'static', 'vertex', 'js', 'pages', nom)
+        assert 'en_cours' in src and 'retry_s' in src, nom
+        assert '< 2' in src, '%s : le réessai doit être borné' % nom
+
+
 def test_la_route_ne_porte_plus_l_attente_de_12_s():
     src = _src('vertex', 'app', 'routes', 'desk.py')
     assert 'timeout=12' not in src

@@ -22,7 +22,6 @@ _IV_NON_RECALCULEE: list = []
 from vertex.options import chaine_a_la_demande as _chaine
 from vertex.options import entrees_mesurees as _entrees
 from vertex.options import chaine_a_la_demande as _chaine
-from vertex.options import on_demand as _od
 
 bp = Blueprint('options_intel_api', __name__)
 
@@ -33,8 +32,11 @@ def _board():
 
 def _board_for(sym):
     """Board ∪ chaîne à la demande pour `sym` — un titre pas encore couvert par la
-    rotation obtient quand même son dossier options (IBKR si TWS ouvert, sinon yfinance)."""
-    return _od.board_with(sym)
+    rotation obtient quand même son dossier options (IBKR si TWS ouvert, sinon
+    yfinance). NON BLOQUANT : `on_demand.board_with` tirait la chaîne dans la
+    requête (plusieurs secondes sur un titre froid) ; la collecte part en fond
+    et le premier passage rend « pas encore » (voir `_board_pour`)."""
+    return _board_pour(sym)[0]
 def _board_pour(sym):
     """Le board VU DEPUIS un titre : ses contrats, complétés si besoin.
 
@@ -48,13 +50,7 @@ def _board_pour(sym):
     chaîne est chargée EN FOND : la page rend la main tout de suite, et l'état
     dit si un chargement est en cours.
     """
-    board = _board()
-    contrats, meta = _chaine.contrats(sym, board)
-    if contrats and not any(str((c or {}).get('sym', '')).upper() == str(sym).upper()
-                            for c in board if isinstance(c, dict)):
-        #  Complété par la chaîne à la demande : on ajoute, on ne remplace pas.
-        return list(board) + list(contrats), meta
-    return board, meta
+    return _chaine.board_avec(sym, _board())
 
 
 def _as_of():
@@ -102,7 +98,7 @@ def options_chain(sym):
     /scan côté client — un titre pas encore couvert par la rotation obtient
     quand même sa chaîne (IBKR si TWS ouvert, repli yfinance)."""
     sym = (sym or '').upper()[:12]
-    board = _board_for(sym)
+    board, meta = _board_pour(sym)
     contracts = [c for c in board if str(c.get('sym', '')).upper() == sym]
     detail = (scan_state.get('detail') or {}).get(sym) or {}
     spot = detail.get('price')
@@ -111,8 +107,12 @@ def options_chain(sym):
     on_demand = bool(contracts) and not any(
         str(c.get('sym', '')).upper() == sym
         for c in (scan_state.get('options_board') or []))
+    #  « aucun contrat » ≠ « ce titre n'a pas d'options » : la chaîne peut être
+    #  en cours de chargement en fond — dit à la page, qui réessaie.
+    charge = (not contracts) and _chaine.en_cours(meta)
     return jsonify({'symbol': sym, 'spot': spot, 'contracts': contracts,
                     'on_demand': on_demand, 'as_of': _as_of(),
+                    'en_cours': charge, 'retry_s': 8 if charge else None,
                     'source': (scan_state.get('options_source') or 'SCAN')})
 
 

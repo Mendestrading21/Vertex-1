@@ -35,8 +35,15 @@ def api_options_strategies(sym):
     Analyse pure, lecture seule — aucun ordre. Donnée absente => available:false honnête."""
     sym = sym.upper()
     try:
-        from vertex.options import on_demand as _od
-        board = _od.board_with(sym)   # board ∪ chaîne à la demande si titre absent
+        from vertex.options import chaine_a_la_demande as _chaine
+        #  board ∪ chaîne à la demande si titre absent — chargée EN FOND :
+        #  `on_demand.board_with` la tirait dans la requête (secondes).
+        board, meta = _chaine.board_avec(sym, scan_state.get('options_board') or [])
+        if not any(str((c or {}).get('sym', '')).upper() == sym
+                   for c in board if isinstance(c, dict)) and _chaine.en_cours(meta):
+            return jsonify({'available': False, 'symbol': sym, 'en_cours': True, 'retry_s': 8,
+                            'reason': 'chaîne d’options en cours de chargement — '
+                                      'la page réessaie d’elle-même'}), 200
         detail = (scan_state.get('detail') or {}).get(sym) or {}
         spot = detail.get('price')
         if not spot:

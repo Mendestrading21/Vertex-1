@@ -91,6 +91,32 @@ def contrats(sym: str, board=None, *, attendre: bool = False):
     return (valeur or []), meta
 
 
+def board_avec(sym: str, board=None):
+    """Le board GLOBAL vu depuis un titre : ses contrats complétés par la chaîne
+    à la demande s'il en est absent — SANS bloquer la requête.
+
+    Rend `(board, Meta)`. Remplace `on_demand.board_with` dans les routes :
+    celui-ci tirait la chaîne EN LIGNE (IBKR/yfinance, plusieurs secondes)
+    au premier passage sur un titre froid. Ici la collecte part en fond et
+    `meta.rafraichissement_en_cours` dit « pas encore ».
+    """
+    board = list(board) if board else []
+    sym = str(sym or '').upper().strip()
+    if not sym:
+        return board, _instantane.Meta(etat=_instantane.MISSING, erreur='symbole vide')
+    liste, meta = contrats(sym, board)
+    deja = any(isinstance(c, dict) and str(c.get('sym') or '').upper() == sym for c in board)
+    if liste and not deja:
+        return board + list(liste), meta
+    return board, meta
+
+
+def en_cours(meta) -> bool:
+    """Vrai quand la chaîne de ce titre est en train d'être chargée en fond."""
+    return bool(getattr(meta, 'rafraichissement_en_cours', False)) or (
+        getattr(meta, 'etat', None) == _instantane.MISSING and not getattr(meta, 'erreur', None))
+
+
 def etat(sym: str, board=None) -> dict:
     """Ce que la surface doit pouvoir dire de cette chaîne.
 

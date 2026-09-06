@@ -89,6 +89,7 @@
   }
 
   /* ════════════════ VUE STRUCTURE ════════════════ */
+  var _structRetry = {};
   function loadStructure(sym) {
     try { if (window.VX && VX.store) VX.store.set('active_ticker', sym); } catch (e0) {}
     var vHost = $('vx-os-verdict'); if (!vHost) return;
@@ -98,6 +99,14 @@
     Promise.all([VX.fetch('/api/options/strategies/' + encodeURIComponent(sym), { ttl: 60000 }), board()])
       .then(function (r) {
         var d = r[0], bd = r[1];
+        /* Chaîne chargée en fond (serveur : en_cours) → réessai borné hors cache. */
+        if (d && d.en_cours && (_structRetry[sym] || 0) < 2) {
+          _structRetry[sym] = (_structRetry[sym] || 0) + 1;
+          setTimeout(function () {
+            try { VX.fetch.invalidate('/api/options/strategies/' + encodeURIComponent(sym)); } catch (e1) {}
+            loadStructure(sym);
+          }, ((d.retry_s || 8) * 1000));
+        }
         if (!d || !d.available || !(d.strategies || []).length) {
           vHost.innerHTML = insufficientCard(sym, (d && d.reason) || 'aucune structure constructible depuis le board');
           ($('vx-os-payoff')||{}).innerHTML = '<div class="vx-empty">—</div>'; return;

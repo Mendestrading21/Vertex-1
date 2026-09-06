@@ -142,9 +142,16 @@ def make_blueprint(*, scan_state, demo_mode):
         covered call/protective put pour un sous-jacent. Analyse uniquement."""
         held = (request.args.get('type') or 'STK').upper()
         held = 'STK' if held == 'STK' else 'OPT'
-        from vertex.options import on_demand as _od
-        return jsonify(_reco.options_for_position(
-            sym.upper(), _od.board_with(sym.upper()), held_type=held))
+        from vertex.options import chaine_a_la_demande as _chaine
+        #  Chaîne chargée EN FOND si le titre manque au board (jamais dans la
+        #  requête) ; l'état est joint pour que la page distingue « pas encore ».
+        board, meta = _chaine.board_avec(sym.upper(), scan_state.get('options_board') or [])
+        out = _reco.options_for_position(sym.upper(), board, held_type=held)
+        if isinstance(out, dict):
+            out['chaine_en_cours'] = bool(_chaine.en_cours(meta)) and not any(
+                str((c or {}).get('sym', '')).upper() == sym.upper()
+                for c in board if isinstance(c, dict))
+        return jsonify(out)
 
     @bp.route('/api/brief')
     def brief_ep():

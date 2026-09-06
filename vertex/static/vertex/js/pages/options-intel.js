@@ -743,6 +743,14 @@
     if (!sym) { el.innerHTML = '<div class="vx-empty">Saisis un symbole.</div>'; return; }
     loading(el);
     get('/api/options/strategies/' + encodeURIComponent(sym)).then(function (d) {
+      /* Chaîne chargée en fond (serveur : en_cours) → réessai borné hors cache. */
+      if (d && d.en_cours && (loadStrategies._retry || 0) < 2) {
+        loadStrategies._retry = (loadStrategies._retry || 0) + 1;
+        setTimeout(function () {
+          try { VX.fetch.invalidate('/api/options/strategies/' + encodeURIComponent(sym)); } catch (e1) {}
+          loadStrategies(sym);
+        }, ((d.retry_s || 8) * 1000));
+      }
       if (!d || !d.available || !d.strategies || !d.strategies.length) {
         el.innerHTML = (window.VX && VX.states) ? VX.states.empty(esc((d && d.reason) || 'Stratégies indisponibles pour ce titre.')) : 'Indisponible.';
         return;
