@@ -86,6 +86,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | `d2722b4c` | fix(structure) : verdict, liquidité, mouvement attendu et scénarios de la vue Structure calculés par le serveur (`structure_verdict`), la page peint (coque vx-shell-7, SW v294) |
 | `9327ee42` | fix(cerveau) : cotations LLM réconciliées avec le prix du scan (`scan_price`, `ecart_pct`) ; contrat du lot décision (`VERTEX_LOT_DECISION_CONTRAT.md`) |
 | `13b063e0` | fix(réseau) : `/api/company` et `/api/correlations` sans réseau dans la requête (cache + fond) — §13 #8 clos |
+| `b58b6270` | fix(brief) : delta du brief depuis le diff market_context (`daily_changes` jamais produit) — §13 #9 clos |
 
 ## 5. Tests (résultats exacts)
 
@@ -104,6 +105,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | Tranche verdict de structure (`d2722b4c`) | `4468 passed, 180 skipped, 0 failed` |
 | Tranche cerveau + contrat décision (`9327ee42`) | `4471 passed, 180 skipped, 0 failed` |
 | Tranche company/corrélations (`13b063e0`) | `4473 passed, 180 skipped, 0 failed` |
+| Tranche delta du brief (`b58b6270`) | `4474 passed, 180 skipped, 0 failed` |
 
 Preuves réelles hors suite : socket TWS (session marché seulement),
 collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.

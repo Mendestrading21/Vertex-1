@@ -39,6 +39,7 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 | `d2722b4c` | verdict de structure côté serveur (`structure_verdict`), vue Structure qui peint (coque vx-shell-7, SW v294) | `git revert` puis re-bump |
 | `9327ee42` | cotations LLM réconciliées avec le scan (Système), contrat du lot décision | `git revert` |
 | `13b063e0` | `/api/company` et `/api/correlations` sans réseau dans la requête | `git revert` |
+| `b58b6270` | delta du brief depuis le diff market_context | `git revert` |
 
 ## 4. Pages et champs effectivement couverts
 
