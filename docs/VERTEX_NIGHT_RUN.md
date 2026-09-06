@@ -83,6 +83,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | `816e6f73` | fix(réseau) : analystes servis du cache et collectés en fond, cotations sans attente de 12 s (worker en fond, `en_attente`), marque de contrat depuis le cache, blocs analystes de la fiche enfin visibles |
 | `0b293dc5` | fix(réseau) : chaîne d'options hors requête (`chaine_a_la_demande.board_avec`, `en_cours`, pages Options avec réessai borné ; coque vx-shell-6, SW v293) |
 | `abd7df10` | fix(composants) : « Ce qui a changé » sur /api/market/context (`changes_base`, `prev_as_of`), équité Portefeuille dérivée des clôtures déclarées, `plAbs` produit (contribution) |
+| `d2722b4c` | fix(structure) : verdict, liquidité, mouvement attendu et scénarios de la vue Structure calculés par le serveur (`structure_verdict`), la page peint (coque vx-shell-7, SW v294) |
 
 ## 5. Tests (résultats exacts)
 
@@ -98,6 +99,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | Tranche réseau hors requête (`816e6f73`) | `4452 passed, 180 skipped, 0 failed` (gardien `test_pos_quotes` réaligné sur le contrat hors requête) |
 | Tranche chaîne hors requête (`0b293dc5`) | `4455 passed, 180 skipped, 1 failed` (import orphelin) → corrigé avant le commit, gardien vert ; suite complète relancée après : `4456 passed, 180 skipped, 0 failed` |
 | Tranche composants alimentés (`abd7df10`) | `4460 passed, 180 skipped, 0 failed` |
+| Tranche verdict de structure (`d2722b4c`) | `4468 passed, 180 skipped, 0 failed` |
 
 Preuves réelles hors suite : socket TWS (session marché seulement),
 collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
@@ -138,5 +140,10 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
   changé » dans ses trois états (base absente → base posée → « rien de notable
   depuis … »), contribution au P&L rendue, équité honnêtement vide sans
   clôture, console sans erreur.
+- Tranche « verdict de structure » faite (`d2722b4c`) : §13 #13 (calcul financier
+  dans l'interface, vue Structure). Vérifié sur l'instance QA : carte-verdict,
+  scénarios et comparaison peints depuis `strategie.analyse`, console propre.
 - Prochaine action si reprise : §13 #2 (trois autorités de décision, programme
-  lot décision), puis #11 (SEC, action humaine).
+  lot décision — contrat humain requis), #11 (SEC, action humaine) ; Cerveau
+  Claude (cotations web non réconciliées) et regroupement des onglets Options
+  restent consignés.
