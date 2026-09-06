@@ -193,5 +193,19 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
   n'a pas le droit `workflow`, la modification de `ci.yml` a été refusée à la
   poussée et non contournée ; seconde observation de 60 min de l'instance relancée à 09:28
   (pid 4608) en cours.
+- Seconde observation de 60 min (12:39 → 13:39, pid 4608, code `c90daa19`) :
+  60/60 sondes ok, `ibkr_live: true` sur toute la durée, trois scans (12:14,
+  12:47, 13:20), mémoire 304 → 336 Mo (pic) → 312, 31 threads, aucun
+  traceback.
+- Veille de l'ordinateur observée entre ~09:30 et ~12:15 (événements
+  Kernel-Power 12:26 et 12:38) : l'instance (pid 4608) a repris seule
+  (scan 12:14:57, `ibkr_live: true`), la seconde observation n'a démarré
+  qu'au réveil. Prérequis opérationnel rappelé au runbook §1 : pas de veille
+  pour une alimentation continue.
+- Audit complet du logiciel (demande finale) : `tools/qa/audit_cartes.py`
+  (59 pages × 1600/390 puis 1024 px) et `tools/qa/audit_interactions.py`
+  (630 clics) — trois débordements à 390 px trouvés et corrigés
+  (`be7a2f2a`), puis 0 problème sur 177 relevés d'affichage et 630 clics ;
+  rapport : `VERTEX_AUDIT_CARTES.md`.
 - Reprise éventuelle : décisions humaines (`VERTEX_FINAL_REPORT.md` §9),
   dont l'installation du chien de garde en tâche planifiée.

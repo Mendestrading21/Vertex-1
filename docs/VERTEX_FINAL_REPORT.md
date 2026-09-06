@@ -72,6 +72,8 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 | `check_ibkr_boundary.py --enforce` (racine entière) | OK, aucun appel sensible |
 | Socket réelle TWS (`VERTEX_TEST_IBKR_LIVE=1`) | 1 passed |
 | Collecte réelle FRED/BCE/BNS (`VERTEX_TEST_RESEAU=1`) | 1 passed (11/11 séries) |
+| Audit navigateur complet (`tools/qa/audit_cartes.py`, Chromium, instance QA, 59 pages × 2 largeurs) | passage 1 : 118 relevés, 3 débordements à 390 px (corrigés) ; passage 2 : **118 relevés, 0 problème**, journal client vide ; 1024 px : **59 relevés, 0 problème** — `VERTEX_AUDIT_CARTES.md` |
+| Audit des interactions (`tools/qa/audit_interactions.py`, Chromium, instance QA, 1280 px) | **59 pages, 630 clics, 0 problème** |
 | Nouveaux tests | `test_ibkr_session_marche_seule` (63), `test_macro_officiel` (12), `test_etiquettes_live_honnetes` (4), `test_fraicheur_serveur` (29), `test_honnetete_verdict_et_calendrier` (12), `test_risque_panier_declare` (7), `test_reseau_hors_requete` (14), `test_composants_alimentes` (4), `test_structure_verdict` (8), `test_cerveau_claude_reconcilie` (3), `test_reseau_hors_requete` porté à 16 |
 
 Tests simulés, contractuels, connexion réelle et observation de fonctionnement
