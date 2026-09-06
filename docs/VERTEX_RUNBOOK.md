@@ -100,6 +100,7 @@ Chaque tranche de la mission est un commit revertible sur
 | Composants alimentés (« Ce qui a changé », équité, contribution) | `abd7df10` | oui |
 | Verdict de structure côté serveur | `d2722b4c` | oui (touche `vertex/static` : re-bump requis) |
 | Cerveau Claude réconcilié, contrat du lot décision | `9327ee42` | oui |
+| `/api/company` et `/api/correlations` hors requête | `13b063e0` | oui |
 
 Après un revert touchant `vertex/static`, bumper `td-shell-vN`
 (`vertex/app/routes/system.py`), `SHELL_VERSION` (`vertex/ui/shell/__init__.py`)
