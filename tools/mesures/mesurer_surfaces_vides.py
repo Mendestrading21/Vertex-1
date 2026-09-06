@@ -39,6 +39,8 @@ Sorties : 0 = mesuré, 2 = témoin muet.
 """
 from __future__ import annotations
 
+import os
+
 import json
 import pathlib
 import sys
@@ -50,7 +52,16 @@ if str(RACINE) not in sys.path:
 from tools.mesures._sonde_http import (  # noqa: E402
     BUDGET_INTERACTIF, appeler, sonder_pret)
 
-BASE_DEFAUT = 'http://127.0.0.1:5002'
+#  PORT DE MESURE PAR DÉFAUT : 5003, l'instance de VÉRIFICATION.
+#
+#  Mesuré le 2026-09-06 : ces outils visaient 5002 par défaut, c'est-à-dire, sur
+#  le poste de l'auteur, l'instance RÉELLE branchée sur le courtier et protégée
+#  par un code d'accès. Un outil de mesure qui frappe l'instance de travail lui
+#  vole des requêtes, la ralentit, et sur une machine tierce sonde un port dont
+#  il ne sait rien. L'instance de vérification (5003) existe précisément pour
+#  ça : sans IBKR, sans code, sans desk. `VERTEX_MESURE_BASE` reste le moyen de
+#  viser autre chose, explicitement.
+BASE_DEFAUT = os.environ.get('VERTEX_MESURE_BASE', 'http://127.0.0.1:5003')
 
 #: Échantillons pour les routes paramétrées — un symbole que le scan connaît,
 #: sinon la mesure porterait sur « symbole inconnu » et non sur la surface.

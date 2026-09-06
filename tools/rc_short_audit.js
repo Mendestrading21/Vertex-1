@@ -27,7 +27,8 @@
  */
 const { chromium } = require('playwright');
 
-const BASE = process.env.VERTEX_BASE || 'http://127.0.0.1:5002';
+const BASE = process.env.VERTEX_MESURE_BASE || process.env.VERTEX_BASE
+  || 'http://127.0.0.1:5003';   //  jamais l'instance réelle par défaut
 const PAGES = ['/', '/markets', '/opportunities', '/analysis',
                '/portfolio', '/options', '/journal', '/system'];
 // Bruit d'environnement documenté (lot 27) — jamais des défauts produit :

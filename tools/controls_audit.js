@@ -1,6 +1,9 @@
 // LOT 83 — tri/filtres/contrôles interactifs : cliquer et vérifier l'effet.
 const { chromium } = require('playwright');
-const BASE = 'http://127.0.0.1:5002';
+/*  Instance de VÉRIFICATION par défaut (5003), jamais l'instance réelle
+    branchée sur le courtier : un outil de mesure ne doit pas lui voler
+    ses requêtes ni sonder un port dont il ne sait rien. */
+const BASE = process.env.VERTEX_MESURE_BASE || 'http://127.0.0.1:5003';
 const PAGES = ['/markets', '/opportunities?view=stocks', '/opportunities?view=options',
                '/opportunities?view=anomalies', '/opportunities?view=calendar',
                '/portfolio', '/options', '/journal'];
