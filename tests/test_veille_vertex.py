@@ -45,3 +45,21 @@ def test_la_proposition_de_job_ci_navigateur_est_complete():
     assert 'navigateur:' in prop and 'playwright install --with-deps chromium' in prop
     assert 'VERTEX_MESURE_BASE: http://127.0.0.1:5003' in prop
     assert 'run_qa_instance.py --port 5003' in prop
+
+
+def test_le_journal_est_relu_dans_l_encodage_ou_il_a_ete_ecrit():
+    """La troncature ne doit pas corrompre le seul fichier lu après incident.
+
+    Mesuré le 2026-09-06 : `Add-Content -Encoding utf8` écrit en UTF-8, mais
+    `Get-Content` SANS `-Encoding` relit avec la page de codes ANSI de Windows.
+    Au 2001e passage, la troncature relisait « démarrée » comme « dÃ©marrÃ©e »
+    et le réécrivait ainsi. Le journal se corrompait tout seul, une fois, tard,
+    et précisément sur le fichier qu'un humain vient consulter après une panne.
+    """
+    src = _src()
+    assert 'Get-Content $Journal -Encoding utf8' in src, (
+        'la relecture du journal est repassée en page de codes ANSI : la '
+        'troncature réécrira des accents corrompus')
+    #  Les DEUX sens doivent employer le même encodage, sinon le défaut revient
+    #  par l'autre bout.
+    assert src.count('-Encoding utf8') >= 3, src.count('-Encoding utf8')

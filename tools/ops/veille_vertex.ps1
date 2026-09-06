@@ -1,4 +1,4 @@
-<#
+﻿<#
 tools/ops/veille_vertex.ps1 — chien de garde LOCAL de l'instance de travail Vertex.
 
 Pourquoi : le 2026-09-06, l'instance relancée à 07:17 s'est arrêtée trois
@@ -35,10 +35,18 @@ function Ecrire([string]$ligne) {
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     Add-Content -Path $Journal -Value "$ts $ligne" -Encoding utf8
-    # journal borné : jamais plus de 2 000 lignes
+    # journal borné : jamais plus de 2 000 lignes.
+    #
+    #  `Get-Content` SANS `-Encoding` lit avec la page de codes ANSI de Windows,
+    #  alors que la ligne vient d'être écrite en UTF-8 : au 2001e passage, la
+    #  troncature relisait « démarrée » comme « dÃ©marrÃ©e » et le RÉÉCRIVAIT
+    #  ainsi. Le journal se corrompait donc tout seul, une fois, tard, et sur
+    #  le seul fichier qu'un humain vient lire après un incident.
     try {
-        $lignes = Get-Content $Journal -ErrorAction Stop
-        if ($lignes.Count -gt 2000) { $lignes[-2000..-1] | Set-Content -Path $Journal -Encoding utf8 }
+        $lignes = Get-Content $Journal -Encoding utf8 -ErrorAction Stop
+        if ($lignes.Count -gt 2000) {
+            $lignes[-2000..-1] | Set-Content -Path $Journal -Encoding utf8
+        }
     } catch {}
 }
 
