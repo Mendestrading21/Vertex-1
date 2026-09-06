@@ -69,9 +69,49 @@ def test_un_client_sans_gzip_recoit_le_clair(client, chemin):
 @pytest.mark.parametrize('chemin', _ACTIFS)
 def test_la_reponse_dit_qu_elle_varie_selon_l_encodage(client, chemin):
     """Sans `Vary`, un cache partagé sert le corps compressé à un client qui ne
-    sait pas le lire."""
-    r = client.get(chemin, headers={'Accept-Encoding': 'gzip'})
-    assert 'Accept-Encoding' in (r.headers.get('Vary') or ''), chemin
+    sait pas le lire.
+
+    L'en-tête va sur les DEUX variantes, pas seulement sur la compressée : un
+    cache qui range la réponse en clair sans `Vary` peut ranger la même entrée
+    pour les deux, et l'ordre des visiteurs déciderait alors du corps servi.
+    """
+    for entetes in ({'Accept-Encoding': 'gzip'}, {}):
+        r = client.get(chemin, headers=entetes)
+        assert 'Accept-Encoding' in (r.headers.get('Vary') or ''), (chemin, entetes)
+
+
+@pytest.mark.parametrize('chemin', ['/static/vertex/js/vx-core.js'])
+def test_un_actif_compresse_revalide_toujours_en_304(client, chemin):
+    """LE SUFFIXE D'ÉTIQUETTE SEUL CASSAIT LA REVALIDATION.
+
+    Mesuré le 2026-09-06 : Flask compare le `If-None-Match` du client à SON
+    étiquette, non suffixée, AVANT le crochet de compression. Le client
+    renvoyant « …-gzip », la comparaison échouait toujours — `vx-core.js`
+    rendait 200 et 18 ko à chaque revalidation, là où il rendait 304 et zéro
+    octet avant la compression.
+
+    Un visiteur qui revient y perdait exactement ce qu'un visiteur neuf y
+    gagnait. Une optimisation qui dégrade le cas le plus fréquent n'en est pas
+    une, et seul un contrôle adverse l'a vue : la mesure de gain, elle, était
+    juste.
+    """
+    for entetes in ({'Accept-Encoding': 'gzip'}, {}):
+        premiere = client.get(chemin, headers=entetes)
+        etag = premiere.headers.get('ETag')
+        assert etag, (chemin, entetes)
+        seconde = client.get(chemin, headers=dict(entetes, **{'If-None-Match': etag}))
+        assert seconde.status_code == 304, (entetes, seconde.status_code)
+        assert seconde.get_data() == b'', len(seconde.get_data())
+        #  Les validateurs restent : sans eux, le tour suivant redemande tout.
+        assert seconde.headers.get('ETag') == etag
+
+
+def test_une_etiquette_inconnue_ne_produit_pas_de_304(client):
+    """Contre-épreuve : la revalidation ne doit pas répondre 304 à tout le monde."""
+    r = client.get('/static/vertex/js/vx-core.js',
+                   headers={'Accept-Encoding': 'gzip', 'If-None-Match': '"autre-chose"'})
+    assert r.status_code == 200
+    assert r.get_data()
 
 
 def test_l_etiquette_d_entite_ne_designe_pas_deux_corps(client):

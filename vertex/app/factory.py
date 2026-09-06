@@ -294,8 +294,6 @@ def create_app(*, root_path: str | None = None) -> Any:
         try:
             if resp.status_code != 200:
                 return resp
-            if 'gzip' not in (request.headers.get('Accept-Encoding') or ''):
-                return resp
             if resp.headers.get('Content-Encoding'):
                 #  DEJA compressee par la route. Recompresser produit un
                 #  DOUBLE gzip : le client decompresse une fois, obtient des
@@ -326,6 +324,15 @@ def create_app(*, root_path: str | None = None) -> Any:
                             or ct == 'image/svg+xml' or ct == 'text/plain')
             if not compressible:
                 return resp
+            #  `Vary` VA SUR LES DEUX VARIANTES, pas seulement sur la compressée.
+            #  Un cache partagé qui range la réponse EN CLAIR sans `Vary` peut
+            #  la resservir à un client qui aurait accepté du gzip — sans
+            #  dommage — mais surtout il peut ranger la MÊME entrée pour les
+            #  deux, et l'ordre des visiteurs déciderait alors du corps servi.
+            #  On l'annonce dès qu'on sait que la ressource se négocie.
+            resp.headers['Vary'] = 'Accept-Encoding'
+            if 'gzip' not in (request.headers.get('Accept-Encoding') or ''):
+                return resp
             if resp.direct_passthrough:
                 if (resp.content_length or 0) > _PLAFOND_FLUX:
                     return resp
@@ -344,11 +351,35 @@ def create_app(*, root_path: str | None = None) -> Any:
             #  L'étiquette d'entité désignait le corps NON compressé. Deux
             #  corps différents sous une même étiquette, c'est un cache qui peut
             #  servir l'un pour l'autre ; nginx règle cela depuis toujours par
-            #  un suffixe. On fait pareil, plutôt que de retirer l'étiquette et
-            #  de perdre les requêtes conditionnelles.
+            #  un suffixe. On fait pareil.
+            #
+            #  MAIS LE SUFFIXE SEUL CASSE LA REVALIDATION, et c'est pire que le
+            #  défaut qu'il corrige. Mesuré le 2026-09-06 : Flask compare le
+            #  `If-None-Match` du client à SON étiquette, non suffixée, AVANT
+            #  que cette fonction ne s'exécute. Le client renvoyant
+            #  « …-gzip », la comparaison échouait toujours : `vx-core.js`
+            #  rendait 200 et 18 ko à CHAQUE revalidation, là où il rendait 304
+            #  et zéro octet avant la compression. Un visiteur qui revient y
+            #  perdait ce qu'un visiteur neuf y gagnait.
+            #
+            #  La comparaison est donc refaite ICI, contre l'étiquette
+            #  réellement servie. `If-None-Match` peut porter plusieurs valeurs
+            #  et le préfixe faible `W/` ; on compare sur la liste nettoyée.
             etag = resp.headers.get('ETag')
             if etag and 'gzip' not in etag:
-                resp.headers['ETag'] = etag[:-1] + '-gzip"' if etag.endswith('"')                     else etag + '-gzip'
+                etag = (etag[:-1] + '-gzip"') if etag.endswith('"') else (etag + '-gzip')
+                resp.headers['ETag'] = etag
+            if etag:
+                connues = [t.strip().removeprefix('W/')
+                           for t in (request.headers.get('If-None-Match') or '').split(',')]
+                if etag in connues or '*' in connues:
+                    #  304 : ni corps, ni longueur, mais les validateurs et la
+                    #  politique de cache restent — sans eux le client
+                    #  redemanderait tout au prochain tour.
+                    resp.status_code = 304
+                    resp.set_data(b'')
+                    for entete in ('Content-Length', 'Content-Encoding', 'Content-Type'):
+                        resp.headers.pop(entete, None)
         except Exception:
             #  Une compression ratée ne doit jamais coûter la réponse : on rend
             #  le corps tel quel, qui est toujours valide. `return` explicite
