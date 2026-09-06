@@ -224,8 +224,6 @@ REGISTRE = {
         PALETTE,
     'tests/test_fonts.py::test_local_fonts_shipped':
         PALETTE,
-    'tests/test_fraicheur_garde_type.py::test_les_cinq_sites_appellent_bien_assess':
-        MARQUAGE,
     'tests/test_freshness.py::test_opportunities_header_carries_scan_freshness':
         MARQUAGE,
     'tests/test_hauteur_etats.py::test_l_en_tete_ne_promet_plus_ce_qu_aucune_regle_ne_tient':
