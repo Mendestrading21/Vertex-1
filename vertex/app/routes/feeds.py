@@ -113,28 +113,69 @@ def api_options():
     return jsonify({'board': scan_state.get('options_board') or [], 'updated': scan_state.get('updated')})
 
 
+#  QUATRE CHARGES VIDES SANS MOTIF — mesuré le 2026-09-06 en exerçant les 184
+#  règles du runtime : `/api/search`, `/api/weekly`, `/api/strategie` et
+#  `/api/comite` rendaient `[]` ou `{}` sans une seule clé disant POURQUOI.
+#  Un appelant ne pouvait donc pas distinguer « rien à signaler » de « le calcul
+#  n'a pas tourné » — l'invariant 5 sépare précisément ces deux états.
+#
+#  Aucune de ces routes n'a de consommateur dans le dépôt (relevé .py/.js) :
+#  elles servent un humain ou un script externe, c'est-à-dire exactement le
+#  lecteur qui n'a aucun moyen de deviner. La forme non vide est INCHANGÉE ;
+#  seul le cas vide gagne un motif.
+def _vide(motif, **extra):
+    charge = {'disponible': False, 'motif': motif, 'read_only': True}
+    charge.update(extra)
+    return jsonify(charge)
+
+
 @bp.route('/api/search')
 def api_search():
     q = (request.args.get('q') or '').upper().strip()
-    res = [{'ticker': s} for s in UNIVERSE if q in s][:20] if q else []
+    if not q:
+        return jsonify({'disponible': False, 'read_only': True,
+                        'usage': 'GET /api/search?q=NVDA — recherche dans '
+                                 'l’univers scanné, 20 résultats au plus',
+                        'resultats': []})
+    res = [{'ticker': s} for s in UNIVERSE if q in s][:20]
+    #  La liste reste la forme historique quand il y a des résultats ; un
+    #  ensemble VIDE dit qu'il l'est, et sur quel univers il a cherché.
+    if not res:
+        return jsonify({'disponible': True, 'read_only': True, 'resultats': [],
+                        'motif': 'aucun titre de l’univers scanné ne contient « %s »' % q,
+                        'univers': len(UNIVERSE)})
     return jsonify(res)
 
 
 @bp.route('/api/weekly')
 def api_weekly():
-    return jsonify(weekly_state.get('data') or {})
+    d = weekly_state.get('data')
+    if not d:
+        return _vide('revue hebdomadaire pas encore produite sur cette '
+                     'instance — elle est écrite par le job WEEKLY_REVIEW')
+    return jsonify(d)
 
 
 @bp.route('/api/strategie')
 def api_strategie():
     """Stratégie options personnalisée (1/2/3/6/9/12 mois). Lecture seule, analyse only."""
-    return jsonify(scan_state.get('strategy') or {})
+    d = scan_state.get('strategy')
+    if not d:
+        return _vide('aucune stratégie dans le dernier scan — le scan n’a pas '
+                     'encore tourné, ou il n’a produit aucune ligne',
+                     scan=scan_state.get('scan_ts_h'))
+    return jsonify(d)
 
 
 @bp.route('/api/comite')
 def api_comite():
     """Comité d'investissement : décisions documentées (4 portes). Analyse only."""
-    return jsonify(scan_state.get('committee') or {})
+    d = scan_state.get('committee')
+    if not d:
+        return _vide('aucune délibération de comité dans le dernier scan — '
+                     'le scan n’a pas encore tourné, ou aucune ligne n’a '
+                     'franchi les portes', scan=scan_state.get('scan_ts_h'))
+    return jsonify(d)
 
 
 __all__ = ['bp']

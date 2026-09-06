@@ -217,14 +217,28 @@ def api_portefeuille():
     cap = max(CAPITAL_MIN, min(cap, CAPITAL_MAX))
     rows = scan_state.get('rows')
     if not rows:
-        return jsonify({})
+        #  `{}` nu ne disait pas si le portefeuille était vide ou si le calcul
+        #  n'avait pas tourné. Mesuré le 2026-09-06 : la charge vide ne portait
+        #  aucune clé. Le capital demandé est rendu, pour qu'un appelant sache
+        #  que sa requête a bien été comprise.
+        return jsonify({'disponible': False, 'read_only': True,
+                        'motif': 'aucune ligne dans le dernier scan — le '
+                                 'portefeuille d’options ne peut pas être '
+                                 'construit',
+                        'capital': cap, 'scan': scan_state.get('scan_ts_h')})
     try:
         return jsonify(strategy.build_portfolio(
             rows, scan_state.get('detail'),
             market=scan_state.get('market_ctx'), capital=cap,
             board=scan_state.get('options_board') or []))
-    except Exception as e:
-        return jsonify({'error': 'portfolio_analysis_unavailable'})
+    except Exception as e:                            # noqa: BLE001
+        #  Une panne se nomme AUTREMENT qu'une absence : `disponible` reste
+        #  absent ici, `error` dit que le moteur a échoué, et le type de
+        #  l'exception est servi — sans trace, qui exposerait des chemins.
+        return jsonify({'error': 'portfolio_analysis_unavailable',
+                        'cause': type(e).__name__, 'read_only': True,
+                        'motif': 'le moteur de portefeuille a échoué sur ce '
+                                 'scan — ce n’est pas une absence de données'})
 
 
 __all__ = ['bp']

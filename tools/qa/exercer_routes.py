@@ -8,8 +8,12 @@ outil recense les règles Flask du runtime et exerce chaque route lisible
 
 Pour chaque route il relève :
 
-- le STATUT et le temps de réponse (une route lente dans la requête utilisateur
-  est un défaut de contrat : une page sert des instantanés bornés) ;
+- le STATUT et le temps de réponse EN RÉGIME (chaque route est appelée deux
+  fois : le premier appel paie les imports paresseux et l'amorçage des caches,
+  et l'annoncer comme lenteur accuserait le produit d'un coût payé une seule
+  fois par démarrage — mesuré, `/options/NVDA` fait 2226 ms puis 245 ms). Une
+  route lente en régime est, elle, un défaut de contrat : une page sert des
+  instantanés bornés ;
 - si la charge est du JSON, sa FORME : vide, objet sans clé, liste vide, ou
   contenu — et si une absence est NOMMÉE (une clé `error`, `reason`, `etat`,
   `note`, `available`) plutôt que silencieuse ;
@@ -134,6 +138,18 @@ def exercer(lent: float = 1.5) -> dict:
             releves.append({'regle': str(r.rule), 'endpoint': r.endpoint,
                             'statut': None, 'note': 'paramètre inconnu — non exercée'})
             continue
+        #  UN PREMIER APPEL N'EST PAS UNE MESURE DE RÉGIME. Mesuré le
+        #  2026-09-06 sur `/options/NVDA` : 2226 ms, puis 891, 363, 245. Le
+        #  premier appel paie les imports paresseux et l'amorçage des caches ;
+        #  l'annoncer comme « route lente » accuse le produit d'un coût que
+        #  l'utilisateur ne paie qu'une fois par démarrage. On réchauffe donc,
+        #  et on mesure le SECOND appel — en disant les deux.
+        try:
+            t_froid = time.time()
+            cli.get(chemin)
+            ms_froid = round((time.time() - t_froid) * 1000)
+        except Exception:                             # noqa: BLE001
+            ms_froid = None
         t0 = time.time()
         try:
             rep = cli.get(chemin)
@@ -141,7 +157,7 @@ def exercer(lent: float = 1.5) -> dict:
             charge = rep.get_json(silent=True)
             releves.append({
                 'regle': str(r.rule), 'chemin': chemin, 'endpoint': r.endpoint,
-                'statut': rep.status_code, 'ms': ms,
+                'statut': rep.status_code, 'ms': ms, 'ms_premier_appel': ms_froid,
                 'forme': _forme(charge),
                 'absence_nommee': _nomme_l_absence(charge),
                 'lent': ms > lent * 1000,
@@ -164,7 +180,9 @@ def defauts(r: dict) -> list[str]:
         elif isinstance(s, int) and s >= 500:
             out.append('HTTP %d    %s' % (s, x['chemin']))
         elif x.get('lent'):
-            out.append('LENTE      %s : %d ms' % (x['chemin'], x['ms']))
+            out.append('LENTE      %s : %d ms en régime (premier appel %s ms)'
+                       % (x['chemin'], x['ms'],
+                          x.get('ms_premier_appel') if x.get('ms_premier_appel') is not None else '?'))
         elif (x.get('forme') in ('objet VIDE', 'liste vide')
               and not x.get('absence_nommee') and isinstance(s, int) and s < 400):
             out.append('MUETTE     %s : %s sans clé qui nomme l’absence'
