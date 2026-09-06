@@ -44,6 +44,7 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 | `1f3b5791` | P2 actualités : horodatages source/réception, fil daté, sources comptées | `git revert` |
 | `99c5c1fa` | P3 : procédure de maintenance de l'alimentation dans le skill maître | `git revert` |
 | `e0649f98` | P4 : gardiens navigateur réels (Chromium, sonde, base QA), débordement Système et contraste Aujourd'hui corrigés (coque vx-shell-9, SW v296) | `git revert` puis re-bump ; Chromium reste dans le cache utilisateur |
+| `c90daa19` | P5 : communiqués officiels BCE/BNS (RSS) → carte Marchés › Macro ; sonde navigateur durcie | `git revert` |
 
 ## 4. Pages et champs effectivement couverts
 
@@ -78,8 +79,9 @@ sont distingués dans chaque fichier (docstring et marqueurs `skipif`).
 ## 6. Sources réellement connectées
 
 IBKR (données de marché, session verrouillée, prouvée), yfinance (différé),
-Stooq (filet), FRED, BCE, BNS (nouveau), Google News RSS, Wikipedia
-(constituants), portefeuille déclaré. Non connectées : SEC (contact requis),
+Stooq (filet), FRED, BCE, BNS (séries officielles), **communiqués BCE et BNS
+(RSS officiels, P5)**, Google News RSS, Wikipedia (constituants), portefeuille
+déclaré. Non connectées : SEC (contact requis),
 TradingView (secret absent), Anthropic (clé absente).
 
 ## 7. Services démarrés et contrôles de santé
