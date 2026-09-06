@@ -89,10 +89,37 @@ def start_background_enrichment():
     return True
 
 
+def reconcilier_cotations(snap, detail):
+    """Chaque cotation trouvée par recherche web reçoit le prix CANONIQUE du scan
+    et l'écart en % — une cotation LLM n'est jamais un cours de marché ; le scan
+    fait foi. Sans prix de scan : écart absent, dit tel quel. Ne mute pas
+    l'instantané persisté."""
+    import copy
+    snap = copy.deepcopy(snap or {})
+    quotes = (snap.get('surfaces') or {}).get('quotes') or {}
+    detail = detail or {}
+    for sym, q in quotes.items():
+        if not isinstance(q, dict):
+            continue
+        prix = (detail.get(str(sym).upper()) or {}).get('price')
+        q['canonique'] = 'scan'
+        q['scan_price'] = prix if isinstance(prix, (int, float)) else None
+        v = q.get('value')
+        if isinstance(v, (int, float)) and isinstance(prix, (int, float)) and prix > 0:
+            q['ecart_pct'] = round((v - prix) / prix * 100.0, 2)
+        else:
+            q['ecart_pct'] = None
+    snap['note_quotes'] = ('cotations issues d’une recherche web par Claude — jamais le prix '
+                           'canonique ; le prix du scan fait foi et l’écart est servi')
+    return snap
+
+
 @bp.route('/api/ai/enrichment')
 def ai_enrichment():
-    """Instantané complet Claude+web (cotations/actualités étiquetées provenance)."""
-    return jsonify(_enrich.load_snapshot())
+    """Instantané complet Claude+web (cotations/actualités étiquetées provenance),
+    cotations réconciliées avec le prix canonique du scan (`scan_price`, `ecart_pct`)."""
+    return jsonify(reconcilier_cotations(_enrich.load_snapshot(),
+                                         scan_state.get('detail') or {}))
 
 
 @bp.route('/api/ai/status')

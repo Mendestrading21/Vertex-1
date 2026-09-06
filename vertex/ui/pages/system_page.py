@@ -460,7 +460,7 @@ async function loadBrain(){
   let head=kv('&Eacute;tat',statusBadge(tn[0],status)+' <span class="vx-dim" style="font-size:12px">'+esc((st&&st.note)||'')+'</span>')
     +kv('Mod&egrave;le',esc((st&&st.model)||'—'))
     +kv('Derni&egrave;re analyse',(snap&&snap.as_of)?VX.fmt.ago(Date.parse(snap.as_of)):'&mdash;')
-    +kv('Cotations trouv&eacute;es',VX.fmt.nd(found)+' / '+VX.fmt.nd((st&&st.symbols)||0)+' <span class="vx-dim" style="font-size:12px">(diff&eacute;r&eacute;es, sourc&eacute;es)</span>');
+    +kv('Cotations trouv&eacute;es (recherche web)',VX.fmt.nd(found)+' / '+VX.fmt.nd((st&&st.symbols)||0)+' <span class="vx-dim" style="font-size:12px">(non canoniques &mdash; le prix du scan fait foi, &eacute;cart servi)</span>');
   const syms=Object.keys(quotes).filter(s=>quotes[s]&&quotes[s].value!=null).slice(0,12);
   /* Plus forts mouvements du jour (change_pct réel déjà servi) en barres signées — au-dessus
      du tableau texte. Émeraude/corail par signe (hex, Chart.js ne résout pas var(--x)). */
@@ -469,13 +469,15 @@ async function loadBrain(){
   let table='';
   if(syms.length){
     table='<div class="vx-divider"></div><div style="overflow-x:auto"><table class="vx-table">'
-      +'<thead><tr><th>Titre</th><th class="vx-num">Cours (diff&eacute;r&eacute;)</th><th>Provenance</th><th>Actualit&eacute;</th></tr></thead><tbody>'
+      +'<thead><tr><th>Titre</th><th class="vx-num">Prix web (Claude)</th><th class="vx-num">Prix du scan (canonique)</th><th class="vx-num">&Eacute;cart</th><th>Provenance</th><th>Actualit&eacute;</th></tr></thead><tbody>'
       +syms.map(s=>{
         const q=quotes[s];const n=news[s]&&news[s].value&&news[s].value[0];
         const chg=q.change_pct!=null?(' <span class="'+(q.change_pct>=0?'vx-pos':'vx-neg')+'">'+(q.change_pct>=0?'+':'')+VX.fmt.num(q.change_pct,2)+'%</span>'):'';
         const impactCls=n?({HAUSSIER:'vx-pos',BAISSIER:'vx-neg',NEUTRE:'vx-dim'}[n.impact]||'vx-dim'):'';
         return '<tr><td><b>'+esc(s)+'</b></td>'
           +'<td class="vx-num vx-mono">'+VX.fmt.num(q.value,2)+' '+esc(q.currency||'')+chg+'</td>'
+          +'<td class="vx-num vx-mono">'+(q.scan_price!=null?VX.fmt.num(q.scan_price,2):'<span class="vx-dim">hors scan</span>')+'</td>'
+          +'<td class="vx-num vx-mono '+(q.ecart_pct==null?'vx-dim':Math.abs(q.ecart_pct)>1?'vx-neg':'vx-pos')+'">'+(q.ecart_pct!=null?((q.ecart_pct>=0?'+':'')+VX.fmt.num(q.ecart_pct,2)+' %'):'n/d')+'</td>'
           +'<td><span class="vx-badge" style="color:var(--vx-warning,#D9BE3C);border:1px solid var(--vx-warning,#D9BE3C);font-size:11px">'+esc(q.source_label||'via Claude · web')+'</span>'+brainCitations(q.citations)+'</td>'
           +'<td class="'+impactCls+'" style="font-size:12px">'+(n?esc(n.impact)+' — '+esc((n.headline||'').slice(0,64)):'<span class="vx-dim">—</span>')+'</td></tr>';
       }).join('')+'</tbody></table></div>';

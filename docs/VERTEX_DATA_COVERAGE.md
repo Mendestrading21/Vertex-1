@@ -107,7 +107,7 @@ Légende état : **RÉEL** (source identifiée, chaîne complète) · **PARTIEL*
 | Carte | Source | État | Statut |
 |---|---|---|---|
 | Option (matrice, décroissance, IV) | `/api/options/simulate` : spot = clôture scan, IV inversée du mid (`FALLBACK_ESTIMATE`), taux courbe/4,5 % repli, dividende fondamentaux | PARTIEL (`entrees` non affichées) | consigné |
-| Action/ETF · PoP et Greeks | **`iv: 0.25` codé en dur** dans `simulator.js` → probabilité et sensibilités fabriquées | DÉGRADÉ (P0) | consigné (lot moteur : refuser PoP/Greeks sans IV cotée) |
+| Action/ETF · PoP et Greeks | `iv: null` sans IV cotée → PoP et Greeks absents (plus de 25 % codé en dur) | RÉEL / PARTIEL | corrigé (`31305b70`) |
 | Impact portefeuille (7 contrôles) | `/api/pretrade/check` | RÉEL | — |
 | Forex, look-through ETF | — | NON_IMPLÉMENTÉ (déclaré) | — |
 
@@ -157,7 +157,7 @@ Légende état : **RÉEL** (source identifiée, chaîne complète) · **PARTIEL*
 | Connexions (IBKR, TradingView, Claude, stockage, scheduler, SSE) | preuve socket pour IBKR ; présence de variables pour TV/Claude | RÉEL / PARTIEL (configuré ≠ testé) | — |
 | Jobs | registre + battements ; `NON_IMPLEMENTE` / `SILENCIEUX` distingués ; **`MACRO_OFFICIEL_REFRESH` ajouté (13 exécutables / 18 sans exécutant)** | RÉEL | corrigé (ajout) |
 | Synchronisation, hero, `/healthz.engines` | `mode='live' si IBKR_ENABLED` ; `readonly=True` littéral ; moteurs en dur | DÉGRADÉ / PARTIEL | consigné (P1) |
-| Cerveau Claude · cotations trouvées | prix par recherche web LLM, non réconciliés | DÉGRADÉ | consigné (retirer la surface `quotes`) |
+| Cerveau Claude · cotations trouvées | prix par recherche web LLM, **réconciliés** par la route avec le prix canonique du scan (`scan_price`, `ecart_pct`, `note_quotes`) ; la page affiche prix web / prix du scan / écart, intitulé « non canoniques » ; aucun autre consommateur (`quote_for` sans appelant) | PARTIEL (honnête) | corrigé |
 | Qualité des données | classe unique par scan ; `last_scan_ts` jamais posé | DÉGRADÉ | consigné |
 
 ## 13. Défauts d'alimentation classés (synthèse) et statut
