@@ -46,6 +46,22 @@ def test_l_equite_portefeuille_derive_des_clotures_declarees():
     assert 'Number(t.exit)-Number(t.cost)' in src
 
 
+def test_le_brief_porte_le_diff_du_contexte_marche(monkeypatch):
+    """`daily_changes` n'était produit par personne : le brief lit le diff de
+    market_context (base persistée) — jamais inventé, vide sans base."""
+    from vertex.ui.pages import briefing
+    from vertex.services import persist
+    scan = {'market': {'spy_regime': 'UP'}, 'market_ctx': {'vix': 25.0, 'vix_band': 'ELEVE'},
+            'scan_ts_h': '2026-09-06T07:00:00Z', 'rows': [], 'indices': []}
+    monkeypatch.setattr(persist, 'load_json', lambda name, default=None: None)
+    assert briefing.build_editorial(scan)['changed_since_yesterday'] == []
+    prev = {'as_of': '2026-09-05T22:00:00Z', 'regime': {'label': None},
+            'dimensions': {'vix': {'value': 15.0, 'band': 'BAS'}}}
+    monkeypatch.setattr(persist, 'load_json', lambda name, default=None: prev)
+    chg = briefing.build_editorial(scan)['changed_since_yesterday']
+    assert any('VIX' in c for c in chg), chg
+
+
 def test_la_contribution_recoit_un_pl_absolu():
     src = _src('vertex', 'ui', 'pages', 'portfolio_page.py')
     assert 'const plAbs=value!==null?(value-invested):null;' in src

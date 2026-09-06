@@ -13,6 +13,7 @@ Données réelles uniquement — « — » honnête si absent, jamais un chiffre
 """
 from __future__ import annotations
 
+import contextlib
 import time
 
 from vertex.ui.shell import render_shell
@@ -90,7 +91,15 @@ def build_editorial(scan_state: dict) -> dict:
     lines.append('Discipline du jour : aucune improvisation — le fondamental prime sur '
                  'le technique, décision finale unique, stops dérivés du sous-jacent.')
 
-    changed = scan_state.get('daily_changes') or []
+    #  `scan_state['daily_changes']` n'était produit par personne : la liste
+    #  restait vide à vie (Vertex IA › delta du brief). Le propriétaire du
+    #  « depuis la session précédente » est market_context (base persistée).
+    changed = []
+    with contextlib.suppress(Exception):
+        from vertex.engines import market_context as _mcx
+        from vertex.services import persist as _persist
+        prev = _persist.load_json('market_context_last.json', None)
+        changed = _mcx.build(scan_state, prev=prev).get('changes_since_prev') or []
     return {
         'lines': lines[:12],
         'word_count': sum(len(l.split()) for l in lines[:12]),
