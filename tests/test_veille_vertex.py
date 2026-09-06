@@ -63,3 +63,30 @@ def test_le_journal_est_relu_dans_l_encodage_ou_il_a_ete_ecrit():
     #  Les DEUX sens doivent employer le même encodage, sinon le défaut revient
     #  par l'autre bout.
     assert src.count('-Encoding utf8') >= 3, src.count('-Encoding utf8')
+
+
+def test_le_script_porte_une_marque_d_octets_utf8():
+    """Sans BOM, PowerShell 5.1 lit le script en page de codes ANSI.
+
+    Mesuré le 2026-09-06 : le journal contenait, pour « démarrée », les octets
+    UTF-8 de « dÃ©marrÃ©e » — un double encodage. La cause
+    n'était pas l'écriture du journal (déjà en UTF-8) mais la LECTURE du script
+    lui-même : Windows PowerShell 5.1 suppose l'ANSI pour un fichier `.ps1` sans
+    marque d'octets, et mange les accents dès l'analyse, avant toute exécution.
+
+    Le fichier qu'un humain vient lire après une panne doit être lisible ; c'est
+    tout l'intérêt d'un chien de garde.
+    """
+    with open(_SCRIPT, 'rb') as f:
+        debut = f.read(3)
+    assert debut == bytes((0xEF, 0xBB, 0xBF)), (
+        'veille_vertex.ps1 a perdu sa marque d’octets UTF-8 : PowerShell 5.1 '
+        'le relira en ANSI et réécrira des accents corrompus dans le journal')
+
+
+def test_le_script_contient_bien_des_accents_a_proteger():
+    """Contre-épreuve : sans accent, la garde ci-dessus ne prouverait rien."""
+    src = _src()
+    assert any(c in src for c in 'éèàêûô'), (
+        'plus aucun accent dans le script : la garde de la marque d’octets ne '
+        'mesure plus rien, il faut la retirer ou la réécrire')
