@@ -4,6 +4,18 @@
 Les règles reprises du JavaScript de la vue Structure sont épinglées ici ; la
 page ne calcule plus (gardien de source). Aucune valeur inventée : sans IV pas
 de scénario, sans bid/ask ni OI liquidité « insuffisante — non évaluable ».
+
+MESURE DU 2026-09-06 QUI A FAIT CORRIGER CE BANC. Les fixtures alimentaient les
+contrats avec la clé `spread_pct`, que le moteur de production n'émet JAMAIS :
+`legacy_engine.build_board` (l. 383) publie `spread`, et le comptage sur le
+board servi donne `spread` 96/96, `spread_pct` 0/96. Ces gardiens épinglaient
+donc une forme de donnée qui n'existe qu'en démonstration, et laissaient passer
+le défaut réel : sur 100 % des titres, `etat_liquidite` substituait la sentinelle
+99.0 et servait « OI 4615 · spread 99.0 % » pour un contrat dont le spread
+mesuré valait 6,5 % (NVDA CALL 230 2027-03-19), d'où « Liquidité insuffisante »
+sur NVDA (6,5 %), MSFT (3,2 %) et AAPL (2,0 %) au lieu d'« Asymétrie
+excellente ». Les fixtures utilisent désormais la forme RÉELLE du board, et
+trois cas non contournables ont été ajoutés.
 """
 import math
 import os
@@ -23,12 +35,69 @@ def test_liquidite_quatre_paliers_et_absence_nommee():
     assert sv.etat_liquidite(2000, 5.0)['key'] == 'acceptable'
     assert sv.etat_liquidite(600, 9.0)['key'] == 'mediocre'
     assert sv.etat_liquidite(600, 12.0)['key'] == 'insuffisante'
-    assert sv.etat_liquidite(6000, None)['key'] == 'insuffisante'   # spread inconnu = 99 %
+    #  Spread non coté : classement prudent (aucun palier positif) mais AUCUN
+    #  chiffre. La note servie était « OI 4615 · spread 99.0 % » — une constante
+    #  mise en forme dans la même phrase et la même unité qu'un OI mesuré.
+    absent = sv.etat_liquidite(6000, None)
+    assert absent['key'] == 'insuffisante'
+    assert absent['spread_mesure'] is False and absent['spread_pct'] is None
+    assert '99' not in absent['note'] and '%' not in absent['note']
+    assert 'non coté' in absent['note']
+
+
+def test_board_reel_le_spread_est_lu_et_le_verdict_positif_survit():
+    """MESURE : board réel NVDA (oi 4615, spread 6,5 %, asymétrie 6,14x). La
+    page servait « Liquidité insuffisante » avec la note « OI 4615 · spread
+    99.0 % » parce que `spread_pct` n'existe pas sur ce board ; le verdict
+    positif était écrasé sur 100 % des titres réels. Le spread mesuré doit être
+    lu, et l'asymétrie doit reprendre la main."""
+    reel = {'sym': 'NVDA', 'exp': '2027-03-19', 'type': 'CALL', 'strike': 230.0,
+            'oi': 4615, 'vol': 675, 'spread': 6.5, 'bid': 6.0, 'ask': 6.4}
+    legs = [{'type': 'CALL', 'strike': 230.0}]
+    liq = sv.liquidite_strategie([reel], 'NVDA', '2027-03-19', legs)
+    assert liq['key'] == 'mediocre' and liq['spread_pct'] == 6.5
+    assert liq['note'] == 'OI 4615 \u00b7 spread 6.5 %'
+    v = sv.verdict({'days_to_exp': 193}, liq, 230.36, 2860.0, 17560.0)
+    assert v['label'] == 'Asym\u00e9trie excellente'
+
+
+def test_aucun_chiffre_de_spread_quand_le_bid_ask_n_est_pas_cote():
+    """MESURE : `legacy_engine.py:338` impute 99.0 quand le bid/ask n'est pas
+    exploitable. Ce nombre n'a jamais été observé sur un carnet : il ne doit
+    apparaître ni dans la note, ni dans le motif du verdict, et le motif doit
+    rester distinguable d'une liquidité RÉELLEMENT mesurée hors seuil (KHC,
+    spread 149,0 % sur OI 1)."""
+    croise = {'sym': 'NVDA', 'exp': '2027-03-19', 'type': 'CALL', 'strike': 230.0,
+              'oi': 4615, 'spread': 99.0, 'bid': 6.4, 'ask': 6.4}
+    legs = [{'type': 'CALL', 'strike': 230.0}]
+    liq = sv.liquidite_strategie([croise], 'NVDA', '2027-03-19', legs)
+    assert liq['key'] == 'insuffisante' and liq['spread_mesure'] is False
+    assert '99' not in liq['note'] and '%' not in liq['note']
+    why_absent = sv.verdict({}, liq, 230.36, 2860.0, 17560.0)['why']
+    assert 'NON \u00c9VALUABLE' in why_absent and '99' not in why_absent
+    mesure = sv.etat_liquidite(1, 149.0)
+    why_mesure = sv.verdict({}, mesure, 24.85, 2500.0, 1000.0)['why']
+    assert 'mesur\u00e9e' in why_mesure and why_mesure != why_absent
+
+
+def test_repli_echeances_voisines_n_invente_pas_de_spread():
+    """MESURE : le repli sur les échéances voisines faisait `max(..., 99.0)` —
+    un seul contrat non coté suffisait à imposer 99 % à toute la stratégie."""
+    voisins = [{'sym': 'AAA', 'exp': '2026-12-18', 'type': 'CALL', 'strike': 100,
+                'oi': 6000, 'spread': 2.0},
+               {'sym': 'AAA', 'exp': '2026-12-18', 'type': 'CALL', 'strike': 110,
+                'oi': 6000, 'liquidity_coverage': {'quoted_bid_ask': False}}]
+    liq = sv.liquidite_strategie(voisins, 'AAA', '2099-01-01', [{'type': 'CALL', 'strike': 100}])
+    assert liq['spread_pct'] == 2.0 and '99' not in liq['note']
+    aucun = [{'sym': 'AAA', 'exp': '2026-12-18', 'type': 'CALL', 'strike': 100,
+              'oi': 6000, 'liquidity_coverage': {'quoted_bid_ask': False}}]
+    liq2 = sv.liquidite_strategie(aucun, 'AAA', '2099-01-01', [{'type': 'CALL', 'strike': 100}])
+    assert liq2['spread_pct'] is None and '99' not in liq2['note']
 
 
 def test_liquidite_strategie_est_la_pire_jambe():
-    board = [{'sym': 'AAA', 'exp': '2026-12-18', 'type': 'CALL', 'strike': 100, 'oi': 6000, 'spread_pct': 2},
-             {'sym': 'AAA', 'exp': '2026-12-18', 'type': 'CALL', 'strike': 110, 'oi': 300, 'spread_pct': 20}]
+    board = [{'sym': 'AAA', 'exp': '2026-12-18', 'type': 'CALL', 'strike': 100, 'oi': 6000, 'spread': 2},
+             {'sym': 'AAA', 'exp': '2026-12-18', 'type': 'CALL', 'strike': 110, 'oi': 300, 'spread': 20}]
     legs = [{'type': 'CALL', 'strike': 100}, {'type': 'CALL', 'strike': 110}]
     assert sv.liquidite_strategie(board, 'aaa', '2026-12-18', legs)['key'] == 'insuffisante'
     assert sv.liquidite_strategie(board, 'AAA', '2026-12-18', legs[:1])['key'] == 'excellente'
@@ -74,7 +143,7 @@ def test_analyser_sert_tout_ce_que_la_page_peint():
     strat = {'days_to_exp': 365, 'max_loss': -500, 'max_profit': 1500, 'max_profit_unbounded': False,
              'legs': [{'type': 'CALL', 'strike': 100}],
              'payoff': [{'price': 50, 'pnl': -500}, {'price': 100, 'pnl': -500}, {'price': 150, 'pnl': 1500}]}
-    board = [{'sym': 'AAA', 'exp': '2026-12-18', 'type': 'CALL', 'strike': 100, 'oi': 6000, 'spread_pct': 2}]
+    board = [{'sym': 'AAA', 'exp': '2026-12-18', 'type': 'CALL', 'strike': 100, 'oi': 6000, 'spread': 2}]
     a = sv.analyser(res, strat, board)
     assert a['em'] == pytest.approx(25.0) and a['p_prob'] == 125 and a['p_exc'] == 150
     assert a['gain_prob'] == pytest.approx(500.0) and a['gain_exc'] == 1500
@@ -101,7 +170,7 @@ def test_la_route_sert_l_analyse(monkeypatch):
     for k in (95, 100, 105, 110):
         for t in ('CALL', 'PUT'):
             board.append({'sym': 'AAA', 'exp': '2026-12-18', 'type': t, 'strike': float(k), 'dte': 40,
-                          'cost': 300.0, 'iv': 25.0, 'oi': 6000, 'spread_pct': 2.0, 'spot': 100.0})
+                          'cost': 300.0, 'iv': 25.0, 'oi': 6000, 'spread': 2.0, 'spot': 100.0})
     monkeypatch.setitem(scan_state, 'options_board', board)
     monkeypatch.setitem(scan_state, 'detail', {'AAA': {'price': 100.0, 'verdict': 'BUY', 'score': 70}})
     from vertex.runtime import app

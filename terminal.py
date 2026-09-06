@@ -6,7 +6,7 @@ détaillée (signaux techniques, score Track, IV / IV-rank, earnings, plan de
 trade entrée/stop/cibles, mini-chart)  +  GEX (positionnement dealers) à la
 demande. Esthétique sombre pro. Auto-rafraîchi.
 
-Lancer :  py terminal.py   →   http://localhost:5002
+Lancer :  py terminal.py   →   http://127.0.0.1:5002
 Données :  yfinance (différé ~15 min — OK swing). Greeks/GEX = Black-Scholes maison.
 ⛔ ANALYSE ONLY — aucun ordre, aucune exécution. NOT FINANCIAL ADVICE.
 """
@@ -348,14 +348,44 @@ def _yf_ttl():
         return _YF_TTL_CLOSED
 
 
-def _download_universe(tickers, period='1y', chunk=50):
+def _download_universe(tickers, period='1y', chunk=50, publier_provenance=True):
     """Télécharge l'univers PAR LOTS (plus robuste/rapide qu'un seul gros appel
     sur le plan gratuit). Renvoie un dict {ticker: DataFrame} ; un lot ou un
     ticker en échec est simplement ignoré (jamais de plantage global).
     Si yfinance échoue (ex: Yahoo bloque l'IP du serveur cloud), bascule
     automatiquement sur Stooq pour les tickers manquants.
     Cache mémoire par ticker (Lot 2) : sert depuis le cache les tickers encore
-    frais selon la séance, ne télécharge que les périmés/manquants."""
+    frais selon la séance, ne télécharge que les périmés/manquants.
+
+    `publier_provenance` — UN SEUL PROPRIÉTAIRE POUR LA PROVENANCE DU SCAN.
+    Cette fonction a deux appelants : `_scan_once` (533 symboles = 517 titres
+    + 16 de contexte) et `edge_backtest` (140 titres + le benchmark = 141),
+    lancé toutes les 6 h par `_edge_loop`. Les écritures de provenance étaient
+    INCONDITIONNELLES : le backtest réécrivait donc, au nom du scan, une
+    provenance qui décrivait une autre population.
+
+    MESURE (doublures en mémoire, NO_IBKR=1) :
+
+    ```text
+    APRES SCAN   source='yfinance'    detail={'yfinance':533,'univers':533} scanned_n=513
+    APRES EDGE   source='yfinance'    detail={'yfinance':141,'univers':141} scanned_n=513
+    Yahoo bridé pendant le BACKTEST seulement :
+    APRES EDGE   source='unavailable' abandon_debit={'restes_sans_donnee':41,
+                 'exemples':['CAT','BA','HON','GE','RTX','LMT','DE','MMM']}
+    ```
+
+    Deux conséquences servies, jusqu'à 30 min sur 6 h : `scan_state['source']`
+    — lu par /healthz, scan_api, positions/recalculator (`actionable_allowed`),
+    decision_packet, daily_brief et le badge « live/delayed » des pages —
+    affichait une dégradation FAUSSE sur un scan de 513 lignes parfaitement
+    saines ; et `abandon_debit` nommait CAT, BA, HON, GE, RTX « restés sans
+    donnée » alors que le scan les avait servis — une ABSENCE FABRIQUÉE, ce
+    que ce bloc avait justement été écrit pour empêcher.
+
+    Seul l'appelant qui EST le scan publie donc. `_SOURCE_BUDGET_STATE` reste
+    hors du garde : il décrit l'état de la source elle-même (Yahoo a-t-il
+    répondu à l'instant), pas une population attribuée au scan.
+    """
     ttl = _yf_ttl()
     now = time.time()
     frames = {}
@@ -444,9 +474,6 @@ def _download_universe(tickers, period='1y', chunk=50):
     #  repli invisible est un mensonge de source (QUALITY_STANDARD §1).
     contributeurs = [n for n, c in (('ibkr', ibkr_n), ('yfinance', yahoo_n),
                                     ('stooq', stooq_n)) if c > 0]
-    scan_state['source'] = '+'.join(contributeurs) if contributeurs else 'unavailable'
-    scan_state['source_detail'] = {'ibkr': ibkr_n, 'yfinance': yahoo_n,
-                                   'stooq': stooq_n, 'univers': len(tickers)}
     #  CE QUI A ETE ABANDONNE, et pourquoi. Le backoff anti-429 coupait la file
     #  en silence : le Dashboard affichait « n/d » pendant que le scan annoncait
     #  « aucune erreur ». Un abandon qui ne se nomme pas se lit comme une
@@ -455,15 +482,22 @@ def _download_universe(tickers, period='1y', chunk=50):
     #  `restants` compte ce qui n'a ete servi NI par Yahoo, NI par Stooq : les
     #  abandonnes que le filet de secours a rattrapes ne manquent plus.
     restants = [t for t in _abandonnes if t not in frames]
-    scan_state['abandon_debit'] = {
-        'apres_lots_vides': bool(_abandonnes),
-        'symboles_abandonnes': len(_abandonnes),
-        'restes_sans_donnee': len(restants),
-        'exemples': restants[:8],
-        'motif': ('trois lots vides d affilee : Yahoo limite le debit, la file '
-                  'est coupee et le filet Stooq prend le relais'),
-        'read_only': True,
-    } if _abandonnes else None
+    #  Ces trois cles sont ATTRIBUEES AU SCAN : seul le scan les publie (cf. le
+    #  docstring). Un autre appelant qui les ecrirait raconterait sa propre
+    #  population sous l'etiquette du scan.
+    if publier_provenance:
+        scan_state['source'] = '+'.join(contributeurs) if contributeurs else 'unavailable'
+        scan_state['source_detail'] = {'ibkr': ibkr_n, 'yfinance': yahoo_n,
+                                       'stooq': stooq_n, 'univers': len(tickers)}
+        scan_state['abandon_debit'] = {
+            'apres_lots_vides': bool(_abandonnes),
+            'symboles_abandonnes': len(_abandonnes),
+            'restes_sans_donnee': len(restants),
+            'exemples': restants[:8],
+            'motif': ('trois lots vides d affilee : Yahoo limite le debit, la file '
+                      'est coupee et le filet Stooq prend le relais'),
+            'read_only': True,
+        } if _abandonnes else None
     return frames
 
 
@@ -1937,8 +1971,17 @@ from vertex.engines import edge_validation as _edge_validation  # noqa: E402
 #  `_download_universe` reste résolu dans CES globales au moment de l'appel,
 #  donc les doublures de test continuent de mordre.
 def edge_backtest(syms=None, horizons=(5, 21, 63), step=8, lookback=460):
+    #  Le backtest TÉLÉCHARGE, il ne publie pas la provenance du scan : ses 141
+    #  symboles (140 + le benchmark) ne sont pas la population du scan, et
+    #  écrire `scan_state['source']` en son nom a été mesuré comme produisant
+    #  une dégradation fausse et des absences fabriquées (cf. docstring de
+    #  `_download_universe`). Le lambda résout toujours `_download_universe`,
+    #  `_stooq_download` et `yf` dans CES globales : les doublures de test
+    #  continuent de mordre.
     return _edge_validation.edge_backtest(
-        telecharger=_download_universe, analyser=analyse,
+        telecharger=lambda _syms, **kw: _download_universe(
+            _syms, publier_provenance=False, **kw),
+        analyser=analyse,
         univers=list(dict.fromkeys(WATCHLIST + _BIG_EXTRA + _TREND_EXTRA))[:140],
         bench=BENCH, syms=syms, horizons=horizons, step=step, lookback=lookback)
 
@@ -2753,7 +2796,13 @@ def _start_app():
         print(_etat['raison'])
         raise SystemExit(2)
     host = _etat['hote']
-    print(f'VERTEX -> http://localhost:{port}  ·  IBKR live: {IBKR_ENABLED}  (Ctrl+C pour arreter)')
+    #  ADRESSE IPv4 EXPLICITE, mesuree le 2026-09-06 : le serveur ecoute en
+    #  IPv4 (0.0.0.0 ou 127.0.0.1). Un navigateur qui resout `localhost` en
+    #  IPv6 (::1) n'atteint alors rien — et si un service worker a deja mis
+    #  la coque en cache, il sert une page PERIMEE sans feuille de style :
+    #  l'application parait cassee alors qu'elle tourne. On annonce donc
+    #  l'adresse qui repond a coup sur. L'ECOUTE est inchangee.
+    print(f'VERTEX -> http://127.0.0.1:{port}  ·  IBKR live: {IBKR_ENABLED}  (Ctrl+C pour arreter)')
     print('   ' + _phrase(_etat))
     app.run(host=host, port=port, debug=False, use_reloader=False, threaded=True)
 

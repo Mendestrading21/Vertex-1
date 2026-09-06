@@ -375,11 +375,21 @@ def _jobs_cadences_avec_emetteur() -> list[str]:
 #: Plancher ANTI-VIDE : ces jobs-là doivent rester couverts. Si la dérivation
 #: ci-dessus se mettait à ne rien rendre, le banc paramétré deviendrait vide et
 #: passerait — la panne exacte que ce dépôt appelle « un détecteur muet ».
+#:
+#: `DATA_BACKUP` en est SORTI (6 sept. 2026) parce que sa cadence est passée à
+#: `None`, et non parce que son émetteur aurait disparu. MESURE À L'ORIGINE :
+#: le registre lui déclarait 86400 s alors qu'aucune horloge ne l'appelle — son
+#: seul émetteur est `_backup_desk` (routes/desk.py:97/109), invoqué par le POST
+#: de synchronisation du desk. L'écran promettait donc « prochaine dans
+#: ~1440 min », et 48 h après un battement il basculait SILENCIEUX (« la boucle
+#: est morte ou coincée ») alors qu'il n'y a pas de boucle. Le critère de ce
+#: banc étant la CADENCE, un job sur événement n'y a plus sa place — mais sa
+#: couverture ne doit pas disparaître pour autant : elle est reprise nommément
+#: par `test_le_backup_du_desk_peut_declarer_son_echec` ci-dessous.
 _PLANCHER = frozenset({
     'ALERTS_EVALUATION', 'TRACK_RECORD_UPDATE', 'NEWS_REFRESH',
     'CATALYST_REFRESH', 'WEEKLY_REVIEW', 'MARKET_DATA_REFRESH',
     'FUNDAMENTALS_REFRESH', 'OPTIONS_BOARD_REFRESH', 'MARKET_RADAR_REFRESH',
-    'DATA_BACKUP',
 })
 
 
@@ -462,6 +472,30 @@ def test_chaque_boucle_peut_declarer_son_echec(job):
         'nomme dans son propre commentaire.'
         % (job, len(formes),
            ', '.join('%s:%d' % (f['fichier'], f['ligne']) for f in formes)))
+
+
+def test_le_backup_du_desk_peut_declarer_son_echec():
+    """`DATA_BACKUP` est sorti du banc paramétré avec sa cadence : on le garde
+    couvert nommément, sinon la sortie serait une perte de couverture muette.
+
+    Il reste implémenté (deux émetteurs mesurés dans `routes/desk.py`) et doit
+    conserver les DEUX formes : un succès et un échec motivé. Sa cadence, elle,
+    vaut désormais `None` — mesuré au registre avant correction, elle valait
+    86400 s pour un déclencheur de requête, ce qui produisait « prochaine dans
+    ~1440 min » puis SILENCIEUX après 48 h sans synchronisation du desk.
+    """
+    formes = _formes_de_battement().get('DATA_BACKUP')
+    assert formes, 'DATA_BACKUP n’a plus d’émetteur : il n’est plus implémenté'
+    honnetes = [f for f in formes if not f['ok_fige_vrai'] and f['motif']]
+    assert honnetes, (
+        'DATA_BACKUP ne peut plus se déclarer en échec : %s'
+        % ', '.join('%s:%d' % (f['fichier'], f['ligne']) for f in formes))
+    par_nom = {n: i for n, _d, i, _impl in _reg._CANONICAL_4}
+    assert par_nom['DATA_BACKUP'] is None, (
+        'DATA_BACKUP annonce de nouveau une cadence : aucune horloge ne '
+        'l’appelle, son seul déclencheur est le POST de synchronisation du '
+        'desk — une cadence y refabrique un compte à rebours et arme '
+        'SILENCIEUX sur une boucle qui n’existe pas')
 
 
 def test_le_battement_du_track_record_vit_avec_le_travail_qu_il_decrit():

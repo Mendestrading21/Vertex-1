@@ -126,7 +126,18 @@ def decide(packet: dict, profile=None) -> dict:
         risk_score = 40.0
     timing = _score(tech, 'timing_score')
     if timing is None:
+        # Le neutre 50.0 est une SUBSTITUTION, pas une mesure : publié nu dans
+        # `scores`, il était indiscernable d'un timing réellement calculé (mesure :
+        # `scores.timing = 50.0` sur des titres dont aucune note de timing n'existe,
+        # `timing_score` n'ayant aucun producteur dans le dépôt). On garde la valeur
+        # pour ne déplacer aucun seuil, mais l'absence est NOMMÉE dans `unknowns` —
+        # le canal d'ignorance déjà servi à l'utilisateur dans l'audit_trail.
+        # `unknowns_critical` ne retient que fundamental/technical : aucune décision
+        # ne change, seule l'honnêteté du dossier change.
         timing = 50.0 if tech else 0.0
+        unknowns.append('timing')
+        audit.append('timing non mesuré — neutre 50.0 substitué (aucune note de '
+                     'timing calculée pour ce titre)')
     scores = {'conviction': conviction, 'risk': risk_score, 'timing': timing,
               'asymmetry': asym, 'data_quality': dq_score}
 

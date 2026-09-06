@@ -30,7 +30,22 @@ def portfolio_risk(snapshot: PortfolioSnapshot, profile,
                   if w > profile.max_stock_weight_pct}
     for s, w in overweight.items():
         warnings.append(f'{s}: poids {w}% > max {profile.max_stock_weight_pct}%')
-    hhi = round(sum((w / 100) ** 2 for w in stock_weights.values()), 4)
+    #  MESURE : 1 action KO (88,07 $) + 25 000 $ de cash sortait `hhi 0.0`,
+    #  peint « bien dispersé » en vert, alors que la MÊME réponse levait
+    #  `overweight ['KO']`. Cause : les poids étaient divisés par l'équité
+    #  TOTALE (cash compris au dénominateur) mais le terme cash était retiré du
+    #  numérateur — ni le Herfindahl du compartiment actions, ni celui du
+    #  portefeuille complet, donc un indice qui ne mesure rien de nommable.
+    #  Avec un titre unique, la jauge ne quittait le vert qu'au-delà de 57,4 %
+    #  de l'équité : tout desk dont le cash dépasse ~0,75 × la valeur actions
+    #  était peint en vert quelle que soit sa concentration réelle.
+    #  `hhi` mesure désormais LE COMPARTIMENT ACTIONS, poids renormalisés à
+    #  100 % — la seule base sur laquelle les seuils de lecture (3 lignes
+    #  équipondérées ≈ 0,33) ont un sens. Sans action, il vaut None (inconnu),
+    #  jamais 0 (« dispersé »).
+    _invested_pct = round(sum(stock_weights.values()), 2)
+    hhi = (round(sum((w / _invested_pct) ** 2 for w in stock_weights.values()), 4)
+           if _invested_pct else None)
 
     # Secteurs
     sector_weights: dict[str, float] = {}
@@ -107,6 +122,17 @@ def portfolio_risk(snapshot: PortfolioSnapshot, profile,
     return {'provenance': snapshot.provenance, 'as_of': snapshot.as_of,
             'equity': snapshot.equity, 'weights': weights,
             'sector_weights': sector_weights, 'hhi': hhi, 'beta': beta,
+            #  Le périmètre voyage AVEC la mesure : un « HHI » sans base
+            #  annoncée est illisible, et cette page en affiche déjà un second
+            #  (portfolio_context, toutes lignes, cash exclu du dénominateur).
+            'hhi_basis': ('compartiment actions, poids renormalisés à 100 % — '
+                          'cash exclu du calcul'),
+            'invested_pct': _invested_pct,
+            #  Ancien indicateur CONSERVÉ sous son vrai nom : parts du capital
+            #  total au carré, terme cash exclu du numérateur. Il répond à
+            #  « quelle part du capital total un titre représente-t-il ? »,
+            #  jamais à « le compartiment actions est-il concentré ? ».
+            'hhi_total_equity': round(sum((w / 100) ** 2 for w in stock_weights.values()), 4),
             'beta_coverage': beta_coverage,
             'correlations': {'average': corr.get('average'),
                              'high_pairs': corr.get('high_pairs'),

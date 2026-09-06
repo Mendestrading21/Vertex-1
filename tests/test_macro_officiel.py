@@ -82,8 +82,12 @@ def test_chaque_serie_du_catalogue_rend_une_observation_datee_par_la_source():
         assert re.match(r'^\d{4}-\d{2}(-\d{2})?$', o.observed_at), (o.id, o.observed_at)
         assert o.received_at.endswith('Z'), 'heure de réception ISO UTC'
         assert o.observed_at != o.received_at[:10] or o.frequence == 'quotidien'
-        assert o.unite and o.frequence in ('quotidien', 'mensuel', 'annuel')
+        #  `en vigueur` ajouté après mesure : voir
+        #  `test_un_taux_directeur_n_est_jamais_marque_en_retard`.
+        assert o.unite and o.frequence in ('quotidien', 'mensuel', 'annuel',
+                                           src.FREQ_EN_VIGUEUR)
         assert o.mode == 'PERIODIQUE', 'une publication n’est jamais « live »'
+        assert o.fraicheur in ('SANS_OBJET', 'A_JOUR', 'RETARD', 'RETARD_FORT'), o.id
 
 
 def test_une_serie_en_panne_devient_une_absence_expliquee_jamais_un_zero():
@@ -99,6 +103,70 @@ def test_une_serie_en_panne_devient_une_absence_expliquee_jamais_un_zero():
     assert obs['us_2a'].value is not None, 'les autres séries vivent'
     for o in obs.values():
         assert o.value != 0 or o.observed_at, 'un zéro ne remplace jamais une absence'
+
+
+# ── 1 bis. Verdict de fraîcheur (calculé au serveur, jamais déduit à l'écran) ─
+def test_juger_fraicheur_distingue_a_jour_retard_et_retard_fort():
+    """MESURE (2026-09-06) : `/api/macro/officiel` servait 16 clés par série,
+    aucune ne portant de verdict de fraîcheur — `retard` n'existait nulle part
+    dans la chaîne, alors que le contrat exige qu'il reste un état DISTINCT de
+    l'absence. Le même gabarit de tuile rendait le SARON de 2026-08 (à jour)
+    et le rendement Confédération 10 ans arrêté à 2025-07 chez la BNS, soit
+    14 publications mensuelles manquantes ; l'IPCH zone euro s'arrêtait à
+    2025-12, soit 9 manquantes. Le pied affichait « 11/11 séries publiées ».
+
+    Le mensuel se compte depuis la FIN du mois observé : un chiffre de
+    décembre n'a pas 279 jours de retard parce qu'il porte le 1er décembre."""
+    import datetime as _dt
+    j = _dt.date(2026, 9, 6)
+    assert src.juger_fraicheur('quotidien', '2026-09-03', j) == ('A_JOUR', 3)
+    assert src.juger_fraicheur('mensuel', '2026-08', j) == ('A_JOUR', 6)      # ch_saron
+    assert src.juger_fraicheur('mensuel', '2025-12', j) == ('RETARD_FORT', 249)  # ze_inflation
+    assert src.juger_fraicheur('mensuel', '2025-07', j) == ('RETARD_FORT', 402)  # ch_conf_10a
+    assert src.juger_fraicheur('quotidien', '2026-08-25', j) == ('RETARD', 12)
+    #  Rien d'inventé quand on ne sait pas : ni verdict, ni âge.
+    assert src.juger_fraicheur('quotidien', '', j) == ('INCONNU', None)
+    assert src.juger_fraicheur('trimestriel', '2026-06', j) == ('INCONNU', 68)
+
+
+def test_un_taux_directeur_n_est_jamais_marque_en_retard():
+    """MESURE : `FM/B.U2.EUR.4F.KR.MRR_FR.LEV` rend [('2025-04-23', 2.4),
+    ('2025-06-11', 2.15), ('2026-06-17', 2.4)] — un escalier de DÉCISIONS, pas
+    une série quotidienne. Les 2,40 % du 2026-06-17 sont le taux EN VIGUEUR
+    aujourd'hui : un badge « 81 jours de retard » y serait un mensonge. C'est
+    l'étiquette `frequence='quotidien'` qui était fausse, pas la valeur."""
+    import datetime as _dt
+    verdict, jours = src.juger_fraicheur(src.FREQ_EN_VIGUEUR, '2026-06-17', _dt.date(2026, 9, 6))
+    assert (verdict, jours) == ('SANS_OBJET', 81), 'âge servi, retard non affirmé'
+    cat = {s.id: s for s in src.CATALOGUE}
+    assert cat['ze_refi'].frequence == cat['ze_depot'].frequence == src.FREQ_EN_VIGUEUR
+    #  Date figée : sinon le verdict des séries quotidiennes de la fixture
+    #  changerait tout seul en dormant cinq jours.
+    obs = {o.id: o for o in src.collecter(_fetch_fixtures, aujourdhui=_dt.date(2026, 9, 6))}
+    assert obs['ze_refi'].fraicheur == 'SANS_OBJET' and obs['ze_refi'].value is not None
+    assert obs['ze_refi'].retard_jours == 81
+    assert obs['ch_conf_10a'].fraicheur == 'RETARD_FORT', 'retard de la SOURCE, dit'
+    assert [o.id for o in obs.values() if o.fraicheur in ('RETARD', 'RETARD_FORT')] == \
+        ['ze_inflation', 'ch_conf_10a']
+
+
+def test_l_instantane_compte_les_series_en_retard_a_cote_des_disponibles(monkeypatch, tmp_path):
+    """« 11/11 séries publiées » ne parlait que de DISPONIBILITÉ (`value is not
+    None`) : deux séries en retard fort s'y comptaient comme les autres. Le
+    compte des retards est servi à côté, sans changer le premier."""
+    from vertex.services import macro_officiel as svc
+    monkeypatch.setattr(svc, '_racine', lambda: str(tmp_path))
+    monkeypatch.setattr(svc, '_battre', lambda *a, **k: None)
+    monkeypatch.setattr(svc, '_publier', lambda: None)
+    snap = svc.collecter_une_fois(_fetch_fixtures)
+    assert snap['disponibles'] == snap['total'] == len(src.CATALOGUE)
+    en_retard = [s['id'] for s in snap['series'] if s['fraicheur'] in ('RETARD', 'RETARD_FORT')]
+    assert snap['en_retard'] == len(en_retard) >= 2, 'le compte du pied suit les séries'
+    #  Les deux retards sont ceux de la SOURCE, figés dans la fixture ; les
+    #  séries quotidiennes, elles, vieillissent avec l'horloge de la machine.
+    assert {'ze_inflation', 'ch_conf_10a'} <= set(en_retard)
+    assert all('fraicheur' in s and 'retard_jours' in s for s in snap['series'])
+    assert next(s for s in snap['series'] if s['id'] == 'ze_refi')['fraicheur'] == 'SANS_OBJET'
 
 
 def test_le_catalogue_est_coherent():

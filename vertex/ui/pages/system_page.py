@@ -1331,9 +1331,18 @@ async function loadAutomations(){
            cadence — la boucle est morte ou coincée. Avant, un job mort
            restait « OK » pour toujours. Ambre : prudence, pas erreur —
            le dernier passage avait réussi. */
+        /* JAMAIS_DEMARRE : implémenté et cadencé, mais AUCUN passage depuis la
+           naissance du processus alors que 2× sa cadence est écoulée. Mesuré
+           sur l'instance sans TWS : MARKET_RADAR_REFRESH (240 s) affichait
+           « en attente / 0 » après 16 min d'uptime — 4× sa cadence — parce que
+           son thread n'est créé que sous `if IBKR_ENABLED:`. « En attente »
+           suggère l'imminence ; SILENCIEUX ne pouvait pas prendre le relais
+           (il exige un `last_run`). Une boucle morte au berceau était donc
+           indiscernable d'un démarrage récent. Ambre : prudence, pas erreur. */
         const ETATS={NON_IMPLEMENTE:['frozen','non implémenté'],EN_ATTENTE:['frozen','en attente'],
                      ACTIF:['live','OK'],ERREUR:['offline','erreur'],
-                     SILENCIEUX:['stale','silencieux']};
+                     SILENCIEUX:['stale','silencieux'],
+                     JAMAIS_DEMARRE:['stale','jamais démarré']};
         const st=ETATS[j.etat]||(j.last_run===null?['frozen','en attente']:(j.last_ok?['live','OK']:['offline','erreur']));
         return `<tr><td><b>${esc(j.name)}</b><br><span class="vx-meta">${esc(j.description||'')}</span></td>
         <td><span class="vx-badge vx-badge-status" data-status="${st[0]}" title="${esc(j.last_error||'')}">${st[1]}</span></td>
@@ -1348,7 +1357,10 @@ async function loadAutomations(){
       </tbody></table></div>
       <div class="vx-card-footer">${VX.updateIndicator(Date.now(),'/api/system/automations','live')}
       · « non implémenté » = déclaré au registre, aucun exécutant dans le code — ce n'est pas une panne.
-      « en attente » = implémenté, pas encore passé depuis le démarrage.</div>`
+      « en attente » = implémenté, pas encore passé depuis le démarrage.
+      « jamais démarré » = implémenté, mais aucun passage après 2× sa cadence : boucle non démarrée
+      dans cette configuration (ex. IBKR absent) ou arrêtée avant son premier passage —
+      voir <a href="/system?view=connections">Connexions</a>.</div>`
       :VX.states.empty('Registre de jobs vide.');
   }catch(e){($('vx-auto-jobs')||{}).innerHTML=VX.states.error('Registre indisponible : '+esc(e.message));}
   try{
@@ -1417,11 +1429,28 @@ async function loadAlerts(){
     const v=String(sh[nom]||'');
     /*  `UNKNOWN`, `STALE`… sont des codes moteur : ils ne s'affichent jamais
         bruts. Un etat inconnu n'est pas non plus une panne — il empeche de
-        decider, ce que la carte dit, mais le mot doit etre juste.  */
+        decider, ce que la carte dit, mais le mot doit etre juste.
+
+        MESURE (6 sept. 2026, /healthz des deux instances) : le serveur emet
+        AVAILABLE / CACHED / DEGRADED / NOT_COLLECTED / UNAVAILABLE / UNKNOWN
+        (`_PUBLIC_SOURCE_STATES`, analysis_api.py) et n'emet JAMAIS 'OK' ni
+        'LIVE'. La liste blanche {OK,LIVE} etait donc du code mort : les
+        5 sources saines (scan, market, options, fundamentals, yfinance_budget)
+        etaient affichees en panne avec le code brut « AVAILABLE », et l'etat
+        vide « Aucune panne rapportee » etait inatteignable des qu'un scan
+        aboutissait. Une vraie panne se serait noyee parmi cinq fausses.  */
+    const SAIN={AVAILABLE:1,OK:1,LIVE:1};
     const LIB={UNKNOWN:'état non rapporté par le serveur',
                STALE:'données périmées',DEGRADED:'source dégradée',
-               PARTIAL:'couverture partielle',OFFLINE:'source hors ligne'};
-    if(v&&v!=='OK'&&v!=='LIVE')pannes.push(['Source '+nom,LIB[v]||v,v==='UNKNOWN'?'missing':'caution']);
+               PARTIAL:'couverture partielle',OFFLINE:'source hors ligne',
+               UNAVAILABLE:'source indisponible',
+               NOT_COLLECTED:'non collectée lors de ce scan',
+               CACHED:'servie depuis le cache local'};
+    /*  Absence et degradation restent DISTINCTES (invariant 5) : un etat non
+        rapporte ou non collecte est un trou ('missing'), pas une source qui
+        se degrade ('caution').  */
+    if(v&&!SAIN[v])pannes.push(['Source '+nom,LIB[v]||v,
+      (v==='UNKNOWN'||v==='NOT_COLLECTED')?'missing':'caution']);
   });
   enEchec.forEach(j=>pannes.push(['Tache '+j.name,String(j.last_error),'negative']));
   ($('vx-alerts-pannes')||{}).innerHTML=pannes.length

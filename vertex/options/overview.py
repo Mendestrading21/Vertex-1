@@ -11,6 +11,8 @@ from vertex.visualization.schemas import (
     interpretation, unknown, ST_FAVORABLE, ST_NEUTRE, ST_DEFAVORABLE,
 )
 
+from . import board_fields as _bf
+
 
 def _num(x):
     try:
@@ -43,7 +45,11 @@ def summarize(board, *, as_of=None, demo=False, source='', detail_by_sym=None):
     puts = [c for c in board if str(c.get('type', '')).upper() == 'PUT']
     ivs = [_num(c.get('iv')) for c in board]
     quals = [_num(c.get('quality')) for c in board]
-    spreads = [_num(c.get('spread_pct')) for c in board]
+    #  `spread_pct` est la clé du board de DÉMO ; le board réel publie `spread`
+    #  (96/96 contre 0/96). D'où un `avg_spread_pct: null` et une carte
+    #  « SPREAD MOY. — non disponible sur ce scan » alors que la page
+    #  Opportunités imprimait « 6,5 % » pour le même contrat.
+    spreads = [_bf.spread_pct(c) for c in board]
     ois = [_num(c.get('oi')) for c in board]
     avg_iv = _avg(ivs)
     avg_qual = _avg(quals)
@@ -65,7 +71,7 @@ def summarize(board, *, as_of=None, demo=False, source='', detail_by_sym=None):
         'sym': c.get('sym'), 'type': c.get('type'), 'bucket': c.get('bucket'),
         'strike': c.get('strike'), 'dte': c.get('dte'), 'iv': _num(c.get('iv')),
         'quality': _num(c.get('quality')), 'pop': _num(c.get('pop')),
-        'spread_pct': _num(c.get('spread_pct')), 'why': c.get('why'),
+        'spread_pct': _bf.spread_pct(c), 'why': c.get('why'),
         # pour « Suivre ce contrat » : coût (prime × 100) et échéance exacte.
         'cost': _num(c.get('cost')), 'exp': c.get('exp'),
     } for c in top]

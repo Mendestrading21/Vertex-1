@@ -49,14 +49,26 @@ def build_executive_decision(sym: str, scan_state: dict):
     #  qualite, le rapprochement et les gardes des donnees REELLES, et pose
     #  `DECISION_PACKET_INCOMPLETE` quand une preuve manque.
     packet = _decision_packet.build(sym, detail, scan_state)
-    try:
-        market = scan_state.get('market') or {}
-        inputs = {'index_trend': {'TREND': 'UP', 'CHOP': 'FLAT'}.get(market.get('regime'),
-                                                                     market.get('spy_trend')),
-                  'breadth_pct': market.get('breadth'), 'vix': market.get('vix')}
-        packet['market_regime'] = classify_regime(inputs)
-    except Exception:
-        packet['market_regime'] = {}
+    #  Lot C — ce bloc ECRASAIT le regime du packet avec un mapping inline lisant
+    #  `scan_state['market'].{regime,spy_trend,breadth,vix}`. Or cette cle est
+    #  l'HORLOGE de seance (market_status) : clés réelles ['et','open','session'].
+    #  Les trois entrees arrivaient donc None -> regime UNKNOWN, confidence 0.0,
+    #  dimensions [] -> `REGIME_BLOCKS_NEW_RISK` allume sur 15/15 des titres du
+    #  scan, avec l'audit « regime UNKNOWN — nouveau risque bloque ». Au meme
+    #  instant, /api/market/regime — defini dans CE fichier, sur CE meme
+    #  scan_state — rendait CHOP, confidence 0.6, 4 dimensions et
+    #  new_risk_allowed True. Deux autorites contradictoires pour une capacite,
+    #  et la garde dure la plus visible du produit neutralisee en se faisant
+    #  passer pour active. Le proprietaire canonique du mapping scan -> moteur
+    #  est `market_context.regime_inputs`, deja importe en tete de fichier et
+    #  deja consomme par /api/market/regime : `decision_packet.build` l'appelle
+    #  desormais, ce bloc n'a plus lieu d'etre. Un ecrasement en moins = un
+    #  proprietaire unique du regime, comme l'exige CLAUDE.md.
+    #
+    #  L'ancien `except` posait `{}`, falsy : executive_engine.py:92 teste
+    #  `if regime_ctx and ...`, donc un classifieur en PANNE ouvrait le risque
+    #  neuf au lieu de le fermer. `decision_packet._market_regime` rend un
+    #  UNKNOWN fail-closed a la place.
     resp = _executive.decide(packet, _constitution.load_profile())
     # Fraîcheur RÉELLE du scan (jamais l'heure du navigateur) — le verdict dérive de
     # scan_state['detail'], aussi vieux que le dernier scan.
@@ -160,6 +172,23 @@ def make_blueprint(scan_state: dict) -> Blueprint:
         _legs = _greeks.get('legs') or []
         risk = risk_engine.portfolio_risk(snap, profile,
                                           options_greeks=_legs if _legs else None)
+        # ── Corrélations : capacité NON BRANCHÉE sur cette route, dite comme telle ──
+        # Mesure : POST /api/portfolio/team avec 1 puis 3 positions rend le MÊME
+        # {'average': None, 'pairs': {}, 'symbols_covered': []} — `symbols_covered`
+        # reste vide même à 3 titres, donc ce n'est pas « moins de deux titres » :
+        # `portfolio_risk` est appelé ici sans `returns_by_symbol` (seul appelant de
+        # production), et risk_engine fait alors `correlation_matrix({})`. Le moteur
+        # fonctionne quand on le nourrit (mesuré : average 0.946 sur AAPL/KO). Une
+        # matrice vide SANS cause nommée se lisait comme « pas de corrélation » et
+        # laissait l'interface promettre un flux live qui ne l'alimentera jamais
+        # (invariant 8). Les corrélations MESURÉES sont servies par
+        # /api/portfolio/context, qui aligne de vraies séries de rendements.
+        if isinstance(risk.get('correlations'), dict) and not risk['correlations'].get('pairs'):
+            risk['correlations']['reason'] = (
+                'NON_IMPLÉMENTÉ sur /api/portfolio/team — cette route ne fournit '
+                'aucune série de rendements au moteur ; les corrélations mesurées '
+                'sont servies par /api/portfolio/context (vue Allocation)')
+            risk['correlations']['available'] = False
         # ── Enrichissement stress avec des données RÉELLES du scan (jamais inventées) ──
         # Secteur : réel (yfinance via le scan). Nasdaq : classification par secteur —
         # Technology + Communication Services = cœur tech/comm du NDX (hypothèse documentée,

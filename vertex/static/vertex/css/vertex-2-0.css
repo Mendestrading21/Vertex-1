@@ -1738,6 +1738,12 @@ html,body{max-width:100%;overflow-x:clip}
   display:flex;align-items:center}
 #vx-content[data-space="markets"] .vx-mk-macro .m-area svg{width:120px;height:56px;display:block}
 #vx-content[data-space="markets"] .vx-mk-macro .m-note{grid-column:1/3;font-size:11px;color:var(--vx-smoke);margin-top:2px}
+/* Pied de provenance du KPI macro : les 4 cartes du strip étaient les seules
+   de la vue sans date ni source (0 `.vx-update` mesuré le 06/09/2026), alors
+   que la courbe des taux juste dessous, bâtie sur le MÊME scan.macro, portait
+   « Il y a 16 min · yfinance Différé ». Discret, jamais une deuxième lumière. */
+#vx-content[data-space="markets"] .vx-mk-macro .m-foot{grid-column:1/3;font-size:10.5px;
+  color:var(--vx-text-muted);display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin-top:4px}
 #vx-content[data-space="markets"] .vx-mk-macro--flat{display:flex;flex-direction:column;gap:8px;justify-content:center}
 #vx-content[data-space="markets"] .vx-mk-macro--flat .mf-row{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
 #vx-content[data-space="markets"] .vx-mk-macro--flat .m-note{margin-top:auto}

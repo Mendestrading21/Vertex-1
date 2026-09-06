@@ -20,6 +20,7 @@ if not exist ".venv" (
 set DEMO=1
 set NO_IBKR=1
 set START_ON_IMPORT=0
-start "" cmd /c "timeout /t 5 >nul & start http://localhost:5002"
+REM  IPv4 explicite (voir Lancer_VERTEX.bat) : `localhost` peut resoudre en ::1.
+start "" cmd /c "timeout /t 5 >nul & start http://127.0.0.1:5002"
 ".venv\Scripts\python.exe" -m vertex
 pause

@@ -24,6 +24,27 @@ def test_horodatage_source_normalise_les_trois_formats_du_fil():
     assert np_.horodatage_source('hier') is None                                 # illisible : rien d'inventé
 
 
+def test_le_fuseau_declare_par_la_source_iso_n_est_plus_perdu():
+    """MESURE (2026-09-06) : `horodatage_source('2026-09-02T10:15:00Z')` — le
+    `<dc:date>` d'un communiqué BNS — rendait '2026-09-02T10:15', SANS le `Z`
+    pourtant déclaré par la source, quand la branche RFC 2822 rend bien
+    '…T07:00Z'. Deux flux également horodatés en UTC (BCE et BNS)
+    s'affichaient donc l'un marqué, l'autre non. Pire, '…T12:15:00+02:00'
+    rendait '2026-09-02T12:15' : l'heure locale servie sans marque, comme si
+    aucun fuseau n'avait été déclaré.
+
+    Règle conservée : ce que la source DÉCLARE est conservé (converti en UTC
+    comme le fait déjà la branche RFC 2822) ; ce qu'elle ne déclare pas n'est
+    jamais inventé."""
+    assert np_.horodatage_source('2026-09-02T10:15:00Z') == '2026-09-02T10:15Z'
+    assert np_.horodatage_source('2026-09-02T12:15:00+02:00') == '2026-09-02T10:15Z'
+    assert np_.horodatage_source('2026-09-02T08:15:00-02:00') == '2026-09-02T10:15Z'
+    assert np_.horodatage_source('2026-09-06T07:12+0000') == '2026-09-06T07:12Z'
+    #  Aucun fuseau déclaré → aucun suffixe supposé.
+    assert np_.horodatage_source('2026-09-06T07:12:30') == '2026-09-06T07:12'
+    assert np_.horodatage_source('2026-09-06 07:12') == '2026-09-06T07:12'
+
+
 def test_la_boucle_horodate_reception_et_publication_et_date_le_fil():
     src = _src('terminal.py')
     assert "_it['received_at'] = _recu" in src

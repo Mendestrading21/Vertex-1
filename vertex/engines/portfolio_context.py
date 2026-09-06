@@ -10,8 +10,12 @@ Règles d'honnêteté :
     V2 — `never_triggers_orders: true`, jamais un ordre ;
   - JAMAIS renforcer un perdant ; un gagnant n'est renforçable qu'APRÈS
     confirmation (liste V2) ; P&L inconnu → renforcement inconnu, pas autorisé ;
-  - sans cote : valorisation au COÛT, étiquetée ; sans stops déclarés : budget
-    de risque `available: false` (jamais estimé) ;
+  - sans cote : valorisation au COÛT, étiquetée ; une OPTION se valorise par la
+    marque du contrat × multiplicateur × quantité, à défaut par le capital
+    engagé — JAMAIS par la cote de son sous-jacent ; une ligne sans marque ni
+    coût déclaré est EXCLUE et nommée dans `unvalued_positions`, jamais
+    comptée 0 ; sans stops déclarés : budget de risque `available: false`
+    (jamais estimé) ;
   - fonction PURE, déterministe. Lecture seule, aucun ordre.
 """
 from __future__ import annotations
@@ -22,6 +26,21 @@ from vertex.portfolio.correlation import correlation_matrix
 def _profile():
     from vertex.strategy.constitution import load_profile
     return load_profile()
+
+
+def _num(x):
+    """Nombre exploitable, ou None. `False`/`True` ne sont pas des montants, et
+    une chaîne illisible ne devient jamais 0 — sinon l'absence redeviendrait un
+    zéro chiffré, ce que l'invariant 5 interdit."""
+    if isinstance(x, bool) or x is None:
+        return None
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return None
+    if v != v or v in (float('inf'), float('-inf')):
+        return None
+    return v
 
 
 def _aligned_returns(series_by_symbol, symbols):
@@ -74,7 +93,10 @@ def build(positions, quotes=None, sym=None, capital=None, profile=None, series_b
         return {'available': False,
                 'reason': 'aucune position réelle déclarée (desk/IBKR) — contexte portefeuille indisponible'}
 
-    valued_at_cost = 0
+    valued_at_market = 0        # cote réelle du titre, ou marque du contrat
+    valued_at_cost = 0          # action/ETF sans cote : repli sur le coût déclaré
+    valued_at_committed = 0     # option sans marque : repli sur le capital engagé
+    unvalued = []               # ni marque ni coût : EXCLUE et NOMMÉE, jamais 0
     by_sym = {}
     asset_values = {}
     asset_counts = {}
@@ -83,27 +105,82 @@ def build(positions, quotes=None, sym=None, capital=None, profile=None, series_b
         s = str(p.get('symbol') or p.get('sym') or '').upper()
         if not s:
             continue
-        qty = p.get('quantity') or 0
-        px = quotes.get(s)
-        if px is not None and qty:
-            val = qty * float(px)
-        else:
-            val = p.get('cost_basis') or 0.0
-            valued_at_cost += 1
+        qty = _num(p.get('quantity')) or 0.0
         asset_type = str(p.get('asset_type') or '').upper()
         if not asset_type:
             asset_type = 'UNCLASSIFIED'
             unclassified_assets += 1
+        px = _num(quotes.get(s))
+        #  Clé propriétaire du coût DÉCLARÉ, alignée sur vertex/positions/audit.py:18 :
+        #  le modèle canonique n'écrit jamais `cost_basis` sur une option, il écrit
+        #  `capital_committed` (vertex/positions/models.py:151). Lire la mauvaise clé
+        #  faisait tomber toute option à 0.
+        cost = _num(p.get('capital_committed') if asset_type == 'OPTION' else p.get('cost_basis'))
+        if cost is None:
+            cost = _num(p.get('cost_basis') if asset_type == 'OPTION' else p.get('capital_committed'))
+        if asset_type == 'OPTION':
+            #  MESURE (2026-09) : 7 contrats MSFT étaient valorisés 7 × 499,70 $ =
+            #  3 497,90 $ parce que `quotes` porte le SPOT DU SOUS-JACENT. Ce chiffre
+            #  n'est ni la prime (marque absente), ni le capital engagé (9 800 $), ni
+            #  le notionnel (349 800 $) : une cote d'action ne valorise pas un contrat.
+            #  Marque du contrat → mark × multiplicateur × quantité (même formule que
+            #  vertex/positions/calculator.py) ; sinon repli DIT sur le capital engagé.
+            #  Le spot du sous-jacent n'entre jamais dans cette branche.
+            mark = _num(p.get('mark'))
+            mult = _num(p.get('multiplier')) or 100.0
+            if mark is not None and qty:
+                val = mark * mult * qty
+                valued_at_market += 1
+            elif cost is not None:
+                val = cost
+                valued_at_committed += 1
+            else:
+                val = None
+        elif px is not None and qty:
+            val = qty * px
+            valued_at_market += 1
+        elif cost is not None:
+            val = cost
+            valued_at_cost += 1
+        else:
+            val = None
+        if val is None:
+            #  Ni cote/marque, ni coût déclaré : la position est EXCLUE du total, des
+            #  poids et du mix, et NOMMÉE. Mesure : une option à 50 000 $ engagés était
+            #  comptée 0 $ / 0 % pendant que la note affirmait « valorisée au coût ».
+            #  Absence et zéro doivent rester distincts (invariant 5).
+            unvalued.append({
+                'symbol': s, 'asset_type': asset_type,
+                'reason': ('option sans marque ni capital engagé déclaré — jamais '
+                           'valorisée par la cote du sous-jacent'
+                           if asset_type == 'OPTION'
+                           else 'ni cote réelle ni coût déclaré — jamais valorisée à zéro'),
+            })
+            continue
         asset_values[asset_type] = asset_values.get(asset_type, 0.0) + val
         asset_counts[asset_type] = asset_counts.get(asset_type, 0) + 1
-        e = by_sym.setdefault(s, {'value': 0.0, 'cost': 0.0, 'qty': 0.0})
+        e = by_sym.setdefault(s, {'value': 0.0, 'cost': 0.0, 'qty': 0.0,
+                                  'quotable_cost': 0.0, 'quotable_qty': 0.0,
+                                  'option_lines': 0})
         e['value'] += val
-        e['cost'] += p.get('cost_basis') or 0.0
-        e['qty'] += qty or 0.0
+        e['cost'] += cost or 0.0
+        e['qty'] += qty
+        if asset_type == 'OPTION':
+            e['option_lines'] += 1
+        else:
+            #  Seules ces lignes sont comparables à `quotes[symbole]` (prix par titre) :
+            #  le P&L du candidat ne doit jamais confronter un spot à un coût par contrat
+            #  (9 800 $ / 7 contrats = 1 400 $ contre un spot de 499,70 $ → −64 % inventé).
+            e['quotable_cost'] += cost or 0.0
+            e['quotable_qty'] += qty
 
     total = sum(e['value'] for e in by_sym.values())
     if total <= 0:
-        return {'available': False, 'reason': 'valeur totale nulle — poids incalculables'}
+        return {'available': False,
+                'reason': ('aucune position valorisable : %d position(s) sans marque ni coût '
+                           'déclaré — exclue(s) plutôt que comptée(s) 0' % len(unvalued)
+                           if unvalued else 'valeur totale nulle — poids incalculables'),
+                'unvalued_positions': unvalued}
     weights = {s: round(e['value'] / total * 100, 2) for s, e in by_sym.items()}
     asset_mix = {
         asset: {'value': round(value, 2), 'weight_pct': round(value / total * 100, 2),
@@ -147,13 +224,22 @@ def build(positions, quotes=None, sym=None, capital=None, profile=None, series_b
         s = str(sym).upper()
         held = s in by_sym
         weight = weights.get(s, 0.0)
-        pnl_pct = None
+        pnl_pct, pnl_note = None, None
         if held:
             e = by_sym[s]
-            px = quotes.get(s)
-            if px is not None and e['qty'] and e['cost']:
-                avg = e['cost'] / e['qty']
-                pnl_pct = round((float(px) / avg - 1) * 100, 2) if avg > 0 else None
+            px = _num(quotes.get(s))
+            #  `quotes[symbole]` est un prix PAR TITRE : il ne se compare qu'au coût
+            #  des lignes linéaires. Confronter un spot de 499,70 $ au coût par contrat
+            #  (9 800 $ / 7 = 1 400 $) rendrait un P&L de −64 % purement fabriqué : sur
+            #  un symbole porté par des options, le P&L reste INCONNU (None), et
+            #  `reinforcement_allowed` reste None — inconnu n'est pas autorisé.
+            if px is not None and e['quotable_qty'] and e['quotable_cost']:
+                avg = e['quotable_cost'] / e['quotable_qty']
+                pnl_pct = round((px / avg - 1) * 100, 2) if avg > 0 else None
+            if pnl_pct is None and e['option_lines']:
+                pnl_note = ('%d ligne(s) option sur ce symbole : le P&L exige la marque du '
+                            'contrat, la cote du sous-jacent ne le donne pas'
+                            % e['option_lines'])
         is_loser = (None if pnl_pct is None else bool(pnl_pct < 0)) if held else False
         if not held:
             reinforcement = 'NOT_HELD'
@@ -164,7 +250,7 @@ def build(positions, quotes=None, sym=None, capital=None, profile=None, series_b
         else:
             reinforcement = None            # P&L inconnu → inconnu, pas autorisé
         candidate = {'symbol': s, 'held': held, 'weight_pct': weight,
-                     'pnl_pct': pnl_pct, 'is_loser': is_loser,
+                     'pnl_pct': pnl_pct, 'pnl_note': pnl_note, 'is_loser': is_loser,
                      'reinforcement_allowed': reinforcement,
                      'reinforcement_conditions': list(confirmations),
                      'note': 'Jamais renforcer un perdant ; gagnant renforçable seulement après confirmation (Constitution V2).'}
@@ -210,6 +296,31 @@ def build(positions, quotes=None, sym=None, capital=None, profile=None, series_b
     else:
         correlation_context = {'available': False,
                                'reason': correlation_reason or 'données de corrélation non branchées'}
+
+    #  Périmètre de la valorisation, DIT plutôt que supposé. Chaque repli porte sa
+    #  raison : le lecteur doit pouvoir distinguer « valorisé au marché », « valorisé
+    #  au coût », « valorisé au capital engagé » et « non valorisable, exclu ».
+    #  Mesure d'origine : `valuation_note` valait null sur un total de 4 256,59 $ dont
+    #  4 168,52 $ venaient de contrats valorisés à la cote de leur sous-jacent.
+    valuation = {
+        'at_market': valued_at_market, 'at_cost': valued_at_cost,
+        'at_committed': valued_at_committed, 'unvalued': len(unvalued),
+        'total_positions': len(open_real), 'read_only': True,
+        'method': ('cote réelle du titre ; marque du contrat × multiplicateur × quantité '
+                   'pour une option ; à défaut coût déclaré (capital engagé pour une '
+                   'option) ; jamais la cote du sous-jacent pour un contrat'),
+    }
+    _notes = []
+    if valued_at_cost:
+        _notes.append('%d position(s) valorisée(s) au coût (cote absente) — jamais un prix inventé'
+                      % valued_at_cost)
+    if valued_at_committed:
+        _notes.append('%d option(s) valorisée(s) au capital engagé (marque du contrat absente ; '
+                      'la cote du sous-jacent ne valorise pas un contrat)' % valued_at_committed)
+    if unvalued:
+        _notes.append('%d position(s) exclue(s) du total et des poids (ni marque, ni coût '
+                      'déclaré) — jamais comptée(s) 0' % len(unvalued))
+    valuation_note = ' · '.join(_notes) or None
 
     from vertex.portfolio import historical_stress
     stress_test = historical_stress.assess(weights, series_by_symbol)
@@ -280,8 +391,9 @@ def build(positions, quotes=None, sym=None, capital=None, profile=None, series_b
         'asset_mix_note': ('%d position(s) sans type d’actif canonique — jamais classée(s) par défaut'
                            % unclassified_assets if unclassified_assets else None),
         'top_symbol': top_sym, 'top_weight_pct': weights[top_sym],
-        'valuation_note': ('%d position(s) valorisée(s) au coût (cote absente) — jamais un prix inventé'
-                           % valued_at_cost if valued_at_cost else None),
+        'valuation': valuation,
+        'valuation_note': valuation_note,
+        'unvalued_positions': unvalued,
         'candidate': candidate, 'sizing': sizing,
         'risk_budget': risk_budget,
         'correlations': correlation_context,

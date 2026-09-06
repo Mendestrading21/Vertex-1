@@ -69,4 +69,4 @@ def test_echantillons_copiables_et_etat_vide_honnete():
 
 def test_service_worker_bumpe_v152():
     body = terminal.app.test_client().get('/sw.js').get_data(as_text=True)
-    assert 'td-shell-v297' in body                   # changement visible → bump
+    assert 'td-shell-v299' in body                   # changement visible → bump

@@ -259,6 +259,125 @@ def test_scanner_route():
             scan_state['options_board'] = saved
 
 
+def test_scanner_route_calcule_la_probabilite_sur_la_forme_reelle_du_board():
+    """MESURE : `build_board` (legacy_engine.py:437) n'écrit AUCUNE clé 'spot'.
+    La route appelait `double_probability(spot=c.get('spot'))` SANS repli — seul
+    point d'appel du fichier dans ce cas — et 100 % des candidats des 4 univers
+    (LEAPS, TACTICAL, SWING, SWING_3_6M) étaient refusés avec le motif « entrée
+    invalide — cours absent », alors que le même processus servait 230,36 $ pour
+    NVDA au même instant sur /scenarios, /gex-radar et /chain.
+
+    L'ancienne assertion `double_prob is not None` était satisfaite par un DICT
+    DE REFUS : elle ne distinguait pas « calculé » de « refusé ». Ce banc part de
+    la forme RÉELLE du board (pas de 'spot', `spread`/`vol` au lieu de
+    `spread_pct`/`volume`) et exige un calcul, plus le lignage du cours."""
+    import terminal
+    from vertex.app.state import scan_state
+    reel = [{'sym': 'NVDA', 'type': 'CALL', 'bucket': 'long', 'exp': '2027-03-19',
+             'dte': 193, 'strike': 230.0, 'delta': 0.75, 'iv': 42.7, 'cost': 2860,
+             'oi': 4615, 'vol': 675, 'spread': 6.5, 'bid': 6.0, 'ask': 6.4,
+             'quality': 61, 'stale': False,
+             'liquidity_coverage': {'quoted_bid_ask': True, 'volume_present': True}}]
+    assert 'spot' not in reel[0], 'la forme réelle du board ne porte pas de cours'
+    saved_board = scan_state.get('options_board')
+    saved_detail = scan_state.get('detail')
+    scan_state['options_board'] = reel
+    scan_state['detail'] = {'NVDA': {'price': 230.36}}
+    try:
+        d = terminal.app.test_client().get('/api/options/scanner/LEAPS?sym=NVDA').get_json()
+        cand = d['candidates'][0]
+        dp = cand['double_prob']
+        assert dp['available'] is True, dp.get('reason')
+        assert 0.0 <= dp['probability'] <= 1.0
+        assert dp['status'] == 'ESTIMATED'
+        #  Le repli est NOMMÉ : le cours vient du scan, pas de la cotation du
+        #  contrat — sans ce lignage, le correctif recréerait une fausse précision.
+        assert cand['spot'] == 230.36
+        assert cand['spot_source'] == 'scan.detail.price'
+        #  Le spread mesuré du board réel est lu et JUGÉ (plus « indisponible »).
+        assert cand['spread_pct'] == 6.5 and cand['volume'] == 675
+        assert 'spread indisponible' not in cand['mandate_reasons']
+    finally:
+        if saved_board is None:
+            scan_state.pop('options_board', None)
+        else:
+            scan_state['options_board'] = saved_board
+        if saved_detail is None:
+            scan_state.pop('detail', None)
+        else:
+            scan_state['detail'] = saved_detail
+
+
+def test_scanner_sans_cours_nulle_part_refuse_honnetement():
+    """Contre-épreuve : quand NI le contrat NI le detail du scan ne portent de
+    cours, le refus « cours absent » redevient vrai et doit rester servi."""
+    import terminal
+    from vertex.app.state import scan_state
+    reel = [{'sym': 'ZZZ', 'type': 'CALL', 'exp': '2027-03-19', 'dte': 193,
+             'strike': 230.0, 'delta': 0.75, 'iv': 42.7, 'cost': 2860,
+             'oi': 4615, 'vol': 675, 'spread': 6.5, 'quality': 61}]
+    saved_board = scan_state.get('options_board')
+    saved_detail = scan_state.get('detail')
+    scan_state['options_board'] = reel
+    scan_state['detail'] = {}
+    try:
+        d = terminal.app.test_client().get('/api/options/scanner/LEAPS?sym=ZZZ').get_json()
+        cand = d['candidates'][0]
+        assert cand['spot'] is None and cand['spot_source'] is None
+        assert cand['double_prob']['available'] is False
+    finally:
+        if saved_board is None:
+            scan_state.pop('options_board', None)
+        else:
+            scan_state['options_board'] = saved_board
+        if saved_detail is None:
+            scan_state.pop('detail', None)
+        else:
+            scan_state['detail'] = saved_detail
+
+
+def test_volatilite_ne_fabrique_pas_un_iv_rank_depuis_la_structure_par_terme():
+    """MESURE : /api/options/volatility passait min/max des IV du board comme
+    couloir [low, high] à `volatility.iv_rank`, qui le documente « SUR 52 SEM. ».
+    Zéro historique n'entrait dans le calcul. NVDA, 3 contrats (36,0 / 41,5 /
+    42,7 %) : (0,415-0,36)/(0,427-0,36) = « IV rank 82 », régime ELEVEE, verdict
+    DEFAVORABLE. MSFT, 2 contrats d'IV quasi égales (33,0 et 32,7 %, écart
+    0,3 pt) : « IV rank 100 » PAR CONSTRUCTION (avec n=2 la médiane est le max),
+    avec `uncertainties` vide et confiance 0,6 — pendant que /api/options/
+    environment déclarait au même as_of « IV rank indisponible ».
+
+    Tant qu'aucune série d'IV historique n'est câblée, la carte doit dire
+    INCONNU et ne publier aucun chiffre d'IV rank."""
+    import json
+
+    import terminal
+    from vertex.app.state import scan_state
+
+    def contrat(strike, iv, dte):
+        return {'sym': 'NVDA', 'type': 'CALL', 'exp': '2027-03-19', 'dte': dte,
+                'strike': strike, 'iv': iv, 'oi': 1000, 'spread': 2.0,
+                'cost': 500, 'quality': 60}
+
+    saved_board = scan_state.get('options_board')
+    scan_state['options_board'] = [contrat(245, 36.0, 46), contrat(226, 41.5, 102),
+                                   contrat(230, 42.7, 193)]
+    try:
+        d = terminal.app.test_client().get('/api/options/volatility/NVDA').get_json()
+    finally:
+        if saved_board is None:
+            scan_state.pop('options_board', None)
+        else:
+            scan_state['options_board'] = saved_board
+    assert d['iv_rank'] is None
+    assert d['interpretation']['status'] == 'INCONNU'
+    brut = json.dumps(d, ensure_ascii=False)
+    assert 'IV rank 82' not in brut
+    assert 'ELEVEE' not in brut
+    #  La seule mention autorisée d'« IV rank » est la NOMINATION de son absence.
+    for phrase in ('IV rank 100', 'IV rank 8', 'IV rank 6'):
+        assert phrase not in brut, phrase
+
+
 def test_options_leaps_view_has_universe_scanner():
     """Gardien LOT 8c : la vue LEAPS expose le scanner par univers."""
     import terminal

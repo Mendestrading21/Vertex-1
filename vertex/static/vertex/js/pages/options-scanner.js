@@ -81,7 +81,13 @@
     function openCandidate(index) {
       var c = candidates[index]; if (!c || !window.VX || !VX.shell) return;
       var dp = c.double_prob;
-      var probability = (dp && dp.available) ? num(dp.probability * 100, 1) + ' % · estimation'
+      /* Lignage du cours : le board ne porte pas de `spot`, le serveur replie
+         sur le cours du scan (même source que /scenarios, /gex-radar, /chain).
+         Ce cours n'est PAS horodaté sur la cotation du contrat — le dire, sinon
+         le repli passerait pour une cotation du contrat. */
+      var spotSrc = (c.spot_source === 'scan.detail.price')
+        ? ' · cours du scan, pas de la cotation du contrat' : '';
+      var probability = (dp && dp.available) ? num(dp.probability * 100, 1) + ' % · estimation' + spotSrc
         : ('non disponible' + (dp && dp.reason ? ' · ' + dp.reason : ''));
       var mandate = c.mandate == null ? 'non disponible' : (c.hors_mandat ? 'Hors mandat' : 'Conforme');
       var body = '<div class="vx-section-stack">'

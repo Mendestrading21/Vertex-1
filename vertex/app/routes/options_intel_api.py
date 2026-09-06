@@ -325,8 +325,20 @@ def options_volatility(sym):
     ivs = sorted(c.get('iv') / 100.0 for c in contracts
                  if isinstance(c.get('iv'), (int, float)))
     cur_iv = ivs[len(ivs) // 2] if ivs else None
-    iv_low = min(ivs) if ivs else None
-    iv_high = max(ivs) if ivs else None
+    #  AUCUN COULOIR : `volatility.iv_rank` définit son couloir [low, high] SUR
+    #  52 SEMAINES. Passer min/max des IV du board revenait à lui donner
+    #  l'étendue TRANSVERSALE de quelques strikes au même instant — un artefact
+    #  de structure par terme / skew servi comme un IV rank historique. Mesuré
+    #  le 2026-09-06 : NVDA 3 contrats (36,0 / 41,5 / 42,7 %) →
+    #  (0,415-0,36)/(0,427-0,36) = « IV rank 82 » et verdict DEFAVORABLE ;
+    #  MSFT 2 contrats (33,0 et 32,7 %, écart 0,3 pt) → « IV rank 100 » par
+    #  construction (avec n=2 la médiane EST le max : 0 exception sur 1000
+    #  tirages), régime « ELEVEE », confiance 0,6, incertitudes vides. La carte
+    #  Environnement déclarait au même as_of « IV rank — non mesuré ».
+    #  Sans source d'historique d'IV câblée, l'absence se nomme :
+    #  `interpretation.interpret_volatility` rend déjà unknown('IV
+    #  rank/percentile indisponibles') quand rank et pctl manquent.
+    iv_low = iv_high = None
     # Série CANONIQUE du scan (LOT 4) — les formes legacy 'closes'/'history'
     # n'avaient aucun producteur et ne sont plus admises.
     from vertex.data import series as _series
@@ -336,7 +348,12 @@ def options_volatility(sym):
                                  iv_high=iv_high, closes=closes,
                                  source='SCAN', as_of=_as_of())
     return jsonify({'symbol': sym, 'contracts': len(contracts),
-                    'current_iv': cur_iv, 'interpretation': d})
+                    'current_iv': cur_iv,
+                    'iv_rank': None,
+                    'iv_rank_note': ('IV rank NON MESURÉ : aucune série d’IV historique n’est '
+                                     'câblée ici. L’étendue des IV du tableau décrit la structure '
+                                     'par terme et le skew du jour, pas un couloir 52 semaines.'),
+                    'interpretation': d})
 
 
 @bp.route('/api/options/scenarios/<sym>')
@@ -604,6 +621,7 @@ def api_options_scanner(universe):
     sym = (request.args.get('sym') or '').upper().strip() or None
     res = _hs.scan(scan_state.get('options_board') or [], universe, sym=sym)
     if res.get('available'):
+        _detail_all = scan_state.get('detail') or {}
         for c in res['candidates'][:5]:
             prem = (c.get('cost') / 100.0) if isinstance(c.get('cost'), (int, float)) else None
             #  Entrees MESUREES par candidat : le taux a SON echeance, et le
@@ -611,8 +629,24 @@ def api_options_scanner(universe):
             #  la probabilite de doublement etait surevaluee jusqu'a 20,9 %
             #  sur un titre distributeur — dans le sens optimiste.
             _sym_c = str(c.get('sym') or '').upper()
+            #  `build_board` (legacy_engine.py:437) n'ecrit AUCUNE cle 'spot' :
+            #  ce point d'appel etait le seul du fichier sans repli, et 100 %
+            #  des candidats des 4 univers (LEAPS, TACTICAL, SWING, SWING_3_6M)
+            #  etaient refuses pour « cours absent » alors que le meme processus
+            #  servait 230,36 $ pour NVDA au meme instant sur /scenarios (l.358),
+            #  /gex-radar (l.430) et /chain (l.104). Un defaut de cablage etait
+            #  presente a l'humain comme une absence de donnee de marche.
+            #  Le repli est NOMME dans la charge (`spot_source`) : le cours du
+            #  scan n'est pas horodate sur la cotation du contrat.
+            _spot = c.get('spot')
+            _spot_src = 'contrat' if _spot is not None else None
+            if _spot is None:
+                _spot = (_detail_all.get(_sym_c) or {}).get('price')
+                _spot_src = 'scan.detail.price' if _spot is not None else None
+            c['spot'] = _spot
+            c['spot_source'] = _spot_src
             c['double_prob'] = _dp.double_probability(
-                spot=c.get('spot'), strike=c.get('strike'), premium=prem,
+                spot=_spot, strike=c.get('strike'), premium=prem,
                 dte=c.get('dte'), iv=c.get('iv'), right=c.get('type') or 'CALL',
                 r=_entrees.taux(scan_state, c.get('dte')),
                 q=(_entrees.rendement_dividende(scan_state, _sym_c) or 0.0))

@@ -107,21 +107,43 @@
   };
   function paintChain(mine) {
     var meta = document.getElementById('vx-osym-chain-meta');
-    if (meta) meta.textContent = mine.length + ' contrat(s) · scan réel';
+    /* « scan réel » était inconditionnel : un lot dont des lignes portent
+       stale=true (IV recalculée depuis le prix, mid issu du dernier échange,
+       pas d'un bid/ask vivant) était estampillé comme une mesure. Le compte
+       des lignes indicatives est servi par le board, il se dit. */
+    var kStale = mine.filter(function (c) { return c && c.stale; }).length;
+    if (meta) meta.textContent = mine.length + ' contrat(s) · scan réel'
+      + (kStale ? ' · dont ' + kStale + ' hors séance (indicatif)' : '');
     var rows = mine.slice().sort(function (a, b) { return (b.quality || 0) - (a.quality || 0); }).map(function (c) {
       var cid = [c.sym, c.exp || '', c.strike != null ? c.strike : '', c.type === 'PUT' ? 'P' : 'C'].join('|');
+      /* Spread : le board RÉEL publie `spread` (96/96 contrats), `spread_pct`
+         est la clé du board de DÉMO (0/96 en réel). La colonne rendait donc
+         « — » — le marqueur d'ABSENCE — sur 100 % des lignes de tous les
+         titres, alors que la valeur était dans la même réponse JSON (KHC :
+         149,0 / 177,6 / 28,6 / 17,1 / 22,6 / 70,1 / 79,5 %), et le pied de
+         table promettait « spread ambre = liquidité coûteuse » sans qu'aucune
+         ligne ne puisse jamais s'allumer. Une valeur nulle des DEUX clés reste
+         « — » : l'absence honnête est préservée. */
+      var spr = (c.spread_pct != null) ? c.spread_pct : c.spread;
+      /* Marque de dégradation servie par le moteur (legacy_engine.py:386) et
+         jamais rendue : sans elle, une IV back-solvée et un mid issu du dernier
+         échange se lisaient au même rang typographique qu'une cotation. */
+      var indic = c.stale
+        ? ' title="Hors séance : IV recalculée depuis le prix et/ou mid issu du dernier échange — valeur indicative, pas une cotation"'
+        : '';
       var nom = esc(c.type || '') + ' ' + VXf.nd(c.strike) + (c.exp ? ' · ' + esc(String(c.exp).slice(0, 10)) : '');
       return '<tr>' +
         '<td data-label="Type"><span class="vx-badge" style="color:' + (c.type === 'PUT' ? VIOLET : 'var(--vx-text-secondary)') + '">' + esc(c.type || '') + '</span>' +
+        (c.stale ? '<span class="vx2-badge" data-state="stale" style="margin-left:.35rem"' + indic + '>Hors séance</span>' : '') +
         (c.why ? '<span class="vx-meta" style="display:block;font-size:11px;max-width:220px;white-space:normal">' + esc(c.why) + '</span>' : '') + '</td>' +
         '<td class="vx-num vx-mono">' + VXf.nd(c.strike) + '</td>' +
         '<td class="vx-mono" style="font-size:11.5px">' + esc(String(c.exp || '').slice(0, 10)) + '</td>' +
         '<td class="vx-num vx-mono">' + (c.dte != null ? c.dte + ' j' : '—') + '</td>' +
         '<td class="vx-num vx-mono">' + (c.delta != null ? VXf.num(c.delta, 2) : '—') + '</td>' +
-        '<td class="vx-num vx-mono">' + (c.iv != null ? VXf.num(c.iv, 1) + ' %' : '—') + '</td>' +
-        '<td class="vx-num vx-mono">' + (c.cost != null ? VXf.price(c.cost) + ' $' : '—') + '</td>' +
+        '<td class="vx-num vx-mono"' + indic + '>' + (c.iv != null ? VXf.num(c.iv, 1) + ' %' : '—') + '</td>' +
+        '<td class="vx-num vx-mono"' + indic + '>' + (c.cost != null ? VXf.price(c.cost) + ' $' : '—') + '</td>' +
         '<td class="vx-num vx-mono">' + (c.oi != null ? c.oi.toLocaleString('fr-FR') : '—') + '</td>' +
-        '<td class="vx-num vx-mono' + (c.spread_pct > 5 ? ' vx-warn' : '') + '">' + (c.spread_pct != null ? VXf.num(c.spread_pct, 1) + ' %' : '—') + '</td>' +
+        '<td class="vx-num vx-mono' + (spr > 5 ? ' vx-warn' : '') + '">' + (spr != null ? VXf.num(spr, 1) + ' %' : '—') + '</td>' +
         microBar(c.pop, ' %', BRAND, 'PoP') +
         microBar(c.quality, '', (c.quality >= 66 ? 'var(--vx-positive)' : c.quality >= 45 ? 'var(--vx-warning)' : 'var(--vx-negative)'), 'Qualité') +
         '<td data-label="Suivi"><button class="vx-btn vx-btn-sm vx-btn-ghost" data-cid="' + esc(cid) + '" data-cost="' + esc(c.cost) + '" aria-label="Suivre ' + esc(SYM) + ' ' + nom + '" onclick="window.__osymFollow(this)">Suivre</button></td></tr>';
@@ -130,7 +152,7 @@
       '<th scope="col">Type</th><th scope="col" class="vx-num">Strike</th><th scope="col">Échéance</th><th scope="col" class="vx-num">DTE</th><th scope="col" class="vx-num">Delta</th>' +
       '<th scope="col" class="vx-num">IV</th><th scope="col" class="vx-num">Coût</th><th scope="col" class="vx-num">OI</th><th scope="col" class="vx-num">Spread</th>' +
       '<th scope="col" class="vx-num" title="Probabilité de profit estimée">PoP (est.)</th><th scope="col" class="vx-num" aria-sort="descending">Qualité</th><th scope="col"><span class="vx2-sr-only">Suivi</span></th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
-      '<div class="vx-table-stamp"><span>Trié par qualité décroissante</span><span>spread ambre = liquidité coûteuse</span><span>le « pourquoi » du moteur s’affiche sous le type quand il est fourni</span></div>');
+      '<div class="vx-table-stamp"><span>Trié par qualité décroissante</span><span>spread ambre = liquidité coûteuse</span><span>« Hors séance » = valeur indicative, pas une cotation</span><span>le « pourquoi » du moteur s’affiche sous le type quand il est fourni</span></div>');
   }
 
   /* ── Volatilité : 4 graphiques ──────────────────────────────────── */

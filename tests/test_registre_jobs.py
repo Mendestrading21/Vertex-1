@@ -38,6 +38,7 @@ directions — marquer un job implémenté sans émetteur échoue, et poser un
 import importlib
 import pathlib
 import sys
+import time
 
 import pytest
 
@@ -219,3 +220,144 @@ def test_la_forme_a_trois_colonnes_reste_servie():
     #  du produit sont désormais déclarées.
     assert len(_reg._CANONICAL) == len(_reg._CANONICAL_4) == 31
     assert _reg.NON_IMPLEMENTES and 'NEWS_REFRESH' not in _reg.NON_IMPLEMENTES
+
+
+# ── Cadence dynamique : le registre ne recopie plus, il dérive ──────────────
+
+def test_la_cadence_macro_officielle_suit_son_proprietaire(monkeypatch):
+    """MESURE (processus isolé, comparaison sommeil réel / `interval_s` servi) :
+
+    ```text
+    env=None → boucle 21600 s | registre 21600 s | seuil SILENCIEUX 43200 s | OK
+    env=1440 → boucle 86400 s | registre 21600 s | seuil        43200 s | DÉRIVE
+    env=15   → boucle   900 s | registre 21600 s | seuil        43200 s | DÉRIVE
+    ```
+
+    `MACRO_OFFICIEL_REFRESH` est le seul job dont la cadence est une fonction
+    (`VERTEX_MACRO_OFFICIEL_MIN`, plancher 15 min, documentée dans
+    docs/VERTEX_DATA_COVERAGE.md). Le registre en recopiait un littéral : poser
+    la variable à 15 min laissait une boucle MORTE affichée « ACTIF » pendant
+    12 h au lieu de 30 min — un faux vert sur un verdict de santé — et
+    l'allonger à 24 h armait SILENCIEUX en permanence sur un job sain.
+    """
+    from vertex.services import macro_officiel as mo
+
+    monkeypatch.setenv('VERTEX_MACRO_OFFICIEL_MIN', '1440')
+    j = {x['name']: x for x in _reg.jobs()}['MACRO_OFFICIEL_REFRESH']
+    assert j['interval_s'] == mo.cadence_min() * 60 == 86400, (
+        'le registre recopie une cadence figee : le seuil SILENCIEUX (2x) '
+        'devient faux des que VERTEX_MACRO_OFFICIEL_MIN est pose')
+    monkeypatch.delenv('VERTEX_MACRO_OFFICIEL_MIN')
+    j = {x['name']: x for x in _reg.jobs()}['MACRO_OFFICIEL_REFRESH']
+    assert j['interval_s'] == 21600, 'le defaut doit rester concordant'
+
+
+# ── Une attente ne dure pas éternellement ──────────────────────────────────
+
+def _fige(job):
+    """Remet un job à l'état « jamais battu » et rend son état restauré après."""
+    memoire = dict(_reg._JOBS[job])
+    _reg._JOBS[job].update({'last_run': None, 'last_ok': None, 'runs': 0,
+                            'last_error': None, 'last_duration_ms': None})
+    return memoire
+
+
+def test_une_attente_qui_ne_finit_jamais_cesse_de_se_dire_en_attente():
+    """MESURE (instance sans TWS, deux relevés de /api/system/automations à 15
+    puis 16 min d'uptime) : `MARKET_RADAR_REFRESH`, cadence 240 s, affichait
+    `etat=EN_ATTENTE runs=0 age_s=None` — plus de 4x sa cadence sans un seul
+    battement, parce que son thread n'est créé que sous `if IBKR_ENABLED:`.
+
+    « En attente » veut dire « implémenté, pas encore passé depuis le
+    démarrage » : c'est vrai à chaque instant, et pourtant l'écran laisse
+    croire à une imminence qui ne viendra jamais. `SILENCIEUX` ne pouvait pas
+    prendre le relais — il exige un `last_run`. Une boucle morte au berceau
+    était donc indiscernable d'un démarrage récent, sur la carte dont la
+    fonction est précisément de dire ce qui tourne.
+    """
+    job = 'MARKET_RADAR_REFRESH'
+    memoire = _fige(job)
+    demarrage = _reg._DEMARRAGE
+    try:
+        interval = {x['name']: x for x in _reg.jobs()}[job]['interval_s']
+        assert interval, 'ce banc suppose un job cadencé'
+        #  Juste après le démarrage : l'attente est légitime.
+        _reg._DEMARRAGE = time.time()
+        assert {x['name']: x for x in _reg.jobs()}[job]['etat'] == 'EN_ATTENTE'
+        #  Passé 2x la cadence sans le moindre battement, ce n'est plus une
+        #  attente : la boucle n'a pas démarré, ou est morte avant son premier
+        #  passage. Même seuil que SILENCIEUX.
+        _reg._DEMARRAGE = time.time() - (2 * interval + 1)
+        etat = {x['name']: x for x in _reg.jobs()}[job]['etat']
+        assert etat == 'JAMAIS_DEMARRE', (
+            '%s n\'a jamais battu apres %g s (2x sa cadence de %g s) et se dit '
+            'encore « %s » : une boucle morte au berceau reste invisible'
+            % (job, 2 * interval + 1, interval, etat))
+    finally:
+        _reg._DEMARRAGE = demarrage
+        _reg._JOBS[job].update(memoire)
+
+
+def test_un_job_sur_evenement_reste_en_attente_meme_longtemps_apres():
+    """Contre-épreuve : `JAMAIS_DEMARRE` accuserait à tort un job qu'aucune
+    horloge ne cadence. `POSITION_REFRESH` (interval_s None) est déclenché par
+    /api/pos-quotes : ne pas être passé n'y est jamais une anomalie."""
+    job = 'POSITION_REFRESH'
+    memoire = _fige(job)
+    demarrage = _reg._DEMARRAGE
+    try:
+        _reg._DEMARRAGE = time.time() - 86400 * 30
+        assert {x['name']: x for x in _reg.jobs()}[job]['etat'] == 'EN_ATTENTE'
+    finally:
+        _reg._DEMARRAGE = demarrage
+        _reg._JOBS[job].update(memoire)
+
+
+# ── La diffusion des battements est bornée ──────────────────────────────────
+
+def test_un_battement_repete_ne_sature_pas_le_tampon_de_rejeu():
+    """MESURE (instance de contrôle, un seul onglet ouvert au repos, zéro
+    action utilisateur) : 23 battements POSITION_REFRESH en 35 s, soit un
+    toutes les 1,53 s — le battement est émis DANS le handler de
+    POST /api/pos-quotes, diffusé à tous les clients SSE, et le client rejoue
+    ses tâches sur n'importe quel canal, donc repostait. Composition du tampon
+    de rejeu (maxlen 200) au moment du rejeu : 200/200 événements `jobs`, dont
+    187 POSITION_REFRESH — plus aucun `market`, `positions` ni `alerts` ne
+    survivait, et un client qui se reconnecte rejouait 93 % de bruit.
+
+    Le battement lui-même reste émis (`runs`/`last_run` continuent de dire la
+    vérité) : c'est sa RÉPÉTITION à l'identique qui n'est plus diffusée.
+    """
+    from vertex.services.live_stream import BROKER
+
+    nom = 'TEST_BATTEMENT_REPETE'
+    q = BROKER.subscribe()
+    try:
+        for _ in range(20):
+            _reg.beat(nom, ok=True)
+        recus = []
+        while True:
+            try:
+                recus.append(q.get_nowait())
+            except Exception:  # noqa: BLE001 — file vide
+                break
+        assert len(recus) == 1, (
+            '20 battements identiques en moins de %g s ont produit %d '
+            'evenements : le tampon de rejeu se remplit de repetitions et les '
+            'vrais changements d\'etat en sortent'
+            % (_reg._DIFFUSION_MIN_S, len(recus)))
+        assert _reg._JOBS[nom]['runs'] == 20, (
+            'le registre doit continuer de compter TOUS les passages : borner '
+            'la diffusion ne doit pas rendre le registre muet')
+        #  Un CHANGEMENT de verdict passe toujours : c'est une information.
+        _reg.beat(nom, ok=False, error='boom')
+        assert q.get(timeout=2)['data'] == {'job': nom, 'ok': False}
+        #  Un battement déclenché par la requête d'un client décrit une action
+        #  DÉJÀ demandée : il s'enregistre, il ne s'annonce pas.
+        _reg.beat(nom, ok=True, diffuser=False)
+        assert q.empty(), 'diffuser=False publie quand même'
+        assert _reg._JOBS[nom]['runs'] == 22 and _reg._JOBS[nom]['last_ok'] is True
+    finally:
+        BROKER.unsubscribe(q)
+        _reg._JOBS.pop(nom, None)
+        _reg._DERNIERE_DIFFUSION.pop(nom, None)

@@ -16,6 +16,8 @@ sans prime exploitable → ignoré ; jamais de « whale/sweep » affirmé sans p
 """
 from __future__ import annotations
 
+from . import board_fields as _bf
+
 CONTRACT_MULTIPLIER = 100
 
 
@@ -43,7 +45,9 @@ def _premium_per_contract(c):
 
 
 def _vol(c):
-    return _num(c.get('vol')) if c.get('vol') is not None else _num(c.get('volume'))
+    #  Alias dupliqué ici auparavant : un seul propriétaire de la forme du board
+    #  (board_fields), sinon les lecteurs redivergent du producteur.
+    return _bf.volume(c)
 
 
 def analyze(contracts, *, symbol=None, top=8):

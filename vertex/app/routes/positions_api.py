@@ -15,6 +15,33 @@ from flask import Blueprint, jsonify, request
 
 from vertex.services import persist
 
+#: CE QUE VERTEX SAIT DE L'INVENTAIRE COURTIER : RIEN, ET PAR CONSTRUCTION.
+#:
+#: MESURE (6 sept. 2026, processus rejouant la configuration live : socket
+#: connectée, ticks temps réel frais) :
+#:
+#: ```text
+#: PREUVE LIVENESS  ibkr_connected=True  ibkr_live=True
+#: REPORT ibkr_online = False
+#: REPORT note        = IBKR hors ligne — positions locales conservées, …
+#: ```
+#:
+#: Le même processus affirmait donc « session IBKR vivante » sur /healthz et
+#: « IBKR hors ligne » ici. `ibkr_online=False` n'est pas un état de session
+#: mesuré : c'est un CHOIX de produit (IBKR = données de marché uniquement).
+#: Servir une absence volontaire sous la cause d'une panne réseau confond deux
+#: choses que l'invariant 5 exige de distinguer, et « aucune clôture
+#: automatique » laissait entendre qu'une reprise viendrait au retour d'IBKR —
+#: l'invariant 3 l'interdit définitivement. La cause servie est donc nommée
+#: pour ce qu'elle est ; aucune valeur ne change.
+_FRONTIERE_COURTIER = {
+    'broker_positions_read': False,
+    'boundary': 'MARKET_DATA_ONLY',
+    'note': ('Positions courtier jamais lues — frontière IBKR : données de '
+             'marché uniquement. Positions déclarées conservées, aucune '
+             'clôture automatique.'),
+}
+
 
 def make_blueprint(scan_state: dict, *, opt_job=None, ibkr_enabled=False) -> Blueprint:
     bp = Blueprint('positions_api', __name__)
@@ -91,9 +118,13 @@ def make_blueprint(scan_state: dict, *, opt_job=None, ibkr_enabled=False) -> Blu
         """Startup Position Report (§6) — détection/réconciliation."""
         from vertex.positions.detector import startup_position_report
         #  Plus de lecture de compte : le rapport ne detecte plus de cloture
-        #  par disparition chez le courtier (ibkr_online=False, fige).
-        return jsonify(startup_position_report(_desk_blob(),
-                                               ibkr_online=False))
+        #  par disparition chez le courtier. La route est PROPRIETAIRE de ce
+        #  choix, donc elle en nomme la cause (cf. `_FRONTIERE_COURTIER`) au
+        #  lieu de laisser servir « IBKR hors ligne », mesure contredite par
+        #  le meme processus.
+        rapport = startup_position_report(_desk_blob(), ibkr_online=False)
+        rapport.update(_FRONTIERE_COURTIER)
+        return jsonify(rapport)
 
     @bp.route('/api/positions/audit')
     def positions_audit():
@@ -111,7 +142,9 @@ def make_blueprint(scan_state: dict, *, opt_job=None, ibkr_enabled=False) -> Blu
         #  rend l'etat honnete « courtier non lu », jamais un faux accord.
         pos = load_positions(_desk_blob())
         local = [p for p in pos if p['source'] != 'IBKR']
-        return jsonify(reconcile(local, [], ibkr_online=False))
+        rapport = reconcile(local, [], ibkr_online=False)
+        rapport.update(_FRONTIERE_COURTIER)
+        return jsonify(rapport)
 
     @bp.route('/api/portfolio/stress')
     def portfolio_stress():

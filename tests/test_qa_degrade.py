@@ -8,11 +8,17 @@ défaut apparaisse. C'est ce qui rend le gardien rapide **et** probant.
 ## Ce que la mesure a établi sur le produit
 
 ```text
-18 surfaces (8 espaces + 10 API)
+22 surfaces (12 espaces + 10 API)   ← relevé du 6 sept. 2026, instance QA
  0  fuite de secret          0  verbe d'ordre servi
  0  anomalie de fraicheur    0  fabrication sur un ticker inexistant
  0  erreur JS cliente        mode demo declare
 ```
+
+Ce relevé disait « 18 surfaces (8 espaces + 10 API) » alors que l'instrument
+en énumère 22 : la liste des espaces est dérivée de la navigation du produit
+(`PRIMARY_NAV`), donc elle grandit avec lui pendant que le chiffre recopié ici
+reste figé. Un compte rendu de couverture qui se périme tout seul est le
+premier signe qu'une garde a cessé de mesurer.
 
 Le comportement sur symbole inconnu mérite d'être cité, parce que c'est
 exactement ce que la mission demande et qu'il est rare : `verdict = null`,
@@ -46,7 +52,17 @@ if str(RACINE) not in sys.path:
 
 from tools.mesures import mesurer_qa_degrade as _mes  # noqa: E402
 
-BASE = 'http://127.0.0.1:5002'
+#  L'ADRESSE N'EST PLUS REFIGÉE ICI. Elle l'était (`http://127.0.0.1:5002`)
+#  alors que l'instrument lit désormais `VERTEX_MESURE_BASE`, exactement comme
+#  test_qa_espaces / test_couche_visuelle / test_regles_mortes qui lisent tous
+#  `_mes.BASE_DEFAUT`. MESURE du défaut :
+#      pytest -q -rs tests/test_qa_degrade.py                      → 9 passed, 1 skipped
+#      VERTEX_MESURE_BASE=…:5003 pytest -q -rs tests/…             → 9 passed, 1 skipped
+#  La variable était ignorée : sur la seule instance mesurable de la machine
+#  (QA, sans code d'accès), le gardien continuait de dormir — y compris sous le
+#  job CI que le dépôt prépare, qui pose pourtant cette variable sur 5003.
+#  Le défaut sans variable reste 5002 : aucun poste existant ne change.
+BASE = _mes.BASE_DEFAUT
 
 
 def _serveur_repond():
@@ -195,3 +211,35 @@ def test_le_produit_servi_ne_fuit_rien_et_ne_sait_pas_passer_d_ordre():
     assert r['erreurs_client'] == 0, (
         '/api/client-log n\'est pas propre : %s' % r['detail_erreurs_client'])
     assert not [k for k, v in r['statuts'].items() if v != 200], r['statuts']
+
+
+def test_le_banc_vise_l_instance_que_l_instrument_vise(monkeypatch):
+    """Le gardien ne refige plus son adresse — c'est ce qui l'endormait.
+
+    MESURE (6 sept. 2026) : l'instance de travail est verrouillée par
+    `VERTEX_CODE` (`/api/live/status` → `{"error":"auth"}`), donc le contrôle
+    produit se sautait, à juste titre. Mais en pointant `VERTEX_MESURE_BASE`
+    sur l'instance QA ouverte, le résultat était RIGOUREUSEMENT identique —
+    `9 passed, 1 skipped`, même raison — alors qu'à la main l'instrument y
+    mesure 22 surfaces sans une seule anomalie. Le skip ne disait donc pas la
+    vérité sur sa cause : la mesure était possible, l'adresse était figée.
+
+    Ce banc-ci ne mesure rien du produit : il vérifie que le contrôle qui, lui,
+    le mesure, regarde bien la même instance que son instrument.
+    """
+    import importlib
+
+    assert BASE == _mes.BASE_DEFAUT, (
+        'l’adresse du banc est refigée : le contrôle produit dormira sur toute '
+        'machine dont l’instance mesurable n’est pas celle par défaut')
+    try:
+        monkeypatch.setenv('VERTEX_MESURE_BASE', 'http://127.0.0.1:5003')
+        assert importlib.reload(_mes).BASE_DEFAUT == 'http://127.0.0.1:5003', (
+            'l’instrument ignore VERTEX_MESURE_BASE, contrairement à ses trois '
+            'modules frères')
+        monkeypatch.delenv('VERTEX_MESURE_BASE')
+        assert importlib.reload(_mes).BASE_DEFAUT == 'http://127.0.0.1:5002', (
+            'le défaut a changé : un poste existant se met à mesurer une autre '
+            'instance sans l’avoir demandé')
+    finally:
+        importlib.reload(_mes)

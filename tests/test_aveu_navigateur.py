@@ -51,12 +51,46 @@ OUTILS = RACINE / "tools" / "mesures"
 #: Les instruments qui ont besoin d'un navigateur. Liste DERIVEE du code, pas
 #: recopiee : une liste ecrite a la main rate le cinquieme outil.
 def _outils_navigateur():
+    """Les outils qui PILOTENT un navigateur — détectés sur le CODE, pas sur le
+    texte.
+
+    Le prédicat cherchait `'sync_playwright' in src or 'mesurer_couche_visuelle'
+    in src`, donc dans les commentaires aussi. Mesuré le 2026-09-06 : un
+    commentaire ajouté à `mesurer_qa_degrade.py` (outil purement HTTP) citait le
+    nom `mesurer_couche_visuelle` pour expliquer une variable d'environnement —
+    et le banc a exigé de lui l'aveu navigateur, code de sortie 3 compris, qu'il
+    n'a aucune raison de porter. Un gardien qui se déclenche sur une phrase
+    apprend à ne plus écrire de phrases.
+
+    On lit donc l'AST : un import réel de `sync_playwright`/`playwright` ou du
+    module `mesurer_couche_visuelle`, ou un usage de ces noms dans le code.
+    """
     trouves = []
     for f in sorted(OUTILS.glob('*.py')):
         src = f.read_text(encoding='utf-8')
         if 'def main(' not in src:
             continue
-        if 'sync_playwright' in src or 'mesurer_couche_visuelle' in src:
+        try:
+            arbre = ast.parse(src)
+        except SyntaxError:                       # un outil illisible n'est pas un outil navigateur
+            continue
+        noms = set()
+        for n in ast.walk(arbre):
+            if isinstance(n, ast.Import):
+                for al in n.names:
+                    noms.add(al.name)
+                    noms.add(al.asname or '')
+            elif isinstance(n, ast.ImportFrom):
+                noms.add(n.module or '')
+                for al in n.names:
+                    noms.add(al.name)
+                    noms.add(al.asname or '')
+            elif isinstance(n, ast.Name):
+                noms.add(n.id)
+            elif isinstance(n, ast.Attribute):
+                noms.add(n.attr)
+        pilote = any('playwright' in x or 'mesurer_couche_visuelle' in x for x in noms if x)
+        if pilote:
             trouves.append(f)
     return trouves
 

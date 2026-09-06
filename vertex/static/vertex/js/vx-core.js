@@ -70,6 +70,50 @@
       const d = (ts instanceof Date) ? ts : new Date(typeof ts === 'number' && ts < 1e12 ? ts * 1000 : ts);
       return isNaN(d) ? '' : d.toLocaleString('fr-FR');
     },
+    /* ── Horodatage de PUBLICATION servi par une source ────────────────────
+       Mesure du 06/09/2026 : `/news-feed` sert `published_at` en UTC
+       (yfinance : '2026-09-06T13:05:00Z') et `/api/macro/officiel` pose le
+       `Z` volontairement (verrouillé par tests/test_communiques_officiels.py).
+       Les deux pages coupaient la chaîne (regex `(\d{2}:\d{2})` côté Briefing,
+       `.slice(0,16)` côté Marchés) : le fuseau était DÉTRUIT et la date PERDUE.
+       Résultat mesuré : une dépêche de 12 min affichée « 13:05 » face à une
+       horloge lecteur à 15:17 — lue vieille de 2 h 12, au milieu de tampons
+       relatifs (« Il y a 23 min ») ; à New York (UTC−4) la même ligne annonce
+       une publication ~3 h 48 dans le FUTUR de l'horloge du lecteur.
+       Règles (invariant 6 : une valeur critique garde son unité — le fuseau
+       EST l'unité d'un horodatage) :
+         · fuseau déclaré (`Z` ou `±HH:MM`) → instant converti dans le fuseau
+           du LECTEUR, grammaire de la page (`ago`) ou date complète ;
+         · fuseau absent → date ET heure complètes, telles que servies, avec la
+           marque « fuseau n/d » : on n'invente pas un fuseau (même règle que
+           `news_plus.horodatage_source`), mais on ne laisse plus l'heure se
+           faire passer pour locale ;
+         · absent/illisible → '' : l'appelant choisit son libellé d'absence. */
+    _hasTz(s) { return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(String(s || '').trim()); },
+    instantSource(iso, opts) {
+      const s = String(iso === null || iso === undefined ? '' : iso).trim();
+      if (!s) return '';
+      const style = (opts && opts.style) || 'date';
+      if (VX.fmt._hasTz(s)) {
+        const d = new Date(s);
+        if (isNaN(d)) return s;                       // illisible : jamais réécrit
+        return style === 'ago' ? VX.fmt.ago(d)
+          : d.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      }
+      const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}:\d{2}))?/.exec(s);
+      if (!m) return s + ' (fuseau n/d)';
+      return m[3] + '/' + m[2] + '/' + m[1] + (m[4] ? ' ' + m[4] : '') + ' (fuseau n/d)';
+    },
+    /* Phrase d'info-bulle qui accompagne `instantSource` : dit la chaîne
+       BRUTE de la source et si l'heure a été convertie. Sans elle, « (fuseau
+       n/d) » serait un sigle de plus ; avec elle, le lecteur sait pourquoi. */
+    instantSourceNote(iso) {
+      const s = String(iso === null || iso === undefined ? '' : iso).trim();
+      if (!s) return 'Aucun horodatage de publication servi par la source.';
+      return VX.fmt._hasTz(s)
+        ? 'Publié ' + s + ' — converti dans votre fuseau'
+        : 'Publié ' + s + ' — fuseau non déclaré par la source : heure NON convertie';
+    },
   };
 
   /* ── UpdateIndicator (§38) ───────────────────────────────────────────

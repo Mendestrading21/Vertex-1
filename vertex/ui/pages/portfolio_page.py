@@ -100,6 +100,11 @@ async function quotesFor(pos){
     const r=await fetch('/api/pos-quotes',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({positions:body})});
     const d=await r.json();window.__pfLive=!!d.live;
+    /* `fallback_used` est servi par /api/pos-quotes et n'était lu NULLE PART
+       (constat 27) : le repli ACTION ne pose pas `delayed` sur la cote, si
+       bien qu'un portefeuille valorisé au prix de scan s'annonçait
+       « marques live/desk ». Un témoin de plus, aucun calcul de plus. */
+    window.__pfFallback=!!d.fallback_used;
     //  L'instant ou la donnee EST ARRIVEE, pas celui ou on la dessine.
     //  Les pieds de carte affichaient `Date.now()` : ils promettaient
     //  « mis a jour maintenant » a chaque re-rendu, y compris dix minutes
@@ -112,7 +117,21 @@ async function quotesFor(pos){
       (t.right||'').toUpperCase()].join('|');
       if(res[key])byId[t.id]=res[key];});
     return byId;
-  }catch(e){return{};}
+  }catch(e){
+    /* Rien mesuré : on efface les témoins au lieu de laisser ceux de l'appel
+       précédent parler pour celui-ci (un état « live » périmé est un état faux). */
+    window.__pfLive=null;window.__pfFallback=null;return{};}
+}
+/* Cause de l'ABSENCE de marque — mesurée, jamais devinée.
+   Constat 25 du 06/09/2026 : la tuile P&L écrivait « IBKR hors ligne » en dur
+   dans la branche `pl===null`, sans jamais tester l'état du courtier. Repro
+   avec socket vivante (`live:true`, `ibkr_configure:true`, contrats absents du
+   board) : l'écran envoyait vérifier TWS alors que la vraie cause était
+   « contrat non coté ». `window.__pfLive` est posé par quotesFor() AVANT tout
+   rendu ; `null` = non mesuré, et on se tait alors sur le courtier. */
+function pfCauseMarques(sansMarque){
+  const base=sansMarque>0?(sansMarque+' position(s) sans marque'):'marques indisponibles';
+  return base+(window.__pfLive===false?' · IBKR hors ligne':'');
 }
 function enrich(pos,quotes){
   /* Schéma desk : t.cost = TOTAL investi. Cotes serveur : spot (actions,
@@ -373,13 +392,26 @@ function renderSummary(rich){
   const tile=(label,val,sub,tone)=>`<div class="vx-stat" data-tone="${tone||''}">
     <div class="vx-stat-k">${label}</div><div class="vx-stat-v" style="font-size:19px">${val}</div>
     ${sub?`<div class="vx-stat-sub">${sub}</div>`:''}</div>`;
+  /* Trois causes DISTINCTES d'un P&L absent (invariant 5) : marque manquante,
+     coût déclaré nul, panne courtier. La ligne 382 les fusionnait toutes dans
+     « IBKR hors ligne » — un fait sur le courtier que la page n'avait jamais
+     mesuré. Vocabulaire déjà employé par pfCommandStrip (« marques indispo. »). */
+  const sansMarque=rich.length-marked.length;
+  const plSub=sansMarque>0?pfCauseMarques(sansMarque)
+             :(!invested?'coût déclaré nul — aucun pourcentage calculable':pfCauseMarques(0));
+  /* `delayed` seul ne suffit pas : le repli ACTION ne le porte pas (constat 27).
+     `window.__pfFallback` vient du `fallback_used` servi par la route. */
+  const differe=rich.some(t=>t.delayed)||window.__pfFallback===true;
+  const marqueLib=differe?'marques différées (scan)'
+                 :(window.__pfLive===true?'marques live/desk'
+                   :window.__pfLive===false?'marques desk — IBKR hors ligne':'marques de provenance non mesurée');
   host.innerHTML=`<div class="vx-card vx-col-12 vx-card--premium">
     <div class="vx-scorecard" style="grid-template-columns:${gauge?'auto minmax(0,1fr)':'minmax(0,1fr)'}">
       ${gauge?`<div class="vx-gaugecluster" style="flex-direction:column">${gauge}</div>`:''}
       <div class="vx-scorecard-side">
         <div class="vx-statrow">
-          ${tile('Valeur',value!==null?VX.fmt.price(value):VX.fmt.price(invested),value!==null?(rich.some(t=>t.delayed)?'marques différées (scan)':'marques live/desk'):'au coût (marques indisponibles)')}
-          ${tile('P&L latent',pl!==null?((pl>=0?'+':'')+VX.fmt.price(pl)):'n/d',pl!==null?VX.fmt.pct(pl/invested*100,1)+(rich.some(t=>t.delayed)?' · différé':''):'IBKR hors ligne',pl>0?'pos':pl<0?'neg':'')}
+          ${tile('Valeur',value!==null?VX.fmt.price(value):VX.fmt.price(invested),value!==null?marqueLib:'au coût ('+pfCauseMarques(sansMarque)+')')}
+          ${tile('P&L latent',pl!==null?((pl>=0?'+':'')+VX.fmt.price(pl)):'n/d',pl!==null?VX.fmt.pct(pl/invested*100,1)+(differe?' · différé':''):plSub,pl>0?'pos':pl<0?'neg':'')}
           ${tile('Équipe actions',stocks.length+' / 10',stocks.length>=10?'complet — remplacement obligatoire':'places disponibles')}
           ${tile('Options tactiques',opts.length+' / 3','CALLS '+opts.filter(t=>t.type==='CALL').length+' · PUTS '+opts.filter(t=>t.type==='PUT').length+' / 1 max')}
         </div>
@@ -478,7 +510,7 @@ async function renderTeam(){
   })();
   ($('pf-contrib-body')||{}).innerHTML=withVal.length
     ?divBars(withVal.map(t=>({name:(t.sym+(t.type!=='STK'?' '+t.type:'')),val:(t.value-t.invested)})),{fmt:_pfx})
-    :'<div class="vx-meta">Marques indisponibles (IBKR hors ligne) — aucun P&L affiché plutôt qu’un chiffre inventé.</div>';
+    :'<div class="vx-meta">'+pfCauseMarques(rich.filter(t=>t.value==null).length)+' — aucun P&L affiché plutôt qu’un chiffre inventé.</div>';
   ($('pf-team-cols')||{}).innerHTML=Object.entries(roles).map(([role,list])=>`
     <section class="vx-card vx-mb3" aria-label="${role}">
       <div class="vx-card-header"><span class="vx-card-title">${role}</span>
@@ -751,7 +783,7 @@ async function renderPerformance(){
       render:(cv)=>VXCharts.bars(cv,withAbs.map(t=>t.sym),withAbs.map(t=>Math.round(t.plAbs)),
         {horizontal:true,colors:withAbs.map(t=>t.plAbs>=0?VXCharts.colors.positive:VXCharts.colors.negative),
          yFmt:(v)=>VX.fmt.price(v)})});
-  }else{emptyCard('pf-perf-contrib','Contribution indisponible — aucune marque (IBKR hors ligne).');}
+  }else{emptyCard('pf-perf-contrib','Contribution indisponible — '+pfCauseMarques(rich.filter(t=>t.plAbs==null).length)+'.');}
 }
 
 /* ═══ OPTIONS COMMAND CENTER (§19 — inchangé, refonte dédiée PR n°7) ═══ */
@@ -792,7 +824,7 @@ async function renderOptions(){
       ${H('CALLS ouverts',calls.length,'direction principale (~90 %)')}
       ${H('PUTS tactiques',puts.length+' / 1',puts.length>1?'PLAFOND DÉPASSÉ':'rares, jamais « parce que ça baisse »',puts.length>1?'vx-neg':'')}
       ${H('Capital engagé',VX.fmt.price(engaged),'coût total déclaré')}
-      ${H('P&L options',plTot!==null?VX.fmt.price(plTot):'n/d',plTot!==null?VX.fmt.pct(plTot/engaged*100,1)+(rich.some(t=>t.delayed)?' · différé':''):'marques indisponibles (IBKR hors ligne)',plTot>0?'vx-pos':plTot<0?'vx-neg':'vx-muted')}
+      ${H('P&L options',plTot!==null?VX.fmt.price(plTot):'n/d',plTot!==null?VX.fmt.pct(plTot/engaged*100,1)+((rich.some(t=>t.delayed)||window.__pfFallback===true)?' · différé':''):pfCauseMarques(rich.length-marked.length),plTot>0?'vx-pos':plTot<0?'vx-neg':'vx-muted')}
     </div>
     <div class="vx-grid vx-mb3">
       ${H('DTE moyen',dteAvg!==null?dteAvg+' j':'n/d','constitution : 60-270, préf. 90-210')}
@@ -1118,7 +1150,18 @@ async function renderWatchlist(){
     <section class="vx-card vx-mb3"><div class="vx-card-header"><span class="vx-card-title">Suivis actifs (setups)</span>
       <span class="vx-chart-question">Stop · entrée · objectif — le plan de chaque setup, visuel</span></div>
       ${follows.length?follows.map(r=>{
-        const e=+r.entry_spot,s=+r.stop,t=+r.tgt;
+        /* `+null`, `+''` et `+false` valent 0, et `isFinite(0)` vaut true : la
+           garde laissait passer une ABSENCE et la barre dessinait un plan
+           « 0,00 STOP · 361,19 ENTRÉE · 0,00 OBJECTIF » — une perte de 100 %
+           présentée comme le plan de risque du setup. Mesuré le 06/09/2026 :
+           le bouton « Suivre → » d'Analyse crée un suivi sans aucun niveau
+           (vx-entities.js : entry_spot/stop/tgt = null par défaut), donc ce
+           rendu est le cas NOMINAL, pas un cas de bord. Coercition stricte :
+           une absence devient NaN, la garde tombe, et le repli honnête déjà
+           écrit plus bas (VX.fmt.nd → « — ») s'affiche. Un vrai 0 reste
+           affiché — absence et zéro redeviennent distincts (invariant 5). */
+        const fin=x=>(x===null||x===undefined||x===''||typeof x==='boolean')?NaN:+x;
+        const e=fin(r.entry_spot),s=fin(r.stop),t=fin(r.tgt);
         let range='';
         if([e,s,t].every(x=>isFinite(x))){
           const lo=Math.min(e,s,t),hi=Math.max(e,s,t),span=(hi-lo)||1,pad=span*.08,a=lo-pad,rng=(hi+pad*2)-a;
@@ -1133,7 +1176,7 @@ async function renderWatchlist(){
         return `<div class="vx-flex" style="padding:9px 0;border-bottom:1px dashed var(--vx-border-soft);gap:12px;align-items:center">
         <button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${r.sym}">${r.sym}</button>
         <span class="vx-badge vx-badge-entity" data-kind="follow">${r.kind}</span>
-        ${range||`<span class="vx-grow vx-mono vx-meta">entrée ${VX.fmt.nd(r.entry_spot)} · stop ${VX.fmt.nd(r.stop)} · objectif ${VX.fmt.nd(r.tgt)}</span>`}
+        ${range||`<span class="vx-grow vx-mono vx-meta">${[e,s,t].every(x=>!isFinite(x))?'plan non défini — aucun niveau saisi à la création du suivi':`entrée ${VX.fmt.nd(r.entry_spot)} · stop ${VX.fmt.nd(r.stop)} · objectif ${VX.fmt.nd(r.tgt)}`}</span>`}
         <span class="vx-meta">depuis ${r.followed||'—'}</span>
         <button class="vx-btn vx-btn-sm vx-btn-danger" data-unfollow="${r.sym}">Retirer</button></div>`;}).join('')
         :VX.states.empty('Aucun suivi actif — créez un suivi depuis une analyse (entrée/stop/objectif).')}

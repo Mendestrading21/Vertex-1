@@ -43,7 +43,12 @@ def test_surpoids_hhi_secteur_et_beta_pondere():
     r = portfolio_risk(_snap(), _Profil())
     assert r['overweight'] == {'BIG': 66.67}                 # > max 15 %
     assert any('BIG: poids 66.67%' in w for w in r['warnings'])
-    assert r['hhi'] == 0.4623                                # (0.6667² + 0.1333²)
+    #  HHI du COMPARTIMENT ACTIONS : (66.67/80)² + (13.33/80)². L'ancien
+    #  0,4623 divisait par l'équité totale (cash au dénominateur) tout en
+    #  retirant le cash du numérateur — voir test_hhi_… ci-dessous.
+    assert r['hhi'] == 0.7223
+    assert r['invested_pct'] == 80.0
+    assert r['hhi_total_equity'] == 0.4623                   # (0.6667² + 0.1333²)
     assert r['sector_weights'] == {'Tech': 80.0}
     assert any('secteur Tech à 80.0%' in w for w in r['warnings'])   # > 40 %
     assert r['beta'] == 1.07     # 0.6667×1.5 + 0.1333×0.5 (pondéré par poids)
@@ -103,7 +108,49 @@ def test_sans_options_greeks_defauts_none():
 def test_contrat_du_rapport_de_risque():
     r = portfolio_risk(_snap(), _Profil())
     assert set(r) == {'provenance', 'as_of', 'equity', 'weights',
-                      'sector_weights', 'hhi', 'beta', 'beta_coverage', 'correlations',
+                      'sector_weights', 'hhi', 'hhi_basis', 'invested_pct',
+                      'hhi_total_equity', 'beta', 'beta_coverage', 'correlations',
                       'drawdown_pct', 'per_stock_pl_pct', 'options_exposure',
                       'overweight', 'no_new_risk', 'warnings'}
     assert r['provenance'] == 'REAL' and r['equity'] == 1500.0
+    #  Une valeur critique porte son périmètre : deux « HHI » cohabitent dans
+    #  le produit (celui-ci et celui de portfolio_context, toutes lignes).
+    assert 'cash exclu' in r['hhi_basis']
+
+
+# ── Constat 24 : un HHI dont la base n'était ni les actions ni le total ──────
+
+def test_hhi_du_compartiment_actions_ne_repeint_plus_un_desk_cash_en_vert():
+    """MESURE : `POST /api/portfolio/team` avec 1 action KO (88,07 $) et
+    25 000 $ de cash rendait `hhi 0.0` — la jauge lisait « bien dispersé » en
+    bande verte sur un compartiment actions composé d'UN SEUL titre. Le HHI
+    du compartiment vaut 1,0 (concentration maximale), et `invested_pct` dit
+    que 0,35 % du capital seulement est investi."""
+    snap = PortfolioSnapshot(positions=[
+        Position('KO', 1, avg_cost=88.07, last_price=88.07, sector='Consumer Defensive'),
+    ], cash=25000.0, provenance='REAL')
+    r = portfolio_risk(snap, _Profil())
+    assert r['equity'] == 25088.07
+    assert r['hhi'] == 1.0                    # mesuré à 0.0 avant correction
+    assert r['invested_pct'] == 0.35
+    assert r['hhi_total_equity'] == 0.0       # l'ancien chiffre, sous son vrai nom
+
+
+def test_hhi_ne_contredit_plus_le_surpoids_de_la_meme_reponse():
+    """MESURE : une action à 50 % de l'équité rendait `hhi 0.25` (jauge 25 →
+    vert « bien dispersé ») ALORS QUE la même réponse levait
+    `overweight ['AAA']` (50 % > plafond 15 %). Un seul titre = 1,0."""
+    snap = PortfolioSnapshot(positions=[Position('AAA', 1, last_price=100.0)],
+                             cash=100.0, provenance='REAL')
+    r = portfolio_risk(snap, _Profil())
+    assert r['overweight'] == {'AAA': 50.0}
+    assert r['hhi'] == 1.0                    # ≥ 0.66 : « très concentré »
+
+
+def test_hhi_sans_aucune_action_est_inconnu_jamais_zero():
+    """Sans compartiment actions, la concentration n'est pas « dispersée » :
+    elle est INCONNUE. La page rend déjà `null` → « donnée indisponible »."""
+    snap = PortfolioSnapshot(positions=[], cash=1000.0, provenance='REAL')
+    r = portfolio_risk(snap, _Profil())
+    assert r['hhi'] is None
+    assert r['invested_pct'] == 0

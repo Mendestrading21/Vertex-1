@@ -64,6 +64,11 @@ MARQUE_DERNIER_ECHANGE = 'DERNIER_ECHANGE'
 MARQUE_MILIEU = 'MILIEU_FOURCHETTE'
 MARQUE_CLOTURE = 'CLOTURE_VEILLE'
 MARQUE_ABSENTE = 'ABSENTE'
+#: Une marque EXISTE mais aucune référence (dernier échange, clôture, milieu)
+#: n'a été fournie avec elle : la convention est INCONNUE, pas « le dernier
+#: échange ». Une provenance fausse est pire qu'une provenance absente — le
+#: client sait déjà écrire « convention non renseignée ».
+MARQUE_INDETERMINEE = 'INDETERMINEE'
 
 #: Au-delà de ce spread relatif, la valorisation est incertaine d'environ la
 #: moitié — afficher un P&L au centime donnerait une précision que la donnée
@@ -80,7 +85,15 @@ def source_de_marque(mark, *, last=None, close=None, mid=None) -> str:
 
     L'ordre du test suit celui de la production : `last` d'abord — c'est la
     priorité de `read_tk` —, puis la clôture, puis le milieu. Une marque qui
-    ne correspond à aucun des trois vient quand même d'un prix échangé.
+    ne correspond à AUCUN des trois, alors qu'au moins un a été fourni, vient
+    quand même d'un prix échangé.
+
+    MESURE : sur le repli scan d'une option, l'appelant ne transmettait NI
+    bid/ask, NI mid, NI last — juste `mark`. La branche finale affirmait alors
+    « dernier échange », et l'écran imprimait « Source de la marque : dernier
+    échange » pour un MILIEU de fourchette (NVDA 2026-10-23 245 C :
+    (6,00 + 6,40) / 2 = 6,20 ; GEN : 1,18 ; MPC : 23,95 — trois sur trois des
+    milieux du board). Sans aucune référence, la convention est INDÉTERMINÉE.
     """
     if mark is None:
         return MARQUE_MILIEU if mid is not None else MARQUE_ABSENTE
@@ -90,6 +103,8 @@ def source_de_marque(mark, *, last=None, close=None, mid=None) -> str:
         return MARQUE_CLOTURE
     if mid is not None and round(float(mark), 4) == round(float(mid), 4):
         return MARQUE_MILIEU
+    if last is None and close is None and mid is None:
+        return MARQUE_INDETERMINEE
     return MARQUE_DERNIER_ECHANGE
 
 
@@ -167,6 +182,15 @@ def enrich_option(p: dict, quote: dict | None, underlying_quote: dict | None = N
     g = greeks or {}
     p['greeks_source'] = g.get('source', 'UNAVAILABLE')
     issues = p['data_quality'].setdefault('issues', [])
+    #  Une échéance ILLISIBLE n'est pas une échéance absente. Mesuré sur le desk
+    #  réel : `expiration: '2027.01.15'` → `dte: None`, `issues: []`, donc
+    #  strictement indistinguable d'une ligne sans échéance — et les gates
+    #  EXPIRED / DTE_WARNING / THETA_WARNING (lifecycle.py) restaient désarmés
+    #  en silence, jusqu'au jour de l'expiration. On NOMME le défaut ; la
+    #  déclaration de l'utilisateur, elle, n'est jamais réécrite.
+    from vertex.positions.models import echeance_normalisee as _echeance
+    if p.get('expiration') and _echeance(p['expiration']) is None:
+        issues.append('EXPIRATION_ILLISIBLE')
     for name in ('delta', 'gamma', 'theta', 'vega'):
         per = g.get(name)
         # Quantité inconnue → Greek positionnel INCONNU (None), jamais 0 fabriqué

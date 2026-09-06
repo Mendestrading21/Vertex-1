@@ -284,8 +284,16 @@
     parts.push({ k: 'Échéance ' + (mo != null ? num(mo, 0) + ' mois' : 'n/d'), v: dDte, max: 25, ok: dDte >= 20 });
     var dOi = c.oi == null ? 0 : (c.oi >= 8000 ? 20 : c.oi >= 3000 ? 13 : c.oi >= 800 ? 6 : 2);
     parts.push({ k: 'OI ' + nd(c.oi), v: dOi, max: 20, ok: dOi >= 13 });
-    var dSp = c.spread_pct == null ? 0 : (c.spread_pct <= 3 ? 15 : c.spread_pct <= 6 ? 9 : c.spread_pct <= 10 ? 4 : 0);
-    parts.push({ k: 'Spread ' + (c.spread_pct != null ? num(c.spread_pct, 1) + ' %' : 'n/d'), v: dSp, max: 15, ok: dSp >= 9 });
+    /* Le board RÉEL publie `spread` (%) ; `spread_pct` est la clé du board de
+       DÉMO. Mesuré le 2026-09-06 : 30/30 cartes LEAPS affichaient « Spread n/d
+       · 0/15 » alors que /api/options servait la valeur (NVDA CALL 230
+       2027-03-19 : spread 1,0) — le pied de carte promet pourtant « Score
+       explicable = somme des composantes réelles ci-dessus ». Une composante
+       sur cinq valait zéro à cause d'un nom de champ : NVDA 61/100 (ambre) au
+       lieu de 76/100 (vert). Les deux clés absentes restent « n/d ». */
+    var sp = (c.spread_pct != null) ? c.spread_pct : c.spread;
+    var dSp = sp == null ? 0 : (sp <= 3 ? 15 : sp <= 6 ? 9 : sp <= 10 ? 4 : 0);
+    parts.push({ k: 'Spread ' + (sp != null ? num(sp, 1) + ' %' : 'n/d'), v: dSp, max: 15, ok: dSp >= 9 });
     var dIv = c.iv == null ? 0 : (c.iv <= 45 ? 10 : c.iv <= 70 ? 6 : 2);
     parts.push({ k: 'IV ' + (c.iv != null ? num(c.iv, 0) + ' %' : 'n/d'), v: dIv, max: 10, ok: dIv >= 6 });
     var total = parts.reduce(function (a, p) { return a + p.v; }, 0);

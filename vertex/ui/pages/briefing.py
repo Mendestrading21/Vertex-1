@@ -1766,10 +1766,16 @@ async function loadPortfolio(){
     return;
   }
   let quotes={};
+  /* `null` = jamais mesuré (fetch en échec) — distinct de `false` (socket
+     absente), distinct de `true`. Sans cette distinction, le pied de carte
+     affirmait « IBKR temps réel/desk » sur la seule absence de `q.delayed`. */
+  let pfLive=null,pfRepli=false;
   try{
     const body=pos.map(t=>({sym:t.sym,exp:t.exp,strike:t.strike,right:t.right}));
     const r=await fetch('/api/pos-quotes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({positions:body})});
-    const res=(await r.json()).results||{};
+    const j=await r.json();
+    pfLive=!!j.live;pfRepli=!!j.fallback_used;
+    const res=j.results||{};
     pos.forEach(t=>{const key=[String(t.sym).toUpperCase(),t.exp||'',
       (t.strike!==null&&t.strike!==undefined)?t.strike:'',(t.right||'').toUpperCase()].join('|');
       if(res[key])quotes[t.id]=res[key];});
@@ -1796,7 +1802,19 @@ async function loadPortfolio(){
         <button class="vx-btn vx-btn-icon vx-btn-ghost" data-entity-menu="${esc(t.sym)}" aria-label="Actions ${esc(t.sym)}">⋯</button></div>
     </div>`;
   }).join('')+'</div>'
-  +`<div class="vx-card-footer">${pos.length} position(s) · marques ${Object.keys(quotes).length?(Object.values(quotes).some(q=>q.delayed)?'différées (scan)':'IBKR temps réel/desk'):'indisponibles'}</div>`;
+  /* PROVENANCE DES MARQUES (constat 27 du 06/09/2026) : le pied affirmait
+     « IBKR temps réel/desk » dès qu'aucune cote ne portait `delayed` — or le
+     repli ACTION de /api/pos-quotes ne pose PAS ce drapeau (il ne pose que
+     source/mode/fallback_used), et la réponse peut valoir `live:true` alors
+     que toutes les marques viennent du scan (repro : file d'attente > 1,5 s,
+     `fallback_used:true`). Deux témoins servis et jamais lus corrigent le
+     mensonge sans rien recalculer ici : `fallback_used` (au moins une marque
+     de repli) et `live` (preuve de socket). `pfLive===null` = non mesuré :
+     on ne prétend ni live ni hors ligne. */
+  +`<div class="vx-card-footer">${pos.length} position(s) · marques ${Object.keys(quotes).length
+      ?((Object.values(quotes).some(q=>q.delayed)||pfRepli)?'différées (scan)'
+        :(pfLive===true?'IBKR temps réel/desk':pfLive===false?'desk — IBKR hors ligne':'provenance non mesurée'))
+      :'indisponibles'}</div>`;
 }
 /* Calendrier avec filtre Tout · Macro · Résultats */
 let CAL_FILTER='all',CAL_RANGE='week';
@@ -1964,8 +1982,15 @@ async function loadNews(){
     const sym=n.sym||'';
     const link=n.link||'';
     /* Heure de PUBLICATION (source, normalisée) ; l'heure de réception reste
-       en titre de l'info-bulle. Plusieurs agences pour un même fait = dit. */
-    const hm=(((n.published_at||n.time)||'').match(/(\d{2}:\d{2})/)||[])[1]||'';   /* `T05:20` : pas de frontière de mot avant l'heure */
+       en titre de l'info-bulle. Plusieurs agences pour un même fait = dit.
+       L'ancienne regex `(\d{2}:\d{2})` rendait « 13:05 » NU : le `Z` d'un
+       published_at UTC était jeté et la DATE perdue (mesure du 06/09/2026 :
+       une dépêche de 12 min se lisait vieille de 2 h 12 face à l'horloge du
+       lecteur, un item du 04/09 s'affichait « 23:42 » comme s'il datait du
+       jour). `VX.fmt.instantSource` convertit quand la source déclare son
+       fuseau, et marque « fuseau n/d » quand elle n'en déclare aucun. */
+    const iso=(n.published_at||n.time)||'';
+    const hm=VX.fmt.instantSource(iso,{style:'ago'});
     const nsrc=(+n.n_sources||0)>1?` · ${n.n_sources} sources`:'';
     const s=+n.senti||0;
     const dot=s?`<span style="display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px;background:${s>0?'var(--vx-positive)':'var(--vx-negative)'}"></span>`:'';
@@ -1973,10 +1998,21 @@ async function loadNews(){
       <div style="font-size:12.5px;line-height:1.45;color:var(--vx-text-secondary)">${dot}${t}</div>
       <div class="vx-meta vx-mt1">
         ${sym?`<button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${esc(sym)}" style="padding:0 4px">${esc(sym)}</button> · `:''}
-        <span title="${n.received_at?'reçu '+esc(n.received_at)+' UTC':''}">${src}${hm?` · ${hm}`:''}${nsrc}</span>
+        <span title="${esc(VX.fmt.instantSourceNote(iso))}${n.received_at?' · reçu '+esc(n.received_at)+' UTC':''}">${src}${hm?` · ${hm}`:''}${nsrc}</span>
         ${link?` · <a href="${esc(link)}" target="_blank" rel="noopener noreferrer" aria-label="Ouvrir la source">source ↗</a>`:''}
       </div></article>`;
   }).join('')
+  /* PIED DATÉ (constat 43 du 06/09/2026) : la carte rendait 8 titres sur 45
+     sans un seul `.vx-update`, quand 19 autres tampons vivaient sur la MÊME
+     page (« Il y a 25 min · yfinance Différé ») — et /news-feed sert déjà
+     `ts`, `as_of`, `source` et `source_detail` {ibkr, web} que personne
+     n'affichait. Sans âge ni provenance, un onglet laissé ouvert présentait
+     des titres figés sous un intertitre qui promet « aujourd'hui ».
+     `d` nul (fetch en échec) → « Âge inconnu » : l'absence reste dite. */
+  +`<div class="vx-card-footer">${VX.updateIndicator((d&&(d.ts?d.ts*1000:d.as_of))||null,
+      'fil '+((d&&d.source)||'source inconnue')
+      +((d&&d.source_detail)?` (courtier ${d.source_detail.ibkr||0} · web ${d.source_detail.web||0})`:''),
+      'delayed')} · ${items.length} titre(s) affiché(s) sur ${all.length} servis</div>`
   +`<div class="vx-meta vx-mt2">Sources publiques, assainies côté serveur — de l’information, jamais un conseil.</div>`;
 }
 
@@ -2052,6 +2088,12 @@ VX.refresh.register(async()=>{
   loadEssential(s);loadMainChart(s);loadCompare(s);loadPulse(s);loadPulseExtra(s);loadTopFlop(s);
 },120000,'marchés');
 VX.refresh.register(loadAlerts,60000,'alerts');
+/* Le fil d'actualités n'était rejoué NULLE PART (mesuré : loadNews n'apparaît
+   qu'au boot et au clic de filtre ; 4 s après `VX.liveReact('news')`, zéro
+   requête /news-feed supplémentaire). Un onglet ouvert affichait donc les
+   titres de l'heure du chargement. Cadence alignée sur le `ttl:120000` déjà
+   passé à VX.fetch et sur la boucle serveur du fil. */
+VX.refresh.register(loadNews,120000,'actualités');
 VX.refresh.register(loadSession,45000,'session-digest');
 VX.bus.on('vx:position-changed',loadPortfolio);
 VX.bus.on('vx:alert-changed',loadAlerts);

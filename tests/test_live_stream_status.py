@@ -46,6 +46,29 @@ def test_ring_buffer_drops_oldest_beyond_capacity():
     assert b.stats() == {'clients': 0, 'buffered': 3, 'last_id': 5}
 
 
+def test_un_canal_bavard_n_evince_pas_le_rejeu_des_autres():
+    """MESURE (6 sept. 2026, instance de contrôle) : composition du tampon de
+    rejeu au moment du rejeu à la connexion → 200/200 événements `jobs`, dont
+    187 `POSITION_REFRESH`. Aucun `market`, `positions`, `portfolio`, `alerts`
+    ni `connections` ne survivait : le client qui se reconnectait avec
+    `Last-Event-ID` rejouait 93 % de bruit et avait perdu EN SILENCE tous les
+    vrais changements d'état, alors que ce module annonce « rejouer après
+    reconnexion ». Le tampon est désormais par canal : un canal bavard ne peut
+    plus affamer les autres.
+    """
+    b = _Broker(ring=3)
+    vrai = b.publish('market', {'scan_ts': 1})
+    for i in range(50):                     # le canal bavard, comme mesuré
+        b.publish('jobs', {'i': i})
+    rejeu = b.replay_since(0)
+    assert [e['id'] for e in rejeu] == sorted(e['id'] for e in rejeu), (
+        'le rejeu doit rester chronologique après refusion des canaux')
+    marches = [e for e in rejeu if e['channel'] == 'market']
+    assert [e['id'] for e in marches] == [vrai], (
+        'le vrai changement d’état a été évincé par 50 battements de jobs')
+    assert len(b.replay_since(0)) == 4      # 3 `jobs` gardés + 1 `market`
+
+
 def test_slow_client_never_blocks_publisher():
     b = _Broker()
     q = b.subscribe()

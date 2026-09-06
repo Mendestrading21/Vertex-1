@@ -18,7 +18,15 @@ cd "C:\Users\<toi>\OneDrive\Desktop\Vertex 1" && .venv\Scripts\python.exe -m ver
 
 Ou double-clic `Lancer_VERTEX.bat` (crée `.venv` et installe
 `requirements.txt` au premier lancement). Le navigateur s'ouvre sur
-http://localhost:5002 ; le code d'accès est `VERTEX_CODE`.
+**http://127.0.0.1:5002** ; le code d'accès est `VERTEX_CODE`.
+
+⚠️ Utiliser l'adresse **IPv4 explicite**, pas `localhost` : le serveur écoute en
+IPv4 (`0.0.0.0` ou `127.0.0.1`), et un navigateur qui résout `localhost` en IPv6
+(`::1`) n'atteint rien. Mesuré le 2026-09-06 : dans ce cas, un service worker
+déjà installé servait la coque de son cache hors-ligne — page sans style ni
+données, application en apparence cassée alors que `/healthz` répondait
+`status: ok`, `ibkr_live: true`. Le repli hors-ligne sert désormais aussi la
+feuille de style mise en cache (SW v298), et le démarrage annonce l'IPv4.
 
 Ce que le démarrage fait : boucles de fond (scan 30 min, options 120 s, news
 60 s, calendrier 3 h, fondamentaux 6 h, edge 6 h, hebdo 5 min, alertes 60 s,
@@ -78,6 +86,7 @@ reconnecte quand TWS répond) ; l'ordinateur ne doit pas se mettre en veille
 | Les références macro sont-elles publiées ? | `GET /api/macro/officiel` : `disponibles/total`, `as_of`, `etat.derniere_erreur` ; carte Marchés › Macro › Références officielles |
 | Fraîcheur d'une carte | pied de carte : `Il y a N min · source · Différé/Live` ; « Âge inconnu » signifie que la route n'a pas fourni d'époque (jamais l'heure du navigateur) |
 | Erreurs navigateur | console + `POST /api/client-log` (journal serveur) |
+| Page nue, sans style, « rien ne marche » | vérifier l'adresse : `http://127.0.0.1:<port>` et non `localhost` ; puis, dans la console, `navigator.serviceWorker.getRegistration().then(r=>r&&r.unregister())` pour écarter un service worker périmé, et recharger |
 | Journal serveur | sortie console de `python -m vertex` (le bruit `ib_async` est condensé par `ibkr_link.calmer_le_journal_du_courtier`) |
 | Gardiens navigateur | `VERTEX_MESURE_BASE=http://127.0.0.1:5003 pytest tests\test_qa_espaces.py tests\test_couche_visuelle.py tests\test_regles_mortes.py tests\test_boutons_morts_temoins.py` (instance QA lancée ; Chromium : `python -m playwright install chromium`) ; sans base ouverte, ils s'abstiennent et le disent |
 | Frontière IBKR | `.venv\Scripts\python.exe .claude\skills\vertex-2-0\scripts\check_ibkr_boundary.py --enforce` ; `pytest tests\test_ibkr_session_marche_seule.py` ; preuve sur socket réelle : `VERTEX_TEST_IBKR_LIVE=1 pytest tests\test_ibkr_session_marche_seule.py -k vraie_socket` |

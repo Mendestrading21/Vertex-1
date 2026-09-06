@@ -162,6 +162,14 @@ def snapshot() -> dict:
     return {'as_of': as_of, 'age_s': age_s, 'cadence_min': cadence_min(),
             'series': series, 'sources': _src.SOURCES,
             'disponibles': sum(1 for s in series if s.get('value') is not None),
+            #  `disponibles` ne compte que `value is not None` : c'est la
+            #  DISPONIBILITÉ, jamais la ponctualité. Mesuré le 2026-09-06 :
+            #  « 11/11 séries publiées » s'affichait alors que deux séries
+            #  accusaient 9 et 14 publications mensuelles manquantes CHEZ LA
+            #  SOURCE. Le compte des retards est servi à côté, sans changer la
+            #  sémantique du premier.
+            'en_retard': sum(1 for s in series
+                             if s.get('fraicheur') in ('RETARD', 'RETARD_FORT')),
             'total': len(_src.CATALOGUE), 'etat': etat, 'read_only': True,
             'communiques': communiques, 'communiques_erreurs': comm_err,
             'communiques_sources': [{'source': s, 'libelle': l, 'url': u} for s, l, u in _src.COMMUNIQUES]}

@@ -190,8 +190,27 @@ def markdown(r: dict) -> str:
             len(pg.get('erreurs') or []), len(pg.get('vides') or []), pg.get('absents', '?'), pg.get('nd', '?'), pg.get('duree_s')))
     cl = r.get('client_log')
     if isinstance(cl, dict):
-        n = len(cl.get('items') or cl.get('entries') or cl.get('logs') or [])
-        lignes += ['', '`/api/client-log` : %d entrée(s) pendant l’audit.' % n]
+        #  MESURE (6 sept. 2026) : cette ligne lisait `items`/`entries`/`logs`,
+        #  trois clés que le serveur n'a JAMAIS servies (`git log -S` : un seul
+        #  commit, forme {count, errors} depuis toujours). Elle rendait donc
+        #  « 0 entrée(s) » quoi qu'il arrive — y compris sur 5 erreurs JS
+        #  réelles, et y compris quand le relevé lui-même avait échoué
+        #  ({'erreur': 'HTTP Error 502'}, posé plus haut). Un zéro constant qui
+        #  avale l'échec de mesure et le présente comme un résultat propre :
+        #  l'invariant 5 (zéro, absent et erreur restent distincts) enfreint
+        #  dans la couche de PREUVE. La lecture s'aligne sur `rc_short_audit.js`
+        #  (`clientLog.count ?? (clientLog.errors || []).length`), déjà correct.
+        if cl.get('erreur'):
+            lignes += ['', '`/api/client-log` : NON MESURÉ — %s.' % cl['erreur']]
+        else:
+            n = (cl['count'] if isinstance(cl.get('count'), int)
+                 else len(cl.get('errors') or []))
+            lignes += ['', '`/api/client-log` : %d entrée(s) pendant l’audit.' % n]
+            if n:
+                #  Une preuve à zéro doit pouvoir devenir une preuve à N lisible.
+                lignes += ['', '```',
+                           json.dumps(cl.get('errors') or [], ensure_ascii=False, indent=1),
+                           '```']
     return '\n'.join(lignes) + '\n'
 
 

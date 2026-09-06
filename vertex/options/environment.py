@@ -13,6 +13,9 @@ from vertex.visualization.schemas import (
     interpretation, unknown, ST_FAVORABLE, ST_NEUTRE, ST_DEFAVORABLE,
 )
 
+from . import board_fields as _bf
+
+
 def _num(x):
     try:
         return float(x)
@@ -73,7 +76,13 @@ def _score_quality(board):
 
 
 def _score_liquidity(board):
-    sp = [_num(c.get('spread_pct')) for c in board if c.get('spread_pct') is not None]
+    #  Le board RÉEL publie `spread`, pas `spread_pct` (mesuré 96/96 contre
+    #  0/96 le 2026-09-06) : cette dimension déclarait « indisponible » une
+    #  mesure détenue, sortait du score la PIRE dimension du jour (spread moyen
+    #  22,9 % = 0/100) et faisait passer le verdict de HOSTILE (34,8) à MITIGÉ
+    #  (52,2), couverture 40 % au lieu de 60 %. L'exclusion flattait le verdict,
+    #  ce que `data_coverage.note` promet explicitement de ne jamais faire.
+    sp = [_bf.spread_pct(c) for c in board or []]
     sp = [s for s in sp if s is not None]
     if not sp:
         return None, 'liquidité (spread) indisponible'

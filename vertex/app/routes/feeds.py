@@ -30,9 +30,28 @@ def api_market_summary():
     mc = scan_state.get('market_ctx') or {}
     cl = market_lens.climate(mc)
     sc = cl['score'] if cl else None
-    verdict = 'FAVORABLE' if (sc or 0) >= 65 else 'NEUTRE' if (sc or 0) >= 40 else 'DANGEREUX'
+    #  Le verdict est celui du MOTEUR, il n'est plus re-dérivé ici. Deux défauts
+    #  mesurés dans l'ancienne ligne `(sc or 0) >= 65 ... else 'DANGEREUX'` :
+    #  1) au démarrage à froid ou scan échoué, `market_ctx` vide → climate() rend
+    #     None à dessein, mais `(sc or 0)` convertissait l'ABSENCE en branche
+    #     basse : la route servait {"score": null, "verdict": "DANGEREUX"} avec
+    #     ses six dimensions nulles — un jugement catégoriel sans donnée derrière
+    #     (invariant 5 : absence et valeur restent distinctes).
+    #  2) la borne 65 re-dérivait un label que le moteur possède déjà, avec une
+    #     valeur différente de la sienne (62) : mesuré, un score de 62/63/64 était
+    #     FAVORABLE pour le moteur et NEUTRE pour cette route, au même instant.
+    #  `market_lens.CLIMAT_FAVORABLE_MIN` vaut désormais 65 : le verdict servi
+    #  ici est identique à celui d'avant sur toute la plage, la divergence est
+    #  supprimée et l'absence voyage avec le score.
+    verdict = cl['label'] if cl else None
     return jsonify({
         'score': sc, 'verdict': verdict,
+        # Couverture du score : `partiel`/`breadth_status` ne sont posés par le
+        # moteur QUE lorsque la largeur de marché manque (25 pts non mesurés) —
+        # sans eux, un score partiel était indiscernable d'un score complet.
+        'score_partiel': bool(cl and cl.get('partiel')),
+        'score_note': (cl or {}).get('note'),
+        'breadth_status': (cl or {}).get('breadth_status'),
         'regime': mc.get('spy_regime'), 'roro': mc.get('roro'), 'roro_gap': mc.get('roro_gap'),
         'vix': mc.get('vix'), 'vix_band': mc.get('vix_band'), 'vix_chg': mc.get('vix_chg'),
         'breadth': mc.get('breadth'), 'market_verdict': mc.get('verdict'),

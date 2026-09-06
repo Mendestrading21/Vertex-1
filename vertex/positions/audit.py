@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import time
 
+from vertex.positions.models import echeance_normalisee
+
 
 def _check(p: dict) -> list[str]:
     errs = []
@@ -27,6 +29,12 @@ def _check(p: dict) -> list[str]:
             errs.append('STRIKE_MISSING')
         if not p.get('expiration'):
             errs.append('EXPIRATION_MISSING')
+        elif echeance_normalisee(p['expiration']) is None:
+            #  Mesuré : '2027.01.15' (saisie libre du desk) ne se relit pas —
+            #  `dte` tombe à None et les gates d'expiration ne s'arment jamais.
+            #  L'audit d'intégrité doit NOMMER une échéance illisible plutôt que
+            #  de la laisser passer pour une échéance valide.
+            errs.append('EXPIRATION_ILLISIBLE')
         if (p.get('multiplier') or 100) <= 0:
             errs.append('MULTIPLIER_INVALID')
         if p.get('dte') is not None and p['dte'] < 0 \

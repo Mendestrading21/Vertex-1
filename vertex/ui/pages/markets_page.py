@@ -433,8 +433,15 @@ function crossAsset(scan){
   ((scan&&scan.indices)||[]).forEach(i=>{if(i&&i.name)m[i.name]={last:i.price,change:i.change,series:i.spark};});
   ((scan&&scan.commodities)||[]).forEach(c=>{if(c&&c.name){const nm=(c.name==='WTI')?'Pétrole':c.name;
     m[nm]={last:c.price,change:c.change,series:c.spark};}});
+  /* `x.date` = date de la DERNIÈRE BARRE de l'indicateur, produite par le
+     collecteur. Elle était supprimée ici : le KPI « Taux 10 ans 4,78 % »
+     s'affichait nu pendant que la courbe des taux juste dessous, bâtie sur le
+     MÊME tableau scan.macro, portait « Il y a 16 min · yfinance Différé ».
+     Un dimanche, le lecteur ne pouvait pas savoir que 4,78 % est la clôture
+     de vendredi (invariant 6 : la valeur porte son timestamp). Indices et
+     matières n'ont pas ce champ : `obs` reste absent — rien n'est fabriqué. */
   ((scan&&scan.macro)||[]).forEach(x=>{if(x&&x.name){const nm=(x.name==='Dollar (DXY)')?'DXY':x.name;
-    m[nm]={last:x.value,change:x.chg,unit:x.unit,deltaUnit:'pts',deltaNeutral:true};}});
+    m[nm]={last:x.value,change:x.chg,unit:x.unit,deltaUnit:'pts',deltaNeutral:true,obs:x.date||null};}});
   return m;
 }
 /* Lissage MONOTONE (Fritsch-Carlson) — même principe que le 'monotone' des
@@ -521,12 +528,21 @@ function macroCard(label,d,scan,note){
   const vtxt=(val==null)?'—':(VX.fmt.price(val)+((d&&d.unit)?' '+d.unit:''));
   const ser=(d&&d.series&&d.series.length>2)?d.series:null;
   const chgHtml=`<span class="m-chg ${tone}">${chgTxt}${(d&&d.deltaNeutral)?' <span style="color:var(--vx-text-muted);font-weight:600">· niveau</span>':''}</span>`;
+  /* Le strip macro était la SEULE exception à la convention maison : 4 cartes,
+     0 élément de provenance, quand indexCard, la courbe des taux et les
+     références officielles portent toutes la leur. La date d'observation est
+     celle de la source quand elle existe (obs), l'indicateur de scan dit
+     l'âge de l'instantané. Sans obs (Pétrole, Or), seul l'indicateur : aucune
+     date fabriquée. */
+  const foot=`<div class="m-foot">${(d&&d.obs)?'observé le '+esc(dateFrOff(d.obs))+' · ':''}`
+    +`${VX.updateIndicator(scan&&(scan.scan_ts||scan.updated),(scan&&scan.source)||'scan',modeOf(scan))}</div>`;
   /* Sans série : layout compact plein-largeur (JAMAIS de demi-carte vide). */
   if(!ser){
     return `<div class="vx-mk-macro vx-mk-macro--flat" aria-label="${esc(label)}">
       <div class="m-head"><span class="m-mono">${MONO[label]||esc(label).slice(0,3).toUpperCase()}</span><span class="m-name">${esc(label)}</span></div>
       <div class="mf-row"><span class="m-val">${vtxt}</span>${chgHtml}</div>
       ${note?`<div class="m-note">${note}</div>`:''}
+      ${foot}
     </div>`;
   }
   return `<div class="vx-mk-macro" aria-label="${esc(label)}">
@@ -535,6 +551,7 @@ function macroCard(label,d,scan,note){
     ${chgHtml}
     <div class="m-area">${sparkArea(ser,tone==='flat'?'tech':tone,56)}</div>
     ${note?`<div class="m-note">${note}</div>`:''}
+    ${foot}
   </div>`;
 }
 const IDX_MAIN=['S&P 500','Nasdaq','Dow Jones','Russell 2000'];
@@ -574,24 +591,40 @@ function loadMultiIndex(scan){
 function loadSpyChart(scan){
   const det=(scan&&scan.detail)||{};
   const okSeries=(k)=>det[k]&&det[k].series&&Array.isArray(det[k].series.close)&&det[k].series.close.length>10;
-  // Comme le Briefing : SPY si présent, sinon 1er titre du scan porteur d'une
-  // série RÉELLE (proxy explicitement étiqueté — jamais présenté comme SPY).
+  // Comme le Briefing (briefing.py, loadMainChart) : SPY → INDICE « S&P 500 »
+  // du scan (120 clôtures servies par le serveur) → dernier recours, 1er titre
+  // porteur d'une série RÉELLE, étiqueté proxy.
+  // Mesure du 06/09/2026 : l'étage INDICE manquait ici alors qu'il existe dans
+  // le Briefing. L'univers scanné (513 constituants, aucun ETF indiciel) rend
+  // `hasSpy` toujours faux, et Object.keys() étant ordonné, la carte traçait
+  // DÉTERMINISTEMENT 'MMM' (3M, 139–183 USD) sous le titre « série de référence
+  // marché », l'unité « points d'indice » et le verdict de régime du marché —
+  // pendant que la page Aujourd'hui traçait, du MÊME payload, le vrai S&P 500
+  // (6344–7799). Deux autorités pour une métrique : celle-ci était amputée.
   const hasSpy=okSeries('SPY');
-  const key=hasSpy?'SPY':Object.keys(det).find(okSeries);
-  const closes=(key&&det[key].series.close)||[];
+  const spx=((scan&&scan.indices)||[]).find(i=>i&&i.name==='S&P 500');
+  const hasIdx=!hasSpy&&!!(spx&&Array.isArray(spx.series)&&spx.series.length>10);
+  const key=hasSpy?'SPY':(hasIdx?'S&P 500':Object.keys(det).find(okSeries));
+  const closes=hasIdx?spx.series:((key&&det[key]&&det[key].series&&det[key].series.close)||[]);
   const m=mkt(scan);
   if(closes.length>10){
     const title=hasSpy?'S&P 500 (SPY) — série de référence'
-                      :('Marché — série de référence · '+key+' (SPY absente du scan)');
+                      :(hasIdx?'S&P 500 — série de référence'
+                              :('Marché — série de référence · '+key+' (ni SPY ni indice S&P 500 dans le scan)'));
     VXCharts.areaCard('vx-mk-spy',{
-      title:title,unit:'points d’indice',timeframe:closes.length+' séances',
+      /* Unité : « points d'indice » n'est vrai QUE sur une série d'indice. Sur
+         le proxy (un titre), la même étiquette annonçait une unité fausse
+         au-dessus d'un cours en dollars (invariant 6). */
+      title:title,unit:(hasSpy||hasIdx)?'points d’indice':'USD',timeframe:closes.length+' séances',
       question:'La tendance de fond reste-t-elle exploitable ?',
       conclusion:(m.spy_regime==='TREND'?'Tendance intacte':'Régime '+(m.spy_regime||'n/d'))+(m.verdict?' — '+m.verdict:''),
       labels:closes.map((_,i)=>i-closes.length),values:closes,height:260,
       /* GRAMMAIRE TV (lot 200) : chips Max/Min = les bornes RÉELLES de la série */
       extremes:true,
       source:(scan&&scan.source)||'scan',timestamp:scan&&(scan.scan_ts||scan.updated),mode:modeOf(scan),
-      explain:{shows:(hasSpy?'Les clôtures de SPY':'Les clôtures de '+key+' (proxy : SPY non incluse dans ce scan)')+' telles que fournies par le scan (aucun indicateur recalculé côté UI).',
+      explain:{shows:(hasSpy?'Les clôtures de SPY':hasIdx?'Les clôtures de l’indice S&P 500'
+                      :'Les clôtures de '+key+' (proxy : ni SPY ni indice S&P 500 dans ce scan — la conclusion ci-dessus porte sur le RÉGIME DE MARCHÉ, pas sur cette série)')
+                     +' telles que fournies par le scan (aucun indicateur recalculé côté UI).',
         why:'La Stratégie Vertex n’attaque qu’en environnement porteur : le régime module seuils et tailles.',
         confirm:'Clôtures au-dessus des dernières résistances avec breadth > 55 %.',
         invalidate:'Cassure des supports avec expansion de volatilité.'}});
@@ -710,7 +743,13 @@ function paintCommuniques(d){
   }
   host.innerHTML='<ul class="vx-mt1" style="margin:0;padding-left:0;list-style:none">'+liste.slice(0,16).map(c=>
     '<li class="vx-kv" style="align-items:flex-start;gap:10px"><span class="k" style="flex:0 0 auto"><span class="vx-badge">'+esc(c.source)+'</span> '
-    +'<span class="vx-mono">'+esc(c.published_at?String(c.published_at).slice(0,16).replace("T"," "):"date n/d")+'</span></span>'
+    /* `.slice(0,16)` DÉCAPITAIT le `Z` que le serveur pose exprès (vérifié par
+       tests/test_communiques_officiels.py : published_at se termine par 'Z') :
+       « 2026-09-04T09:10Z » s'affichait « 2026-09-04 09:10 », heure UTC nue au
+       milieu de tampons en heure locale (« Il y a 25 min »). VX.fmt.instantSource
+       convertit dans le fuseau du lecteur quand la source déclare le sien, et
+       marque « fuseau n/d » sinon — jamais de fuseau inventé. */
+    +'<span class="vx-mono" title="'+esc(VX.fmt.instantSourceNote(c.published_at))+'">'+esc(VX.fmt.instantSource(c.published_at)||'date n/d')+'</span></span>'
     +'<span class="v" style="text-align:left;white-space:normal"><a href="'+esc(c.link)+'" target="_blank" rel="noopener noreferrer">'+c.title+' ↗</a></span></li>').join('')+'</ul>'
     +'<div class="vx-table-stamp"><span>'+liste.length+' communiqués · '+(d.communiques_sources||[]).map(x=>'<b>'+esc(x.source)+'</b>').join(' · ')+'</span>'
     +'<span>'+VX.updateIndicator(d.as_of,'collecteur officiel','delayed')+'</span>'

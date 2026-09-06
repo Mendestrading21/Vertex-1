@@ -52,12 +52,133 @@ def sentiment(text):
     return 1 if pos > neg else -1 if neg > pos else 0
 
 
-def aggregate(items):
-    """Sentiment agrégé par ticker : {sym: {'score': -1..1, 'n': N}}."""
+#: Noms de société par ticker, ÉCRITS À LA MAIN comme `data/descriptions_fr`.
+#: Ils servent à répondre à une seule question : le titre de la dépêche
+#: NOMME-T-IL le titre auquel le fil l'attribue ? Un ticker absent de la table
+#: ne peut être confirmé que par son propre code dans le titre — l'inconnu
+#: reste inconnu, il ne devient jamais un « oui » par défaut.
+NOMS_SOCIETE: dict[str, tuple[str, ...]] = {
+    'AAPL': ('apple', 'iphone'),
+    'MSFT': ('microsoft', 'windows', 'azure'),
+    'NVDA': ('nvidia',),
+    'GOOGL': ('google', 'alphabet', 'youtube'),
+    'GOOG': ('google', 'alphabet', 'youtube'),
+    'AMZN': ('amazon', 'aws'),
+    'META': ('meta platforms', 'facebook', 'instagram', 'whatsapp'),
+    'TSLA': ('tesla',),
+    'AMD': ('advanced micro devices',),
+    'AVGO': ('broadcom',),
+    'PLTR': ('palantir',),
+    'NFLX': ('netflix',),
+    'CRM': ('salesforce',),
+    'COST': ('costco',),
+    'LLY': ('eli lilly', 'lilly'),
+    'JPM': ('jpmorgan', 'jp morgan'),
+    'V': ('visa inc', 'visa card'),
+    'MA': ('mastercard',),
+    'HD': ('home depot',),
+    'UNH': ('unitedhealth',),
+    'XOM': ('exxon',),
+    'WMT': ('walmart',),
+    'SPY': ('s&p 500', 's&p500'),
+    'QQQ': ('nasdaq 100', 'nasdaq-100'),
+}
+
+
+def sujet_confirme(item, sym=None) -> bool:
+    """Le SUJET de la dépêche est-il établi comme étant `sym` ?
+
+    ## Pourquoi la question se pose — mesure du 2026-09-06
+
+    `sym` n'est PAS le sujet de l'article : c'est le FIL INTERROGÉ. La boucle
+    de collecte écrit `feed.append({**it, 'sym': sym})` où `sym` est la
+    variable de boucle `for sym in NEWS_SYMS + hot`, et le repli web est une
+    simple recherche de mot-clé Google News (`q='%s stock'`). Rien ne garantit
+    que la dépêche PARLE du titre.
+
+    Mesure sur les 45 items servis par `/news-feed` : **22 titres sur 45** ne
+    nomment ni le ticker ni la société — `[AMZN] Costco silently kills member
+    perk`, `[SNDK] Nike Exits the S&P 100 Index`, `[GOOGL] Why Rezolve AI Stock
+    Plummeted`, et `[META] 'AI Laggard' Apple Is Sitting Pretty…` qui nomme
+    explicitement un AUTRE ticker. Conséquence chiffrée : `aggregate` servait
+    `NVDA {'n': 4, 'score': 0.5}` construit sur Snowflake, le pétrole, GitLab
+    et Shopify — un sentiment de marché qu'aucune actualité NVDA ne soutient.
+
+    ## Ce qui vaut preuve, et rien d'autre
+
+    1. l'attestation du VENDEUR (`sym_atteste`) : une dépêche du courtier est
+       attribuée au contrat par le fournisseur lui-même. Aucun producteur ne
+       pose ce drapeau aujourd'hui — il est lu ici pour que la chaîne devienne
+       juste dès que la boucle le posera, sans nouveau passage ici ;
+    2. le ticker écrit dans le texte servi (titre + traduction FR), en mot
+       entier ;
+    3. un nom de société de `NOMS_SOCIETE`.
+
+    Tout le reste est `False` : « pertinence sectorielle » n'est pas une
+    preuve de sujet, et l'absence de preuve n'est pas une preuve d'absence —
+    l'item reste servi, il cesse seulement d'AFFIRMER un sujet.
+    """
+    if not isinstance(item, dict):
+        return False
+    s = str(sym if sym is not None else (item.get('sym') or '')).upper().strip()
+    if not s:
+        return False
+    if item.get('sym_atteste'):
+        return True
+    texte = ' %s %s ' % (item.get('title') or '', item.get('fr') or '')
+    texte = _html.unescape(str(texte)).lower()
+    if re.search(r'(?<![a-z0-9])%s(?![a-z0-9])' % re.escape(s.lower()), texte):
+        return True
+    return any(nom in texte for nom in NOMS_SOCIETE.get(s, ()))
+
+
+def role_sujet(item, sym=None) -> str:
+    """`'sujet'` quand l'article est établi comme portant sur `sym`, sinon
+    `'fil'` — le ticker n'est alors qu'une PROVENANCE de collecte."""
+    return 'sujet' if sujet_confirme(item, sym) else 'fil'
+
+
+def marquer_sujets(items):
+    """Copie des items, chacun portant son `sym_role` (`sujet` | `fil`).
+
+    Additif : aucun item n'est retiré ni réécrit. Un consommateur qui affirme
+    un sujet (puce cliquable, agrégat par ticker, entités d'un événement) doit
+    lire ce champ ; sans lui, il présente une provenance pour un sujet."""
+    out = []
+    for it in (items or []):
+        if not isinstance(it, dict):
+            continue
+        d = dict(it)
+        d['sym_role'] = role_sujet(d)
+        out.append(d)
+    return out
+
+
+def aggregate(items, sujets_seulement=False):
+    """Sentiment agrégé par ticker : {sym: {'score': -1..1, 'n': N}}.
+
+    ATTENTION AU SENS DE LA CLÉ. Par défaut, l'agrégat groupe par `sym`, qui
+    est le FIL INTERROGÉ et non le sujet de la dépêche (voir `sujet_confirme`) :
+    c'est un agrégat de PROVENANCE, pas un sentiment du titre. Mesuré le
+    2026-09-06 sur le fil réel : `NVDA {'n': 4, 'score': 0.5}` sans une seule
+    actualité Nvidia dedans.
+
+    `sujets_seulement=True` ne compte que les items dont le sujet est ÉTABLI.
+    Un ticker sans item confirmé DISPARAÎT alors de la table : une absence
+    dite, jamais un `0.0` fabriqué. C'est la forme à servir dès qu'un
+    consommateur affiche cette table par ticker.
+
+    Le défaut reste `False` parce que deux gardiens hors de ce lot épinglent
+    encore la forme de provenance (`tests/test_real_data.py::test_aggregate_by_ticker`
+    et `::test_news_feed_exposes_sentiment`, items sans titre) : les basculer
+    est le geste qui manque, il appartient au lot qui possède ce fichier.
+    """
     by = {}
     for it in items or []:
         s = it.get('sym')
         if not s:
+            continue
+        if sujets_seulement and not sujet_confirme(it, s):
             continue
         d = by.setdefault(s, {'sum': 0, 'n': 0})
         d['sum'] += it.get('senti', 0)
@@ -329,12 +450,44 @@ def horodatage_source(t):
     """Normalise l'horodatage FOURNI par la source en `YYYY-MM-DDTHH:MM` (+ `Z`
     quand la source déclare GMT/UTC, sinon sans fuseau : on n'invente pas un
     fuseau). Formats vus dans le fil : IBKR/yfinance `YYYY-MM-DD HH:MM`, RSS
-    RFC 2822 `Sat, 06 Sep 2026 07:00:00 GMT`. None si illisible."""
+    RFC 2822 `Sat, 06 Sep 2026 07:00:00 GMT`. None si illisible.
+
+    ## Le fuseau DÉCLARÉ n'est plus perdu sur la branche ISO
+
+    Mesure du 2026-09-06 : `horodatage_source('2026-09-02T10:15:00Z')` — le
+    `<dc:date>` d'un communiqué BNS — rendait `'2026-09-02T10:15'`, sans le
+    `Z` que la source déclare pourtant, alors que la branche RFC 2822 rend
+    bien `'…T07:00Z'`. Le même écran affichait donc les communiqués BCE
+    marqués UTC et les communiqués BNS sans marque, pour deux flux également
+    horodatés en UTC. Un décalage déclaré (`+02:00`) était encore plus faux :
+    l'heure locale était servie telle quelle, sans marque, comme si aucun
+    fuseau n'avait été déclaré.
+
+    Règle : on CONSERVE ce que la source déclare (`Z` → `Z`, décalage →
+    converti en UTC comme le fait déjà la branche RFC 2822) et on n'invente
+    rien quand elle ne déclare rien (pas de fuseau → pas de suffixe)."""
     s = str(t or '').strip()
     if not s:
         return None
+    m = re.match(r'^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2}(?:\.\d+)?)?'
+                 r'\s*(Z|z|[+-]\d{2}:?\d{2})?$', s)
+    if m:
+        zone = (m.group(3) or '').strip()
+        if not zone:
+            #  La source n'a pas déclaré de fuseau : on n'en invente pas un.
+            return '%sT%s' % (m.group(1), m.group(2))
+        if zone in ('Z', 'z') or zone.replace(':', '') in ('+0000', '-0000'):
+            return '%sT%sZ' % (m.group(1), m.group(2))
+        import datetime as _dt
+        signe = -1 if zone[0] == '-' else 1
+        chiffres = zone[1:].replace(':', '')
+        decale = _dt.timedelta(minutes=signe * (int(chiffres[:2]) * 60 + int(chiffres[2:])))
+        base = _dt.datetime.strptime('%sT%s' % (m.group(1), m.group(2)), '%Y-%m-%dT%H:%M')
+        return (base - decale).strftime('%Y-%m-%dT%H:%MZ')
     m = re.match(r'^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})', s)
     if m:
+        #  Queue non reconnue (secondes exotiques, texte accolé) : on garde la
+        #  date et l'heure lues, sans fuseau — jamais un fuseau supposé.
         return '%sT%s' % (m.group(1), m.group(2))
     try:
         from email.utils import parsedate_to_datetime
@@ -411,4 +564,5 @@ def dedupe_news(items):
 
 
 __all__ = ['sentiment', 'aggregate', 'parse_rss', 'rss_news', 'sanitize_news',
-           'dedupe_news', 'nom_publieur', 'CLES_PUBLIEUR', 'horodatage_source']
+           'dedupe_news', 'nom_publieur', 'CLES_PUBLIEUR', 'horodatage_source',
+           'sujet_confirme', 'role_sujet', 'marquer_sujets', 'NOMS_SOCIETE']

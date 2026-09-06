@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import math
 
+from . import board_fields as _bf
+
 RANG_LIQUIDITE = {'excellente': 3, 'acceptable': 2, 'mediocre': 1, 'insuffisante': 0}
 
 #: Prime « chère » : capital à risque > 12 % du notionnel (spot × 100).
@@ -35,20 +37,36 @@ def _fmt(v, d=1):
 
 def etat_liquidite(oi, spread_pct) -> dict:
     """État de liquidité d'un contrat : quatre paliers explicites, jamais un zéro
-    pour un bid/ask ou un OI absent (→ insuffisante, non évaluable)."""
-    if oi is None and spread_pct is None:
+    pour un bid/ask ou un OI absent (→ insuffisante, non évaluable).
+
+    Le spread absent NE PRODUIT PLUS DE CHIFFRE. La sentinelle 99.0 servait ici
+    de seuil interne ET était mise en forme dans la note, dans la même phrase et
+    la même unité qu'un OI mesuré : « OI 4615 · spread 99.0 % » a été servi sur
+    un contrat dont le spread réel valait 6,5 % (NVDA CALL 230, 2026-09-06).
+    Le classement reste prudent — sans spread coté, aucun palier positif — mais
+    l'absence se nomme au lieu de se chiffrer (invariants 5 et 7).
+    """
+    o = _num(oi)
+    s = _num(spread_pct)
+    if o is None and s is None:
         return {'key': 'insuffisante', 'label': 'Insuffisante', 'tone': 'neg',
-                'note': 'bid/ask ou OI absent — non évaluable'}
-    o = _num(oi) or 0.0
-    s = 99.0 if spread_pct is None else (_num(spread_pct) if _num(spread_pct) is not None else 99.0)
+                'note': 'bid/ask ou OI absent — non évaluable',
+                'spread_pct': None, 'spread_mesure': False}
+    if s is None:
+        return {'key': 'insuffisante', 'label': 'Insuffisante', 'tone': 'neg',
+                'note': 'OI %s · spread non coté — liquidité non évaluable'
+                        % (int(o) if o is not None else '—'),
+                'spread_pct': None, 'spread_mesure': False}
+    o = o or 0.0
     note = 'OI %s · spread %s %%' % (int(o) if oi is not None else '—', _fmt(s, 1))
+    mesure = {'spread_pct': round(s, 2), 'spread_mesure': True}
     if o >= 5000 and s <= 3:
-        return {'key': 'excellente', 'label': 'Excellente', 'tone': 'pos', 'note': note}
+        return {'key': 'excellente', 'label': 'Excellente', 'tone': 'pos', 'note': note, **mesure}
     if o >= 1500 and s <= 6:
-        return {'key': 'acceptable', 'label': 'Acceptable', 'tone': 'pos', 'note': note}
+        return {'key': 'acceptable', 'label': 'Acceptable', 'tone': 'pos', 'note': note, **mesure}
     if o >= 500 and s <= 10:
-        return {'key': 'mediocre', 'label': 'Médiocre', 'tone': 'warn', 'note': note}
-    return {'key': 'insuffisante', 'label': 'Insuffisante', 'tone': 'neg', 'note': note}
+        return {'key': 'mediocre', 'label': 'Médiocre', 'tone': 'warn', 'note': note, **mesure}
+    return {'key': 'insuffisante', 'label': 'Insuffisante', 'tone': 'neg', 'note': note, **mesure}
 
 
 def contrats_pour(board, sym, exp=None):
@@ -65,9 +83,13 @@ def liquidite_strategie(board, sym, exp, legs) -> dict:
         if not near:
             return etat_liquidite(None, None)
         oi0 = min((_num(c.get('oi')) or 0.0) for c in near)
-        sp0 = max((99.0 if c.get('spread_pct') is None else (_num(c.get('spread_pct')) or 99.0))
-                  for c in near)
-        return etat_liquidite(oi0, sp0)
+        #  Repli sur les échéances voisines : on prend le PIRE spread RÉELLEMENT
+        #  coté. L'ancien `max(..., 99.0)` transformait un contrat non coté en
+        #  spread de 99 % — un chiffre que personne n'a mesuré, qui écrasait le
+        #  verdict de toutes les autres jambes. Si aucun voisin n'est coté, le
+        #  spread reste None : absence, pas pénalité.
+        sp_cotes = [v for v in (_bf.spread_pct(c) for c in near) if v is not None]
+        return etat_liquidite(oi0, max(sp_cotes) if sp_cotes else None)
     pire = None
     for leg in (legs or []):
         t = str(leg.get('type') or '').upper()
@@ -81,7 +103,9 @@ def liquidite_strategie(board, sym, exp, legs) -> dict:
             c = memes[0] if memes else None
         if c is None:
             continue
-        st = etat_liquidite(c.get('oi'), c.get('spread_pct'))
+        #  `spread_pct` n'existe que sur le board de démonstration ; le board
+        #  réel publie `spread`. L'accesseur lit les deux (cf. board_fields).
+        st = etat_liquidite(c.get('oi'), _bf.spread_pct(c))
         if pire is None or RANG_LIQUIDITE[st['key']] < RANG_LIQUIDITE[pire['key']]:
             pire = st
     return pire or etat_liquidite(None, None)
@@ -120,8 +144,14 @@ def verdict(strategie, liq, spot, capital, gain_exc) -> dict:
     asym = (gain_exc / capital) if (capital and capital > 0 and gain_exc is not None) else None
     cher = bool(spot and capital and (capital / (spot * 100.0) > SEUIL_PRIME_CHERE))
     if liq.get('key') == 'insuffisante':
+        #  Le motif doit rester distinguable : « spread non coté » (absence) et
+        #  « spread mesuré hors seuil » (mesure) menaient au MÊME libellé, ce qui
+        #  rendait indiscernable un contrat illiquide d'un contrat non coté.
+        motif = ('liquidité mesurée insuffisante' if liq.get('spread_mesure')
+                 else 'liquidité NON ÉVALUABLE (spread non coté)')
         return {'label': 'Liquidité insuffisante', 'tone': 'neg',
-                'why': 'liquidité insuffisante — aucun verdict positif possible', 'dominant': 'liquidite'}
+                'why': '%s — aucun verdict positif possible' % motif,
+                'dominant': 'liquidite'}
     if asym is None:
         return {'label': 'Données insuffisantes', 'tone': 'muted', 'why': 'asymétrie non calculable'}
     if asym >= 3:

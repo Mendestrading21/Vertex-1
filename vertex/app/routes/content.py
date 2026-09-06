@@ -18,7 +18,23 @@ bp = Blueprint('content', __name__)
 
 @bp.route('/news-feed')
 def news_feed_ep():
-    """Fil de news. Recherche serveur : ?sym=NVDA (ticker) · ?q=fed (mot-clé)."""
+    """Fil de news. Recherche serveur : ?sym=NVDA (fil) · ?q=fed (mot-clé).
+
+    ## `sym` est une PROVENANCE, pas un sujet — mesure du 2026-09-06
+
+    La boucle de collecte écrit `sym` = le fil interrogé, pas le titre dont
+    parle la dépêche. Mesure sur les 45 items servis : **22 titres sur 45** ne
+    nomment ni le ticker ni la société ; `GET /news-feed?sym=NVDA` rendait
+    4 articles — Snowflake, GitLab, Shopify, le pétrole — dont AUCUN sur
+    Nvidia, et `sentiment['NVDA']` valait `{'n': 4, 'score': 0.5}`.
+
+    Ce qui est corrigé ici : chaque item servi porte `sym_role`
+    (`sujet` = le sujet est établi, `fil` = simple provenance), la réponse dit
+    combien d'items filtrés sont dans chaque cas, et l'agrégat par sujet
+    confirmé est servi à côté de l'agrégat de provenance, qui nomme désormais
+    sa base. Aucun item n'est retiré : une dépêche hors sujet reste de
+    l'information réelle, elle cesse seulement d'affirmer un sujet.
+    """
     items = news_state.get('items') or []
     sym = (request.args.get('sym') or '').upper().strip()
     q = (request.args.get('q') or '').lower().strip()
@@ -30,8 +46,23 @@ def news_feed_ep():
                           + ' ' + str(n.get('publisher') or '')).lower()]
     # XSS : titres/liens externes assainis AU POINT DE SORTIE (rendus en innerHTML côté client)
     items = news_plus.sanitize_news(items)
+    #  Le rôle est posé APRÈS l'assainissement : il se lit sur le texte
+    #  réellement servi, pas sur une version que le client ne verra pas.
+    items = news_plus.marquer_sujets(items)
+    n_sujets = sum(1 for n in items if n.get('sym_role') == 'sujet')
+    filtre = ({'sym': sym, 'base': 'fil interrogé',
+               'sujets_confirmes': n_sujets, 'sujet_non_etabli': len(items) - n_sujets}
+              if sym else None)
     return jsonify({**news_state, 'items': items, 'filtered': bool(sym or q),
-                    'sentiment': news_plus.aggregate(items), 'ai_on': ai.available()})
+                    'filtre_sym': filtre,
+                    #  Agrégat de PROVENANCE : conservé pour ses appelants, mais
+                    #  il dit maintenant sur quoi il est bâti (invariant 6).
+                    'sentiment': news_plus.aggregate(items),
+                    'sentiment_base': 'fil interrogé (provenance) — pas le sujet de la dépêche',
+                    #  Agrégat par sujet ÉTABLI : un ticker sans article confirmé
+                    #  en est absent, il n'y reçoit pas un score fabriqué.
+                    'sentiment_sujets': news_plus.aggregate(items, sujets_seulement=True),
+                    'ai_on': ai.available()})
 
 
 @bp.route('/cal-feed')

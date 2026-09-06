@@ -74,9 +74,9 @@ def test_state_desk_corrompu_pas_de_crash(client):
     assert r.get_json()['positions'] == []          # illisible → vide honnête
 
 
-# ── /report et /reconcile : IBKR hors ligne ne clôture JAMAIS ────────────────
+# ── /report et /reconcile : le courtier n'est JAMAIS lu ──────────────────────
 
-def test_report_ibkr_hors_ligne_conserve_les_locales(client):
+def test_report_courtier_jamais_lu_conserve_les_locales(client):
     _one_stock()
     r = client.get('/api/positions/report').get_json()
     assert r['ibkr_online'] is False
@@ -85,7 +85,30 @@ def test_report_ibkr_hors_ligne_conserve_les_locales(client):
     assert 'aucune clôture automatique' in r['note']
 
 
-def test_reconcile_hors_ligne_zero_reparation(client):
+def test_la_cause_servie_est_la_frontiere_et_non_une_panne_reseau(client):
+    """MESURE (processus rejouant la configuration live : socket connectée,
+    ticks temps réel frais) : `ibkr_connected=True`, `ibkr_live=True` sur
+    /healthz, et EN MÊME TEMPS « IBKR hors ligne » servi par ces deux routes.
+
+    Le littéral `ibkr_online=False` n'est pas un état de session mesuré, c'est
+    la frontière produit (IBKR = données de marché uniquement). Servir une
+    absence VOLONTAIRE sous la cause d'une PANNE réseau confond deux choses que
+    l'invariant 5 exige de garder distinctes, et « aucune clôture automatique »
+    seul laissait entendre qu'une reprise viendrait au retour d'IBKR — que
+    l'invariant 3 interdit définitivement.
+    """
+    _one_stock()
+    for route in ('/api/positions/report', '/api/positions/reconcile'):
+        r = client.get(route).get_json()
+        assert r['broker_positions_read'] is False, route
+        assert r['boundary'] == 'MARKET_DATA_ONLY', route
+        assert 'jamais lues' in r['note'], route
+        assert 'hors ligne' not in r['note'], (
+            '%s affirme une panne de session alors que la session peut être '
+            'vivante : la cause servie est inventée' % route)
+
+
+def test_reconcile_courtier_jamais_lu_zero_reparation(client):
     _one_stock()
     r = client.get('/api/positions/reconcile').get_json()
     assert r['ibkr_online'] is False

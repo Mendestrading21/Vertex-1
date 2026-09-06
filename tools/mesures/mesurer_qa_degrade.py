@@ -53,7 +53,17 @@ if str(RACINE) not in sys.path:
 
 from tools.mesures._sonde_http import appeler  # noqa: E402
 
-BASE_DEFAUT = 'http://127.0.0.1:5002'
+#  `VERTEX_MESURE_BASE` : cibler une autre instance (par ex. l'instance QA
+#  sans code d'accès, 127.0.0.1:5003) sans toucher l'instance de travail.
+#  MESURE : ce module était le SEUL de sa famille sans cette lecture
+#  (mesurer_couche_visuelle, mesurer_qa_espaces et mesurer_regles_mortes
+#  l'ont). Conséquence mesurée sur son banc : l'instance de travail est
+#  verrouillée par `VERTEX_CODE`, donc le contrôle se déclarait à juste titre
+#  impossible et se sautait — même en pointant la variable sur l'instance QA
+#  ouverte, où l'instrument mesure pourtant 22 surfaces sans une anomalie. Le
+#  banc n'était pas muet parce que la mesure était impossible : il l'était
+#  parce que l'adresse était figée.
+BASE_DEFAUT = os.environ.get('VERTEX_MESURE_BASE', 'http://127.0.0.1:5002')
 
 #: Symbole qui n'existe sur aucun marché. Choisi long et improbable pour ne pas
 #: heurter un vrai ticker le jour où l'univers change.
