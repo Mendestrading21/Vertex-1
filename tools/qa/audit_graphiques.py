@@ -107,6 +107,17 @@ JS_MESURE = r"""
   //  légende « n/d », mention de source ou de fraîcheur).
   const EXPLIQUE = /aucune donnée|indisponible|non calcul|pas encore|insuffisant|non mesur|injoignable|non scanné|à actualiser|n\/d|non déclar|aucune position|source ?:|hors séance|non renseign|à venir|jamais exécut/i;
   const explique = (el) => {
+    //  Une explication n'est pas forcément du TEXTE de carte. Mesuré le
+    //  2026-09-06 : les tuiles SMI, USD/CHF et ETH d'« Aujourd'hui » portent
+    //  `data-absent="1"` et un `title` complet — « SMI n'est pas servi par le
+    //  dernier scan (source : yfinance) — aucune valeur n'est estimée à la
+    //  place. » — et l'audit les comptait muettes parce qu'il ne lisait que le
+    //  texte. Un marqueur explicite et une infobulle SONT des explications ;
+    //  ne pas les voir accuse le correctif qui vient d'être fait.
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      if (n.getAttribute && (n.getAttribute('data-absent')
+          || (n.getAttribute('title') || '').length > 12)) return true;
+    }
     const c = el.closest('section, .vx-card, .vx2-surface') || el.parentElement;
     if (!c) return false;
     if (EXPLIQUE.test(txt(c))) return true;

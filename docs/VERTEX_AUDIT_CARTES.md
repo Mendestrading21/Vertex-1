@@ -58,6 +58,31 @@ Les deux défauts que le relevé précédent portait encore sont fermés :
 « Scénarios Bull / Base / Bear » vidée à néant sur la fiche Analyse quand le
 dossier est incomplet.
 
+### Graphiques et widgets, même instance
+
+| Mesure | Résultat |
+| --- | --- |
+| Canevas mesurés | 37 |
+| Canevas jamais dessinés | **0** |
+| SVG de graphique mesurés | 188 |
+| SVG sans tracé | **0** |
+| Cartes-graphiques muettes | **0** |
+| Widgets de valeur | 2088 |
+| Widgets affichant un tiret | 191 |
+| Tirets SANS explication | **0** |
+
+Un tiret n'est pas un défaut : l'instance de mesure tourne sans IBKR, sans
+portefeuille déclaré et sans journal de trades. Le défaut est le tiret MUET, et
+il n'en reste aucun.
+
+Trois l'ont été jusqu'au dernier relevé — les tuiles SMI, USD/CHF et ETH
+d'« Aujourd'hui ». Elles ne l'étaient pas : elles portent `data-absent="1"` et
+l'infobulle « SMI n'est pas servi par le dernier scan (source : yfinance) —
+aucune valeur n'est estimée à la place. » C'est l'outil qui ne lisait que le
+TEXTE des cartes et ignorait les attributs. Corrigé : un marqueur explicite et
+une infobulle sont des explications, et ne pas les voir accuse le correctif qui
+vient d'être fait.
+
 ## Graphiques et widgets (`tools/qa/audit_graphiques.py`, 1600 px)
 
 Les deux premiers outils mesurent la PAGE (statut, erreurs, squelettes,
