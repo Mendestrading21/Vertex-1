@@ -89,6 +89,8 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | `b58b6270` | fix(brief) : delta du brief depuis le diff market_context (`daily_changes` jamais produit) — §13 #9 clos |
 | `c2c0e2b0` | feat(diffusion) P1 : réaction client aux événements SSE (invalidation + rejeu, regroupé, sans reload), émetteurs actualités et jobs, écouteur macro corrigé (coque vx-shell-8, SW v295) |
 | `1f3b5791` | feat(actualités) P2 : `published_at` normalisé, `received_at`, fil daté, « N sources » |
+| `99c5c1fa` | docs(skill) P3 : `references/data-feed-maintenance.md` lié depuis le skill maître |
+| `e0649f98` | test(navigateur) P4 : Chromium installé, sonde (shell headless, `VERTEX_MESURE_BASE`), 53 gardiens réels, deux défauts corrigés (coque vx-shell-9, SW v296) |
 
 ## 5. Tests (résultats exacts)
 
@@ -110,6 +112,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | Tranche delta du brief (`b58b6270`) | `4474 passed, 180 skipped, 0 failed` |
 | P1 diffusion (`c2c0e2b0`) | `4479 passed, 180 skipped, 0 failed` (un `except: pass` de trop détecté par `test_pass_terminal`, remplacé par `contextlib.suppress`) |
 | P2 actualités (`1f3b5791`) | `4483 passed, 180 skipped, 0 failed` |
+| P4 navigateur (`e0649f98`) | `4494 passed, 172 skipped, 0 failed` ; gardiens navigateur contre QA : `53 passed` |
 
 Preuves réelles hors suite : socket TWS (session marché seulement),
 collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
@@ -163,6 +166,11 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
   EventSource et tâches y sont coupés par conception ; la visibilité a été
   forcée pour vérifier la réaction client, le flux serveur a été lu
   directement (jobs, market, news).
-- P2 actualités fait (`1f3b5791`).
-- Prochaine action si reprise : P3 skill de maintenance, P4 composants, P5
-  sources CH/EU, P6 stabilité 60 min, P7 PR prête à relire.
+- P2 actualités fait (`1f3b5791`), P3 skill de maintenance fait (`99c5c1fa`),
+  P4 navigateur fait (`e0649f98`).
+- Incident : l'instance de travail relancée à 07:17 (pid 8024) s'est arrêtée
+  vers 07:20 sans traceback ni événement Windows ; cause inconnue (aucun test
+  ne touche le port 5002). Relancée à 08:26 (pid 25644, `ibkr_live: true`),
+  observation de 60 min en cours (P6).
+- Prochaine action si reprise : P5 sources CH/EU, P6 (lire
+  `observation_60min`), P7 PR prête à relire.

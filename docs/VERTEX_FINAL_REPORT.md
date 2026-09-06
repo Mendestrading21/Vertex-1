@@ -42,6 +42,8 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 | `b58b6270` | delta du brief depuis le diff market_context | `git revert` |
 | `c2c0e2b0` | P1 diffusion : réaction client aux événements SSE, émetteurs actualités/jobs (coque vx-shell-8, SW v295) | `git revert` puis re-bump |
 | `1f3b5791` | P2 actualités : horodatages source/réception, fil daté, sources comptées | `git revert` |
+| `99c5c1fa` | P3 : procédure de maintenance de l'alimentation dans le skill maître | `git revert` |
+| `e0649f98` | P4 : gardiens navigateur réels (Chromium, sonde, base QA), débordement Système et contraste Aujourd'hui corrigés (coque vx-shell-9, SW v296) | `git revert` puis re-bump ; Chromium reste dans le cache utilisateur |
 
 ## 4. Pages et champs effectivement couverts
 
@@ -102,7 +104,11 @@ TradingView (secret absent), Anthropic (clé absente).
   préexistante). L'instance précédente (00:57) était montée à 368 Mo en
   1 h 40 avec IBKR actif : à surveiller sur la durée.
 - Relance à 07:17 avec `b58b6270` (statut ok en 45 s, scan 07:17:54, aucun
-  `Traceback`) ; TWS toujours fermé (dimanche) → différé étiqueté. Mémoire de
+  `Traceback`) ; TWS toujours fermé (dimanche) → différé étiqueté. **Arrêt
+  inexpliqué vers 07:20** (dernière ligne de journal 07:20:01, pas de
+  traceback, pas d'événement Windows, aucun test ne touche le port 5002).
+  Relance à 08:26 (pid 25644, `ibkr_live: true` : TWS rouvert), observation
+  60 min consignée dans le journal de nuit. Mémoire de
   l'instance précédente : 271 → 346 Mo en 4 h sans IBKR, stable ensuite.
 - Instance QA (port 5003) arrêtée après les vérifications.
 - Le fonctionnement ne dépend pas de Claude : les boucles sont des threads du

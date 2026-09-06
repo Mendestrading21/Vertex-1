@@ -104,6 +104,8 @@ Chaque tranche de la mission est un commit revertible sur
 | Delta du brief (market_context) | `b58b6270` | oui |
 | P1 diffusion (réaction client SSE, émetteurs news/jobs) | `c2c0e2b0` | oui (touche `vertex/static` : re-bump requis) |
 | P2 actualités horodatées | `1f3b5791` | oui |
+| P3 procédure de maintenance (skill) | `99c5c1fa` | oui |
+| P4 gardiens navigateur réels | `e0649f98` | oui (touche `vertex/static` : re-bump requis) |
 
 Après un revert touchant `vertex/static`, bumper `td-shell-vN`
 (`vertex/app/routes/system.py`), `SHELL_VERSION` (`vertex/ui/shell/__init__.py`)
