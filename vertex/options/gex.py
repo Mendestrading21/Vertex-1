@@ -254,7 +254,12 @@ def max_pain(contracts):
     for c in (contracts or []):
         if not isinstance(c, dict):
             continue
-        k, o = _num(c.get('strike')), _num(c.get('oi'))
+        #  Accesseur honnête plutôt que champ brut : `_i(None) -> 0`. Ici le
+        #  zéro imputé était déjà écarté par la garde suivante, mais lire le
+        #  champ brut laisse croire que la garde protège d'un zéro RÉEL —
+        #  elle protégeait surtout d'une absence. Un seul accesseur pour tous
+        #  les lecteurs du dépôt, sinon le prochain oubli est invisible.
+        k, o = _num(c.get('strike')), _bf.open_interest(c)
         if k is None or o is None or o <= 0:
             continue
         rows.append((k, o, str(c.get('type', '')).upper() != 'PUT'))

@@ -70,7 +70,12 @@ def analyze(contracts, *, symbol=None, top=8):
         if vol is None or vol <= 0 or per is None or strike is None:
             continue
         notional = vol * per                          # premium négocié du cycle (réel)
-        oi = _num(c.get('oi'))
+        #  Accesseur honnête plutôt que champ brut : `_i(None) -> 0`. Ici le
+        #  zéro imputé était déjà écarté par la garde suivante, mais lire le
+        #  champ brut laisse croire que la garde protège d'un zéro RÉEL —
+        #  elle protégeait surtout d'une absence. Un seul accesseur pour tous
+        #  les lecteurs du dépôt, sinon le prochain oubli est invisible.
+        oi = _bf.open_interest(c)
         vol_oi = round(vol / oi, 2) if oi and oi > 0 else None
         is_call = str(c.get('type', '')).upper() != 'PUT'
         (call_prem, put_prem) = ((call_prem + notional, put_prem) if is_call
