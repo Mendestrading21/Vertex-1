@@ -111,6 +111,11 @@ jobs, données persistées et chemins de rollback. Lire
 - Maintenance de l'alimentation (procédures testées : inventaire des champs,
   traçabilité, frontière IBKR, réseau hors requête, diffusion, gardiens) :
   [data-feed-maintenance.md](references/data-feed-maintenance.md).
+- Balayages transversaux (nom indéfini, primitive absente, capacité non
+  branchée, clé sans producteur, route muette) — à lancer AVANT de conclure
+  qu'une fonctionnalité ne marche pas, car la cause est souvent une clé ou un
+  module, pas la fonction qu'on regarde :
+  [balayages-transversaux.md](references/balayages-transversaux.md).
 - Décision, IA, outils, mémoire et limites :
   [ai-decision-contract.md](references/ai-decision-contract.md).
 - Recherche, stratégies et robustesse hors échantillon :
