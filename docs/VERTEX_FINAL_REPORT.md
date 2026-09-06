@@ -40,6 +40,7 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 | `9327ee42` | cotations LLM réconciliées avec le scan (Système), contrat du lot décision | `git revert` |
 | `13b063e0` | `/api/company` et `/api/correlations` sans réseau dans la requête | `git revert` |
 | `b58b6270` | delta du brief depuis le diff market_context | `git revert` |
+| `c2c0e2b0` | P1 diffusion : réaction client aux événements SSE, émetteurs actualités/jobs (coque vx-shell-8, SW v295) | `git revert` puis re-bump |
 
 ## 4. Pages et champs effectivement couverts
 

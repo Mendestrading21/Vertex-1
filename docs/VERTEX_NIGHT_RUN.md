@@ -87,6 +87,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | `9327ee42` | fix(cerveau) : cotations LLM réconciliées avec le prix du scan (`scan_price`, `ecart_pct`) ; contrat du lot décision (`VERTEX_LOT_DECISION_CONTRAT.md`) |
 | `13b063e0` | fix(réseau) : `/api/company` et `/api/correlations` sans réseau dans la requête (cache + fond) — §13 #8 clos |
 | `b58b6270` | fix(brief) : delta du brief depuis le diff market_context (`daily_changes` jamais produit) — §13 #9 clos |
+| `c2c0e2b0` | feat(diffusion) P1 : réaction client aux événements SSE (invalidation + rejeu, regroupé, sans reload), émetteurs actualités et jobs, écouteur macro corrigé (coque vx-shell-8, SW v295) |
 
 ## 5. Tests (résultats exacts)
 
@@ -106,6 +107,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | Tranche cerveau + contrat décision (`9327ee42`) | `4471 passed, 180 skipped, 0 failed` |
 | Tranche company/corrélations (`13b063e0`) | `4473 passed, 180 skipped, 0 failed` |
 | Tranche delta du brief (`b58b6270`) | `4474 passed, 180 skipped, 0 failed` |
+| P1 diffusion (`c2c0e2b0`) | `4479 passed, 180 skipped, 0 failed` (un `except: pass` de trop détecté par `test_pass_terminal`, remplacé par `contextlib.suppress`) |
 
 Preuves réelles hors suite : socket TWS (session marché seulement),
 collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
@@ -154,7 +156,10 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
 - Tranche « cerveau + contrat décision » faite (`9327ee42`) : cotations LLM
   réconciliées (Système), contrat du lot 10 écrit — **décision humaine
   attendue** (`VERTEX_LOT_DECISION_CONTRAT.md` §9) avant tout code moteur.
-- Prochaine action si reprise : regroupement des onglets Options (interface,
-  lot 18), puis, sur validation humaine, étape 1 du lot décision (façade sans
-  changement de calcul). SEC (#11) et épinglage `ib_async` restent des
-  actions humaines.
+- Plan d'exécution `VERTEX_PLAN_SUITE.md` : P1 diffusion fait (`c2c0e2b0`).
+  Limite de preuve : le volet navigateur intégré est `document.hidden`, donc
+  EventSource et tâches y sont coupés par conception ; la visibilité a été
+  forcée pour vérifier la réaction client, le flux serveur a été lu
+  directement (jobs, market, news).
+- Prochaine action si reprise : P2 actualités, P3 skill de maintenance, P4
+  composants, P5 sources CH/EU, P6 stabilité 60 min, P7 PR prête à relire.
