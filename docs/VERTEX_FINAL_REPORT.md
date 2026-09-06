@@ -109,8 +109,10 @@ TradingView (secret absent), Anthropic (clé absente).
   `Traceback`) ; TWS toujours fermé (dimanche) → différé étiqueté. **Arrêt
   inexpliqué vers 07:20** (dernière ligne de journal 07:20:01, pas de
   traceback, pas d'événement Windows, aucun test ne touche le port 5002).
-  Relance à 08:26 (pid 25644, `ibkr_live: true` : TWS rouvert), observation
-  60 min consignée dans le journal de nuit. Mémoire de
+  Relance à 08:26 (pid 25644, `ibkr_live: true` : TWS rouvert). **Observation
+  de 60 minutes** (08:27 → 09:27) : 60/60 sondes ok, IBKR vivant, deux scans,
+  mémoire 151 → 282 Mo, 31 threads, aucune reconnexion ni traceback.
+  Relance à 09:28 sur `c90daa19` (communiqués officiels) : pid 4608, ok. Mémoire de
   l'instance précédente : 271 → 346 Mo en 4 h sans IBKR, stable ensuite.
 - Instance QA (port 5003) arrêtée après les vérifications.
 - Le fonctionnement ne dépend pas de Claude : les boucles sont des threads du
@@ -118,9 +120,9 @@ TradingView (secret absent), Anthropic (clé absente).
 
 ## 8. Branche, commits, pull request
 
-- Branche `ui/refonte-dashboards` poussée sur `origin` ; PR brouillon
-  **#867** vers `main`, CI verte. Aucune fusion, aucun force-push, aucun
-  déploiement.
+- Branche `ui/refonte-dashboards` poussée sur `origin` ; PR **#867** vers
+  `main`, CI verte, passée « prête à relire » (P7). Aucune fusion, aucun
+  force-push, aucun déploiement : la fusion reste un acte humain.
 
 ## 9. Actions humaines restantes (indispensables)
 

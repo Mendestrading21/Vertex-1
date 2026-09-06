@@ -175,5 +175,15 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
   ne touche le port 5002). Relancée à 08:26 (pid 25644, `ibkr_live: true`),
   observation de 60 min en cours (P6).
 - P5 publications fait (`c90daa19`).
-- Prochaine action si reprise : P6 (consigner `observation_60min`), P7 PR
-  prête à relire.
+- P6 stabilité : observation de **60 minutes** (08:27 → 09:27, sonde toutes
+  les 60 s) de l'instance de travail (pid 25644, code `e0649f98`) : 60/60
+  sondes `status: ok`, `ibkr_live: true` sur toute la durée (TWS rouvert),
+  deux scans (08:30, 09:03), mémoire 151 → 282 Mo (paliers aux scans),
+  31 threads stables, aucune reconnexion ni traceback. Journal :
+  `observation_60min.log` (scratchpad, hors dépôt).
+- Relance à 09:28 sur `c90daa19` (P5 : communiqués) : pid 4608, `status: ok`,
+  `ibkr_live: true` en 50 s.
+- P7 : PR #867 passée « prête à relire » (CI verte) ; la fusion reste un acte
+  humain.
+- Plan P1–P7 terminé. Reprise éventuelle : décisions humaines
+  (`VERTEX_FINAL_REPORT.md` §9).
