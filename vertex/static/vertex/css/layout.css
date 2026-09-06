@@ -121,8 +121,57 @@ button.vx-nav-item{background:none;font:inherit;cursor:pointer;text-align:left;
 @media (max-width:1200px){.vx-grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}
   .vx-grid-3{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:680px){.vx-grid-4,.vx-grid-3,.vx-grid-2{grid-template-columns:1fr}}
-/* Écran très large : exploiter la largeur (§11) */
+/* ── ÉCRANS TRÈS LARGES ────────────────────────────────────────────────
+   MESURÉ le 2026-09-06 sur le poste de travail (deux écrans 5120 × 1440, du
+   32:9) : la page « Marchés » n'occupait que 34,4 % de l'écran, ne formait
+   jamais plus de DEUX colonnes, et 44 % de ses lignes ne portaient qu'une
+   seule carte. Plus de trois mille pixels — les deux tiers — restaient vides
+   pendant qu'on faisait défiler.
+
+   Sur un 32:9, la ressource RARE est la HAUTEUR : 1440 px, pas plus qu'un
+   écran ordinaire. Élargir sans rien réorganiser ne fait qu'étirer les cartes
+   et allonger les lignes de texte ; ce qui aide vraiment, c'est de mettre PLUS
+   de choses côte à côte, pour acheter de la hauteur avec de la largeur.
+
+   Trois règles, dans cet ordre :
+
+   1. le plafond de contenu monte par paliers, jamais jusqu'au bord — une
+      lecture confortable garde une marge, et un tableau de bord collé aux
+      deux bords force des mouvements de tête ;
+   2. au-delà de 2400 px, les cartes PLEINE LARGEUR (`col-12`, `col-11`,
+      `col-10`) tombent à la moitié : c'est exactement la ligne à une seule
+      carte qui devient une ligne à deux. Les portées plus petites ne bougent
+      pas — elles étaient déjà côte à côte, et les redécouper les rendrait
+      illisibles ;
+   3. le TEXTE courant garde une mesure lisible quelle que soit la largeur de
+      sa carte (voir `--vx-mesure-texte` dans utilities.css). Mesuré avant :
+      jusqu'à 326 caractères par ligne, soit trois fois la limite au-delà de
+      laquelle l'œil perd la ligne suivante.
+
+   Les paliers valent pour la LARGEUR DE FENÊTRE, pas pour l'écran : une
+   fenêtre à moitié d'écran sur un 5120 fait 2560 px et mérite déjà le premier
+   palier. */
 @media (min-width:1900px){.vx-content{max-width:1760px}}
+@media (min-width:2400px){.vx-content{max-width:2240px}}
+@media (min-width:3200px){.vx-content{max-width:2960px}}
+@media (min-width:4400px){.vx-content{max-width:3600px}}
+
+@media (min-width:2400px){
+  /*  Une carte pleine largeur devient une demi-largeur : la ligne à une carte
+      devient une ligne à deux. `col-11` et `col-10` suivent — sur douze
+      colonnes elles occupent la ligne entière en pratique. */
+  .vx-grid > .vx-col-12,.vx-grid > .vx-span-12,
+  .vx-grid > .vx-col-11,.vx-grid > .vx-span-11,
+  .vx-grid > .vx-col-10,.vx-grid > .vx-span-10{grid-column:span 6}
+  /*  Une carte qui a REFUSÉ ce découpage le dit par un attribut : certaines
+      pièces (un tableau large, une chaîne d'options, un graphique de terme)
+      perdent leur sens coupées en deux. */
+  .vx-grid > [data-pleine-largeur]{grid-column:span 12}
+  /*  Les grilles auto-remplies gagnent des colonnes d'elles-mêmes, mais leur
+      minimum de 230 px produirait dix colonnes de vignettes illisibles : on
+      relève le minimum plutôt que de figer un nombre. */
+  .vx-grid-auto{grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+}
 
 /* ── Densité ───────────────────────────────────────────────────────── */
 [data-density="compact"]{--vx-s4:12px;--vx-s5:16px;--vx-s6:18px}

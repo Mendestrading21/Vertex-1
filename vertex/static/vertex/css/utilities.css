@@ -29,3 +29,34 @@
 .vx-kv .k{color:var(--vx-text-muted);flex:0 0 auto;max-width:55%;min-width:0;overflow-wrap:anywhere}
 .vx-kv .v{font-family:var(--vx-font-mono);font-variant-numeric:tabular-nums;
   font-weight:600;text-align:right;flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+
+/* ── MESURE DU TEXTE COURANT ───────────────────────────────────────────
+   MESURÉ le 2026-09-06 sur un écran 5120 × 1440 : les paragraphes d'aide et
+   les notes de bas de carte atteignaient 326 caractères par ligne. Au-delà
+   d'environ 90, l'œil ne retrouve plus le début de la ligne suivante et
+   relit la même — une carte plus large devient alors plus DIFFICILE à lire,
+   ce qui est l'inverse du but.
+
+   La règle ne touche que la PROSE. Les tableaux, les grilles de valeurs, les
+   graphiques et les lignes clé-valeur doivent occuper toute leur carte : une
+   colonne de chiffres n'a pas de « longueur de ligne », et la brider laisserait
+   du vide à droite de données qu'on compare justement de gauche à droite. */
+:root{--vx-mesure-texte:92ch}
+#vx-content p,
+#vx-content .vx-help,
+#vx-content .vx-sub,
+#vx-content .vx-insight,
+#vx-content .vx-meta,
+#vx-content .vx-empty,
+#vx-content .vx-card li{max-width:var(--vx-mesure-texte)}
+/*  Sauf là où la largeur EST l'information : une cellule de tableau se compare
+    de gauche à droite, un pied de carte s'aligne sur son bord, une puce de
+    filtre se pose sur une ligne. Les brider laisserait du vide à droite de
+    données qu'on lit justement en balayant. */
+#vx-content td .vx-meta,
+#vx-content th .vx-meta,
+#vx-content .vx-table .vx-meta,
+#vx-content .vx-card-footer .vx-meta,
+#vx-content .vx-chart-head .vx-meta,
+#vx-content .vx-actions .vx-meta{max-width:none}
+
