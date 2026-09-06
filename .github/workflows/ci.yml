@@ -84,3 +84,49 @@ jobs:
         run: python -m pip install -r requirements-dev.txt
       - name: Prove analysis-only invariant
         run: python -m pytest tests/test_no_orders.py tests/test_contract.py -q
+
+  navigateur:
+    #  P4/P7 : les gardiens navigateur (huit espaces à 390 px, contraste,
+    #  règles CSS mortes, couche visuelle, boutons morts) mesurent une
+    #  instance QA lancée ICI (sans IBKR, sans code d'accès, loopback).
+    #  Sans navigateur ni instance ouverte ils s'abstiennent et le disent :
+    #  ce job les fait vraiment mesurer, dans le clone.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NO_IBKR: "1"
+      START_ON_IMPORT: "0"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements-dev.txt') }}
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Start the QA instance (no broker, no access code, loopback)
+        run: |
+          nohup python tools/qa/run_qa_instance.py --port 5003 > qa_instance.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:5003/healthz > /dev/null; then echo "QA prête après ${i}s"; break; fi
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:5003/healthz
+      - name: Browser guardians against the QA instance
+        env:
+          VERTEX_MESURE_BASE: http://127.0.0.1:5003
+        run: |
+          python -m pytest -q -rs tests/test_qa_espaces.py tests/test_couche_visuelle.py tests/test_regles_mortes.py tests/test_boutons_morts_temoins.py tests/test_aveu_navigateur.py
+      - name: QA instance log (tail)
+        if: always()
+        run: tail -n 40 qa_instance.log || true

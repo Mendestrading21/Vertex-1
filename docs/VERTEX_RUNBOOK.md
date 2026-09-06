@@ -37,6 +37,22 @@ Copie le dépôt dans `%TEMP%\vertex-qa`, `NO_IBKR=1`, `DEMO=0`, écoute
 127.0.0.1 seulement. Données différées yfinance ; sert aux captures et à la
 console sans toucher aux caches de l'instance de travail.
 
+### Chien de garde local (non installé par défaut)
+
+`tools/ops/veille_vertex.ps1` sonde `/healthz` toutes les 60 s et relance
+`python -m vertex` depuis le dépôt seulement quand l'instance ne répond plus
+**et** que plus rien n'écoute sur le port (un scan long n'est jamais tué).
+Journal borné dans `%LOCALAPPDATA%\Vertex\veille.log`, aucun secret, TWS
+jamais touché. Lancement manuel :
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\ops\veille_vertex.ps1
+```
+
+L'inscrire en tâche planifiée (ex. `schtasks /create /sc onlogon /tn VertexVeille /tr "powershell -NoProfile -ExecutionPolicy Bypass -File \"<dépôt>\tools\ops\veille_vertex.ps1\""`)
+est une décision humaine : ce dépôt ne modifie pas la configuration de
+l'ordinateur.
+
 ### Démarrage automatique à l'ouverture de session
 
 `Installer_Demarrage_Auto.bat` installe `_vertex_autostart.cmd` dans le
