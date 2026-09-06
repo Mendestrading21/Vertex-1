@@ -49,7 +49,13 @@ def api_market_summary():
         # Couverture du score : `partiel`/`breadth_status` ne sont posés par le
         # moteur QUE lorsque la largeur de marché manque (25 pts non mesurés) —
         # sans eux, un score partiel était indiscernable d'un score complet.
-        'score_partiel': bool(cl and cl.get('partiel')),
+        #  Second tour : `bool(cl and ...)` rendait `score_partiel: False` quand
+        #  il n'y a AUCUN climat (mesuré : `market_ctx` vide → `climate()` rend
+        #  None, donc score null ET « couverture complète »). Affirmer une
+        #  couverture complète sur un score absent est la même faute que le
+        #  score partiel non marqué qu'on venait de corriger : absence et
+        #  couverture restent trois états distincts (None / True / False).
+        'score_partiel': (bool(cl.get('partiel')) if cl else None),
         'score_note': (cl or {}).get('note'),
         'breadth_status': (cl or {}).get('breadth_status'),
         'regime': mc.get('spy_regime'), 'roro': mc.get('roro'), 'roro_gap': mc.get('roro_gap'),

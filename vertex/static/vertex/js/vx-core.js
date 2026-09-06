@@ -66,7 +66,18 @@
       if (d.toDateString() === yest.toDateString()) return 'Hier à ' + d.toLocaleTimeString('fr-FR', opts);
       return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
     },
+    /* `new Date(null)` coerce à l'époque 0 : sans le garde ci-dessous,
+       `isoFull(null)` rendait « 01/01/1970 01:00:00 » — un horodatage
+       INVENTÉ là où rien n'a été servi. Mesure du 06/09/2026 sur le fichier
+       servi : isoFull(null) → '01/01/1970 01:00:00' ; isoFull(undefined) →
+       '' ; isoFull('') → ''. Seul `null` passait, et c'est précisément la
+       valeur que produit l'idiome du dépôt `updateIndicator(x || null, …)`
+       (25 sites dans vertex/), donc le 1er janvier 1970 était peint en
+       info-bulle exactement dans le cas où AUCUN horodatage n'existait.
+       Une absence rend '' comme un horodatage illisible : c'est l'appelant
+       qui choisit son libellé d'absence (même règle qu'`instantSource`). */
     isoFull(ts) {
+      if (ts == null || ts === '') return '';
       const d = (ts instanceof Date) ? ts : new Date(typeof ts === 'number' && ts < 1e12 ? ts * 1000 : ts);
       return isNaN(d) ? '' : d.toLocaleString('fr-FR');
     },
@@ -106,13 +117,37 @@
     },
     /* Phrase d'info-bulle qui accompagne `instantSource` : dit la chaîne
        BRUTE de la source et si l'heure a été convertie. Sans elle, « (fuseau
-       n/d) » serait un sigle de plus ; avec elle, le lecteur sait pourquoi. */
+       n/d) » serait un sigle de plus ; avec elle, le lecteur sait pourquoi.
+       La note ne met en cause PERSONNE : « fuseau non déclaré par la source »
+       affirmait une chose non mesurée, et fausse au moins une fois — yfinance
+       déclare bien son 'Z' sur published_at, et c'est Vertex qui le tronque en
+       amont (mesure du 06/09/2026 : 45 items sur 45 arrivent ici sans fuseau,
+       alors que la source en portait un). La phrase constate ce qu'on TIENT :
+       l'horodatage servi n'en contient pas. */
     instantSourceNote(iso) {
       const s = String(iso === null || iso === undefined ? '' : iso).trim();
       if (!s) return 'Aucun horodatage de publication servi par la source.';
       return VX.fmt._hasTz(s)
         ? 'Publié ' + s + ' — converti dans votre fuseau'
-        : 'Publié ' + s + ' — fuseau non déclaré par la source : heure NON convertie';
+        : 'Publié ' + s + ' — aucun fuseau dans l’horodatage servi : heure NON convertie';
+    },
+  };
+
+  /* ── Provenance d'une cotation de position (§ marque visible) ─────────
+     TROIS écritures du même fait coexistent dans la charge de /api/pos-quotes,
+     et une page qui n'en lit qu'une annonce du temps réel sur un prix de scan :
+       · repli OPTION (routes/desk.py `_scan_fallback_quote`) → `delayed: true` ;
+       · repli ACTION (cotation_unifiee.en_charge_client) → PAS de `delayed`,
+         mais `mode: 'DELAYED'` et `fallback_used: true` ;
+       · cotation courtier (terminal.posq) → aucun des trois champs.
+     Mesure du 06/09/2026 : le seul test `q.delayed` laissait une action
+     valorisée au prix de scan s'afficher sans la moindre marque de différé, sur
+     les deux pages qui cotent des positions. La règle vit ici, une seule fois :
+     dupliquée, elle avait déjà divergé entre le Briefing et le Portefeuille. */
+  VX.quotes = {
+    differee(q) {
+      if (!q || typeof q !== 'object') return false;
+      return q.delayed === true || q.fallback_used === true || q.mode === 'DELAYED';
     },
   };
 
@@ -127,9 +162,13 @@
     const modeLabel = { live: 'Live', delayed: 'Différé', fallback: 'Secours', error: 'Erreur' }[mode] || '';
     const ms = VX.freshness._ms(ts);
     const suite = source ? ' · ' + source + (modeLabel ? ' ' + modeLabel : '') : '';
+    /*  L'info-bulle date le chiffre : sans horodatage servi, il n'y a rien à
+        dater et l'attribut disparaît plutôt que de porter une chaîne vide ou
+        — avant le garde d'`isoFull` — l'époque Unix. */
+    const iso = VX.fmt.isoFull(ts);
     return `<span class="vx-update" data-mode="${mode || 'fallback'}"` +
       (ms == null ? '' : ` data-ts="${ms}"`) +
-      ` title="${VX.fmt.isoFull(ts)}">` +
+      (iso ? ` title="${iso}"` : '') + `>` +
       /*  `VX.fmt.ago(null)` rend « — ». Pose dans un pied de carte, ce tiret
           se lit comme un age, alors qu'il dit l'ABSENCE d'age : trois pages
           affichaient « ● — · Moteur … » sans qu'on puisse savoir si la donnee
@@ -502,10 +541,23 @@
       this._tasks = keep;
     },
     /* Rejoue les tâches de la page (sans toast, sans vider tout le cache) :
-       appelé par live-updates.js quand le serveur annonce une donnée neuve. */
-    async runTasks() {
+       appelé par live-updates.js quand le serveur annonce une donnée neuve.
+
+       `labels` (optionnel, tableau) : ne rejouer QUE les tâches ainsi nommées.
+       Sans ce filtre, un canal purement TÉLÉMÉTRIQUE faisait rejouer toutes les
+       tâches de la page ouverte : un battement `jobs` — dont la seule cible de
+       cache est `/api/system` — déclenchait sur Marchés, Portefeuille ou
+       Aujourd'hui l'intégralité de leurs fetch, alors qu'aucun de leurs
+       chiffres ne dépend de l'état d'une boucle de fond. C'est l'amplification
+       inter-pages du constat 23. Un tableau vide ne rejoue rien ; l'absence
+       d'argument garde le comportement historique (rejeu complet). */
+    async runTasks(labels) {
       if (document.hidden) return false;
-      await Promise.allSettled(this._tasks.map((t) => { try { return t.fn(); } catch (e) { return null; } }));
+      const filtre = Array.isArray(labels) ? labels : null;
+      const tasks = filtre
+        ? this._tasks.filter((t) => filtre.indexOf(t.label) >= 0)
+        : this._tasks;
+      await Promise.allSettled(tasks.map((t) => { try { return t.fn(); } catch (e) { return null; } }));
       return true;
     },
     async runAll(btn) {

@@ -383,7 +383,10 @@
       var interp = d && d.interpretation;
       el.innerHTML = verdictCard(interp) +
         '<div class="vx-muted" style="margin-top:.6rem">Contrats analysés : ' + VXf.nd(d && d.contracts) +
-        (d && d.current_iv != null ? ' · IV médiane ' + VXf.num(d.current_iv * 100, 1) + ' %' : '') + '</div>';
+        (d && d.current_iv != null ? ' · IV médiane ' + VXf.num(d.current_iv * 100, 1) + ' %' : '') + '</div>' +
+        /* `iv_rank_note` est servi par la route et n’était lu par AUCUNE page :
+           l’absence d’IV rank restait expliquée dans le JSON seulement. */
+        (d && d.iv_rank_note ? '<div class="vx-muted" style="margin-top:.35rem">' + esc(d.iv_rank_note) + '</div>' : '');
     }).catch(function (e) { fail(el, e.message); });
     renderVolCharts(sym);
   }
@@ -835,20 +838,51 @@
   }
 
   // ── Symboles réellement présents dans le tableau d'options (démo/scan) ──
+  /* Le second argument est l'ERREUR de lecture, pas une liste vide : un tableau
+     réellement vide et un tableau qu'on n'a PAS PU LIRE sont deux états que
+     l'invariant 5 exige de garder distincts, et `catch(cb([]))` les fondait. */
   function boardSyms(cb) {
     get('/api/options/overview').then(function (d) {
       var rows = (d && d.radar) || [];
       var seen = {}, syms = [];
       rows.forEach(function (r) { var s = (r && r.sym || '').toUpperCase(); if (s && !seen[s]) { seen[s] = 1; syms.push(s); } });
-      cb(syms);
-    }).catch(function () { cb([]); });
+      cb(syms, null);
+    }).catch(function (e) { cb([], e || new Error('lecture impossible')); });
   }
+
+  /* ABSENCE NOMMÉE quand le tableau d'options ne fournit aucun titre.
+     MESURE du 2026-09-06 (instance de contrôle, sans IBKR) :
+     `/options?view=volatility` rendait 16 valeurs vides sur 16. Cause :
+     `autoSym` faisait `if (!syms.length) return;` — un retour SILENCIEUX —
+     et les quatre hôtes de graphiques (`vx-opt-term`, `vx-opt-cone`,
+     `vx-opt-oi`, `vx-opt-smile`) restaient littéralement vides sous un rail
+     qui conseillait « Choisis un symbole présent dans le tableau d'options »,
+     consigne inapplicable puisqu'il n'y en avait aucun. Une absence se dit ;
+     et une PANNE de lecture se dit autrement qu'une absence. */
+  function nommerAbsenceDeTableau(railId, chartIds, erreur) {
+    var msg = erreur
+      ? ('Le tableau d’options n’a pas pu être lu (' + (erreur.message || 'erreur inconnue') + ') : '
+         + 'ce n’est pas une absence de données, c’est une lecture en échec. Saisis un symbole pour interroger directement.')
+      : ('Aucun titre dans le tableau d’options pour l’instant : rien à pré-sélectionner. '
+         + 'Le tableau se remplit au passage du scan ; tu peux saisir un symbole à la main.');
+    var rail = document.getElementById(railId);
+    if (rail) {
+      rail.innerHTML = erreur
+        ? ((window.VX && VX.states) ? VX.states.error(esc(msg)) : '<div class="vx-error-banner">' + esc(msg) + '</div>')
+        : ((window.VX && VX.states) ? VX.states.empty(esc(msg)) : '<div class="vx-empty">' + esc(msg) + '</div>');
+    }
+    (chartIds || []).forEach(function (id) {
+      var e = document.getElementById(id);
+      if (e) e.innerHTML = '<div class="vx-card"><div class="vx-' + (erreur ? 'error-banner' : 'empty') + '">' + esc(msg) + '</div></div>';
+    });
+  }
+
   // Pré-sélectionne un symbole du tableau + puces d'accès rapide, pour que les
   // graphiques s'affichent d'emblée (§36) au lieu d'un formulaire vide (§10).
-  function autoSym(goEl, inputEl, loadFn) {
+  function autoSym(goEl, inputEl, loadFn, vide) {
     if (!inputEl) return;
-    boardSyms(function (syms) {
-      if (!syms.length) return;
+    boardSyms(function (syms, erreur) {
+      if (!syms.length) { if (vide) vide(erreur); return; }
       if (goEl && goEl.parentNode && !goEl.parentNode.querySelector('.opt-chips')) {
         var chips = document.createElement('div');
         chips.className = 'opt-chips vx-flex vx-wrap';
@@ -882,19 +916,33 @@
       var s = document.getElementById('vx-opt-vol-sym');
       if (g) g.addEventListener('click', function () { loadVolatility((s.value || '').trim().toUpperCase()); });
       if (s) s.addEventListener('keydown', function (e) { if (e.key === 'Enter') loadVolatility((s.value || '').trim().toUpperCase()); });
-      autoSym(g, s, loadVolatility);
+      autoSym(g, s, loadVolatility, function (err) {
+        nommerAbsenceDeTableau('vx-opt-vol-out-body',
+          ['vx-opt-term', 'vx-opt-cone', 'vx-opt-oi', 'vx-opt-smile'], err);
+      });
     } else if (v === 'events') {
       var g2 = document.getElementById('vx-opt-ev-go');
       var s2 = document.getElementById('vx-opt-ev-sym');
       if (g2) g2.addEventListener('click', function () { loadEvents((s2.value || '').trim().toUpperCase()); });
       if (s2) s2.addEventListener('keydown', function (e) { if (e.key === 'Enter') loadEvents((s2.value || '').trim().toUpperCase()); });
-      autoSym(g2, s2, loadEvents);
+      autoSym(g2, s2, loadEvents, function (err) {
+        nommerAbsenceDeTableau('vx-opt-ev-out-body', [], err);
+      });
     } else if (v === 'scenarios') {
       var g3 = document.getElementById('vx-opt-sc-go');
       var s3 = document.getElementById('vx-opt-sc-sym');
       if (g3) g3.addEventListener('click', function () { loadScenarios((s3.value || '').trim().toUpperCase()); });
       if (s3) s3.addEventListener('keydown', function (e) { if (e.key === 'Enter') loadScenarios((s3.value || '').trim().toUpperCase()); });
-      autoSym(g3, s3, loadScenarios);
+      autoSym(g3, s3, loadScenarios, function (err) {
+        /* MESURE du 2026-09-06 : cette vue porte un SECOND hôte,
+           `vx-opt-strategies` (options_intel_page.py:289). Il n'était pas
+           passé ici, donc il gardait son texte de départ — « Choisis un
+           symbole pour construire les stratégies depuis le board » — à
+           l'identique dans les DEUX états : consigne inapplicable quand le
+           board est vide, et panne muette quand la lecture échoue. C'est la
+           même confusion absence/panne que le rail voisin vient de fermer. */
+        nommerAbsenceDeTableau('vx-opt-sc-out-body', ['vx-opt-strategies'], err);
+      });
     }
   }
 

@@ -486,7 +486,34 @@ function paintValuation(t,cf){
   const cmp=peersCompareBars(cf,peers,sm,{key:'pe',median:sm.median_pe,fmt:v=>'×'+(+v).toFixed(1)});
   const cmpBlock=cmp?`<div class="vx-mt3"><div class="vx-metric-k" style="margin-bottom:6px">P/E — ${SYM} vs pairs</div>${cmp}</div>`:'';
   body('an-financials',metricGrid(cells)+cmpBlock);
-  const srcEl=$('an-fin-src');if(srcEl)srcEl.textContent=demo?'DÉMO':'cache';
+  /* Le badge affirmait « cache » dans TOUS les états non-démo. MESURE du
+     2026-09-06 sur un titre jamais demandé (instance neuve, cache froid) :
+     les douze mesures affichaient « — » sous un badge « cache » — une
+     provenance annoncée alors que rien n'était en cache et que la collecte
+     était en vol. Absence, collecte en cours, instantané précédent et cache
+     sont quatre états DISTINCTS (invariant 5) ; la page connaît déjà le bon
+     dans `t.meta`, elle ne le lisait simplement pas ici. */
+  const srcEl=$('an-fin-src');
+  if(srcEl){
+    const fm=(t&&t.meta)||{};
+    srcEl.textContent=demo?'DÉMO'
+      :(fm.rafraichissement_en_cours||fm.etat==='MISSING')?'collecte en cours'
+      :fm.etat==='OFFLINE'?'source injoignable'
+      :fm.etat==='STALE'?'scan précédent'
+      :fm.qualite==='PARTIELLE'?'cache partiel'
+      :'cache';
+    srcEl.setAttribute('data-tone',
+      demo?'warn'
+      :(fm.rafraichissement_en_cours||fm.etat==='MISSING')?''
+      :(fm.etat==='OFFLINE')?'risk'
+      :(fm.etat==='STALE'||fm.qualite==='PARTIELLE')?'warn':'');
+    srcEl.title=demo?'chiffres de démonstration — aucune valeur réelle'
+      :(fm.rafraichissement_en_cours||fm.etat==='MISSING')
+        ?'les fondamentaux sont en cours de collecte : un tiret signifie « pas encore reçu », pas « zéro »'
+      :fm.etat==='OFFLINE'?'la source des fondamentaux est injoignable'
+      :fm.etat==='STALE'?'valeurs du scan précédent'
+      :'valeurs du dernier instantané collecté';
+  }
   paintQuarters(cf,demo);
   paintQuadrant(cf,sm,peers,demo);
   paintRiskMap(t&&t.risk_map);

@@ -252,7 +252,18 @@ const $=(id)=>document.getElementById(id);
 //  disparu : il n'y a plus rien a peindre, et la promesse ne se rompt pas.
 
 function esc(s){return String(s??'').replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));}
-function modeOf(scan){return scan&&scan.data_source==='demo'?'fallback':(scan&&scan.source==='ibkr'?'live':'delayed');}
+/* MODE des données du scan — une seule autorité pour les 17 pieds de cette page.
+   « live » n'y a JAMAIS été prouvable : /scan ne transporte que des BARRES
+   QUOTIDIENNES (terminal.py : fetch_universe_bars(duration='1 Y') côté courtier,
+   yf.download(interval='1d') côté web), et la route le dit elle-même
+   (vertex/app/routes/scan_api.py : « le badge LIVE IBKR reste piloté par
+   l'overlay /quotes — lui seul voit les ticks »). Mesure du 06/09/2026 : dès que
+   le courtier sert TOUT l'univers, scan.source vaut exactement 'ibkr' et les 17
+   pieds annonçaient « ibkr Live » au-dessus de clôtures — dont les 4 KPI macro,
+   où ^TNX porte sa propre date de clôture (scan.macro[].date). Le briefing
+   pratiquait déjà la forme honnête à un endroit (briefing.py, pied « Essentiels » :
+   data_source==='demo'?'fallback':'delayed') ; elle devient la règle. */
+function modeOf(scan){return scan&&scan.data_source==='demo'?'fallback':'delayed';}
 // Contexte de marché = market_ctx (régime/vix/breadth/verdict) FUSIONNÉ avec
 // market (statut horaire). Avant, `market` (et/open/session) masquait tout le
 // contexte via `||` — d'où « verdict non calculé » et VIX/breadth vides à tort.
@@ -534,7 +545,20 @@ function macroCard(label,d,scan,note){
      celle de la source quand elle existe (obs), l'indicateur de scan dit
      l'âge de l'instantané. Sans obs (Pétrole, Or), seul l'indicateur : aucune
      date fabriquée. */
-  const foot=`<div class="m-foot">${(d&&d.obs)?'observé le '+esc(dateFrOff(d.obs))+' · ':''}`
+  /* Le pied datait l'INSTANTANÉ, pas l'indicateur. Deux horodatages distincts
+     vivent ici : la date d'observation de la valeur (scan.macro[].date = dernière
+     barre quotidienne) et l'âge du relevé de scan. Mesure du 06/09/2026 : un
+     dimanche, « Taux 10 ans 4,78 % · Il y a 16 min » se lit comme une valeur de
+     dimanche alors que c'est la clôture de vendredi. Le mot « relevé » attache
+     désormais l'âge au SCAN, et l'absence de date d'observation (Pétrole, Or,
+     Bitcoin viennent de `commodities`, sans champ `date`) est DITE au lieu de
+     laisser l'âge de l'instantané tenir lieu de date de valeur. */
+  /* Pas de `vx-meta` sur ces deux fragments : `.m-foot` fixe déjà taille et
+     couleur (10,5 px, texte discret) et `.vx-meta` imposerait `--vx-fs-meta`,
+     donc deux tailles dans le même pied de KPI. */
+  const foot=`<div class="m-foot">`
+    +`<span>${(d&&d.obs)?'observé le '+esc(dateFrOff(d.obs)):'date d’observation non servie'}</span>`
+    +`<span>· relevé</span>`
     +`${VX.updateIndicator(scan&&(scan.scan_ts||scan.updated),(scan&&scan.source)||'scan',modeOf(scan))}</div>`;
   /* Sans série : layout compact plein-largeur (JAMAIS de demi-carte vide). */
   if(!ser){
@@ -562,7 +586,13 @@ function loadStrip(scan){
     ($('vx-mk-strip')||{}).innerHTML='<div class="vx-col-12">'+VX.states.empty('Indices indisponibles — lancer un scan depuis Système.',SCAN_ACTION)+'</div>';return;
   }
   ($('vx-mk-strip')||{}).innerHTML=known.map(label=>
-    '<div class="vx-kpi vx-markets-index-kpi">'+indexCard(label,by[label],scan)+'</div>').join('');
+  /* MESURE (Chromium, 1600 px, 06/09/2026) : `.vx-kpi-strip` est une grille de
+     DOUZE colonnes et ces tuiles ne portaient aucune classe de portee — chacune
+     occupait donc UNE colonne, soit 98 px sur un hote de 1312 px : « Taux 10 »
+     tronque, « 4,78 % » casse sur deux lignes, pied illisible. La bande jumelle
+     de Performance porte `vx-col-2` sur la meme grille ; ici `vx-col-3` rend les
+     quatre KPI annonces par `data-max-kpis="4"`, une ligne pleine. */
+    '<div class="vx-kpi vx-col-3 vx-markets-index-kpi">'+indexCard(label,by[label],scan)+'</div>').join('');
 }
 /* Comparaison multi-indices : chaque série rebasée à 0 % (transformation
    d'affichage des séries fournies — aucun point inventé). */
@@ -614,8 +644,16 @@ function loadSpyChart(scan){
     VXCharts.areaCard('vx-mk-spy',{
       /* Unité : « points d'indice » n'est vrai QUE sur une série d'indice. Sur
          le proxy (un titre), la même étiquette annonçait une unité fausse
-         au-dessus d'un cours en dollars (invariant 6). */
-      title:title,unit:(hasSpy||hasIdx)?'points d’indice':'USD',timeframe:closes.length+' séances',
+         au-dessus d'un cours en dollars (invariant 6).
+         Second tour : 'USD' n'était pas la correction, seulement une unité
+         SUPPOSÉE. Mesure du 06/09/2026 : aucun champ `currency` n'est servi
+         pour scan.detail[SYM] (0 occurrence dans la charge du scan) ; le dollar
+         y était déduit de l'univers (513 constituants S&P 500), c'est-à-dire
+         énoncé sans donnée — exactement ce que `cotation_unifiee` s'interdit
+         (« la devise s'il la CONNAÎT — jamais un USD supposé »). Sans devise
+         servie, la carte n'affiche AUCUNE unité (chart-core n'écrit ni badge ni
+         « · unité » sur une valeur vide) et le tiroir « Comprendre » le dit. */
+      title:title,unit:(hasSpy||hasIdx)?'points d’indice':'',timeframe:closes.length+' séances',
       question:'La tendance de fond reste-t-elle exploitable ?',
       conclusion:(m.spy_regime==='TREND'?'Tendance intacte':'Régime '+(m.spy_regime||'n/d'))+(m.verdict?' — '+m.verdict:''),
       labels:closes.map((_,i)=>i-closes.length),values:closes,height:260,
@@ -624,7 +662,8 @@ function loadSpyChart(scan){
       source:(scan&&scan.source)||'scan',timestamp:scan&&(scan.scan_ts||scan.updated),mode:modeOf(scan),
       explain:{shows:(hasSpy?'Les clôtures de SPY':hasIdx?'Les clôtures de l’indice S&P 500'
                       :'Les clôtures de '+key+' (proxy : ni SPY ni indice S&P 500 dans ce scan — la conclusion ci-dessus porte sur le RÉGIME DE MARCHÉ, pas sur cette série)')
-                     +' telles que fournies par le scan (aucun indicateur recalculé côté UI).',
+                     +' telles que fournies par le scan (aucun indicateur recalculé côté UI).'
+                     +((hasSpy||hasIdx)?'':' Le scan ne sert pas la devise de ce titre : aucune unité n’est affichée, elle n’est pas devinée.'),
         why:'La Stratégie Vertex n’attaque qu’en environnement porteur : le régime module seuils et tailles.',
         confirm:'Clôtures au-dessus des dernières résistances avec breadth > 55 %.',
         invalidate:'Cassure des supports avec expansion de volatilité.'}});
@@ -653,7 +692,7 @@ function loadMacroKpis(scan){
      disponibles sous disclosure, sans suppression de donnée ni de source. */
   const primary=known.slice(0,4),extra=known.slice(4);
   ($('vx-mk-macro-kpis')||{}).innerHTML=primary.map(n=>
-    '<div class="vx-kpi vx-markets-macro-kpi">'+macroCard(n,by[n],scan,MACRO_NOTE[n])+'</div>').join('');
+    '<div class="vx-kpi vx-col-3 vx-markets-macro-kpi">'+macroCard(n,by[n],scan,MACRO_NOTE[n])+'</div>').join('');
   const x=$('vx-mk-macro-extra');
   if(x){
     x.innerHTML=extra.length
@@ -720,19 +759,54 @@ async function loadMacroRegime(){
    fond (/api/macro/officiel). Chaque tuile porte la valeur, l'unité, la DATE
    D'OBSERVATION chez la source (pas l'heure du clic), la fréquence et la source.
    Une série en échec dit son erreur ; jamais un zéro. */
-const FREQ_FR={quotidien:'quotidien',mensuel:'mensuel',annuel:'annuel'};
+/* La table portait trois fréquences sur les quatre du catalogue : `en vigueur`
+   (les deux taux directeurs BCE) en était absente. Sans effet visible — chaque
+   entrée se traduit par elle-même, donc le repli `||s.frequence` rendait déjà
+   le bon mot — mais une table de libellés incomplète est un piège pour la
+   première vraie traduction. Les quatre valeurs servies y sont maintenant. */
+const FREQ_FR={quotidien:'quotidien',mensuel:'mensuel',annuel:'annuel','en vigueur':'en vigueur'};
+/* PONCTUALITÉ — le verdict est SERVI (`fraicheur` + `age_jours` par série,
+   `en_retard` sur l'instantané), il n'est pas recalculé ici : le serveur
+   calcule, la page peint. C'est aussi pourquoi le helper `ageObs`, qui
+   dérivait un âge en jours depuis `observed_at` côté navigateur, a été retiré
+   — il n'avait aucun appelant et aurait fait une seconde autorité.
+
+   Mesure du 06/09/2026 sur le cache réel (11 séries) : le pied annonçait
+   « 11/11 séries publiées » alors que `en_retard` valait 2 — l'IPCH zone euro
+   arrêté au 2025-12 (RETARD_FORT, 249 j) et le rendement Confédération 10 ans
+   au 2025-07 (RETARD_FORT, 402 j), soit 9 et 14 publications mensuelles
+   manquantes CHEZ LA SOURCE. `disponibles` compte `value is not None` : c'est
+   la disponibilité, jamais la ponctualité, et rien à l'écran ne disait la
+   différence. Un chiffre périmé restait affiché comme un chiffre du jour.
+
+   `SANS_OBJET` n'est pas un retard : un taux directeur court jusqu'au
+   changement suivant (mesuré : 81 j sur les deux taux BCE, valeurs EN VIGUEUR
+   aujourd'hui — « 81 jours de retard » y serait un mensonge). */
+const FRAICHEUR_FR={
+  A_JOUR:'à jour',
+  RETARD:'en retard chez la source',
+  RETARD_FORT:'fortement en retard chez la source',
+  SANS_OBJET:'en vigueur — la ponctualité ne s’applique pas',
+  INCONNU:'ponctualité non jugée'};
+function ponctualite(s){
+  const v=s&&s.fraicheur;
+  if(!v)return '';                    /* champ non servi : aucun verdict inventé */
+  const mot=FRAICHEUR_FR[v]||v;
+  const j=(s.age_jours==null)?null:s.age_jours;
+  if(v==='SANS_OBJET')return mot;
+  if(v==='INCONNU')return mot+(j==null?'':' · observation vieille de '+j+' j');
+  return mot+(j==null?'':' ('+j+' j)');
+}
 function dateFrOff(s){
   const m=/^(\d{4})-(\d{2})(?:-(\d{2}))?/.exec(String(s||''));
   if(!m)return s||'—';
   return m[3]?(m[3]+'/'+m[2]+'/'+m[1]):(m[2]+'/'+m[1]);
 }
-function ageObs(iso){
-  if(!iso)return null;
-  const d=new Date(iso.length===7?iso+'-01T00:00:00Z':iso.length===10?iso+'T00:00:00Z':iso);
-  return isNaN(d)?null:Math.round((Date.now()-d.getTime())/86400000);
-}
 /* Communiqués officiels (BCE, BNS) : même instantané que les références —
    titre, lien, date de la source (jamais le texte du communiqué). */
+/* Plafond d'affichage de la liste — UN SEUL endroit. Il était écrit dans le
+   `slice` et nulle part ailleurs : le tampon comptait donc la liste entière. */
+const COMMUNIQUES_MAX=16;
 function paintCommuniques(d){
   const host=$('vx-mk-communiques-body');if(!host)return;
   const liste=(d&&d.communiques)||[];const err=(d&&d.communiques_erreurs)||{};
@@ -741,7 +815,7 @@ function paintCommuniques(d){
       :'Aucun communiqué encore collecté : le collecteur de fond passe toutes les '+(d&&d.cadence_min||360)+' min.');
     return;
   }
-  host.innerHTML='<ul class="vx-mt1" style="margin:0;padding-left:0;list-style:none">'+liste.slice(0,16).map(c=>
+  host.innerHTML='<ul class="vx-mt1" style="margin:0;padding-left:0;list-style:none">'+liste.slice(0,COMMUNIQUES_MAX).map(c=>
     '<li class="vx-kv" style="align-items:flex-start;gap:10px"><span class="k" style="flex:0 0 auto"><span class="vx-badge">'+esc(c.source)+'</span> '
     /* `.slice(0,16)` DÉCAPITAIT le `Z` que le serveur pose exprès (vérifié par
        tests/test_communiques_officiels.py : published_at se termine par 'Z') :
@@ -751,7 +825,12 @@ function paintCommuniques(d){
        marque « fuseau n/d » sinon — jamais de fuseau inventé. */
     +'<span class="vx-mono" title="'+esc(VX.fmt.instantSourceNote(c.published_at))+'">'+esc(VX.fmt.instantSource(c.published_at)||'date n/d')+'</span></span>'
     +'<span class="v" style="text-align:left;white-space:normal"><a href="'+esc(c.link)+'" target="_blank" rel="noopener noreferrer">'+c.title+' ↗</a></span></li>').join('')+'</ul>'
-    +'<div class="vx-table-stamp"><span>'+liste.length+' communiqués · '+(d.communiques_sources||[]).map(x=>'<b>'+esc(x.source)+'</b>').join(' · ')+'</span>'
+    /* Le tampon comptait la LISTE COMPLÈTE pendant que la carte n'en rendait
+       que `slice(0,16)`. Mesure du 06/09/2026 : 24 communiqués collectés, 16
+       lignes à l'écran, un tampon qui annonçait « 24 communiqués » — le lecteur
+       cherchait huit lignes qui n'ont jamais été peintes. Le tampon dit
+       désormais les deux nombres, et la troncature cesse d'être invisible. */
+    +'<div class="vx-table-stamp"><span>'+Math.min(liste.length,COMMUNIQUES_MAX)+' communiqué(s) affiché(s) sur '+liste.length+' collecté(s) · '+(d.communiques_sources||[]).map(x=>'<b>'+esc(x.source)+'</b>').join(' · ')+'</span>'
     +'<span>'+VX.updateIndicator(d.as_of,'collecteur officiel','delayed')+'</span>'
     +(Object.keys(err).length?'<span class="vx-warn">'+Object.keys(err).map(k=>esc(k)+' : '+esc(err[k])).join(' · ')+'</span>':'')+'</div>'
     +'<div class="vx-meta vx-mt2">Dates et titres de la source, réutilisation avec attribution ; le texte des communiqués n’est pas repris.</div>';
@@ -773,9 +852,11 @@ async function loadMacroOfficiel(){
     const dec=(s.unite==='USD'||s.unite==='CHF')?4:2;   /* change : 4 décimales, taux : 2 */
     const delta=(!absent&&s.previous!=null)?(s.value-s.previous):null;
     const dtone=delta==null?'':(delta>0?'pos':delta<0?'neg':'');
+    const pon=ponctualite(s);
     const meta=absent
       ? ('indisponible · '+esc(s.error||'aucune observation'))
       : ('observé le '+dateFrOff(s.observed_at)+' · '+(FREQ_FR[s.frequence]||s.frequence)
+         +(pon?' · '+pon:'')
          +(delta!=null?' · '+(delta>0?'+':'')+VX.fmt.num(delta,dec)+' '+esc(s.unite)+' vs '+dateFrOff(s.previous_at):''));
     return VX.tile.metric({k:s.libelle,v:absent?null:VX.fmt.num(s.value,dec),unit:absent?'':s.unite,tone:absent?'':dtone,meta:meta,kTitle:s.note||''});
   };
@@ -786,8 +867,16 @@ async function loadMacroOfficiel(){
       +'<div class="vx-metricgrid vx-opt-kpis">'+rows.map(tuile).join('')+'</div>';
   });
   const src=d.sources||{};
+  /* `disponibles` = combien de séries portent une VALEUR ; il ne dit rien de
+     leur ponctualité. Le compte des retards est servi à côté (`en_retard`) et
+     s'affiche à côté : deux faits distincts, deux nombres. `null` quand la
+     charge ne porte pas le champ — on ne déduit pas « aucun retard » d'une
+     absence de mesure. */
+  const retards=(typeof d.en_retard==='number')?d.en_retard:null;
   const foot='<div class="vx-table-stamp"><span>Sources : '+Object.keys(src).map(k=>'<b>'+esc(k)+'</b>').join(' · ')
-    +'</span><span>'+d.disponibles+'/'+d.total+' séries publiées</span>'
+    +'</span><span>'+d.disponibles+'/'+d.total+' séries publiées'
+    +(retards==null?' · retards non mesurés'
+      :(retards?' · '+retards+' en retard chez la source':' · aucune en retard'))+'</span>'
     +'<span>'+VX.updateIndicator(d.as_of,'collecteur officiel','delayed')+'</span>'
     +(d.etat&&d.etat.derniere_erreur?'<span class="vx-warn">'+esc(d.etat.derniere_erreur)+'</span>':'')+'</div>'
     +'<div class="vx-meta vx-mt2">Publications officielles, jamais des cotations : la date affichée est celle de la source. Droits : affichage personnel avec attribution (FRED, BCE, BNS).</div>';
@@ -1009,10 +1098,22 @@ function loadBreadthInternals(scan){
   if(iCard)iCard.hidden=false;
   const kvr=(k,v,cls)=>`<div class="vx-kv"><span class="k">${k}</span><span class="v vx-mono ${cls||''}">${v}</span></div>`;
   const pos=(v)=>v>=55?'vx-pos':v<=45?'vx-neg':'';
+  /* Un pourcentage manquant s'écrivait « undefined % » / « null % » : une
+     chaîne qui n'est ni une valeur, ni une absence, ni un zéro. La carte
+     n'est gardée que sur `pct_a50` ; les deux autres mesures peuvent manquer
+     seules — c'est exactement le cas produit par `tools/audit/pages_peuplees
+     .py`, dont l'instantané d'internals ne porte que health/pct_a50/pct_a200/
+     history (ni `advpct`, ni `nh`, ni `nl`). Le producteur de production
+     (`vertex/market/internals.market_internals`) les rend tous ensemble, donc
+     le défaut n'est pas observé en production aujourd'hui — il est atteignable,
+     et « — » est la seule sortie honnête d'une mesure absente. Même règle que
+     les deux lignes voisines, qui passaient déjà par `VX.fmt.nd`. */
+  const pc=(v)=>(v==null||!isFinite(v))?'—':(v+' %');
   ($('vx-mk-internals')||{}).innerHTML=
-    kvr('% au-dessus MM50',inter.pct_a50+' %',pos(inter.pct_a50))
-    +kvr('% au-dessus MM200',inter.pct_a200+' %',pos(inter.pct_a200))
-    +kvr('Avancées / déclins',inter.advpct+' % en hausse',pos(inter.advpct))
+    kvr('% au-dessus MM50',pc(inter.pct_a50),pos(inter.pct_a50))
+    +kvr('% au-dessus MM200',pc(inter.pct_a200),pos(inter.pct_a200))
+    +kvr('Avancées / déclins',(inter.advpct==null||!isFinite(inter.advpct))
+      ?'—':(inter.advpct+' % en hausse'),pos(inter.advpct))
     +kvr('Nouveaux plus-hauts (52s)',VX.fmt.nd(inter.nh),inter.nh>inter.nl?'vx-pos':'')
     +kvr('Nouveaux plus-bas (52s)',VX.fmt.nd(inter.nl),inter.nl>inter.nh?'vx-neg':'')
     +(inter.avg_rsi!==null&&inter.avg_rsi!==undefined?kvr('RSI moyen univers',inter.avg_rsi):'')

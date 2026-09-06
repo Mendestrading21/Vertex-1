@@ -827,8 +827,22 @@ async function loadCalibration(){
       +'<b>'+d.n_decisions+'</b><span class="vx-meta">décision(s) journalisée(s)</span>'+byDec
       +(d.demo?'<span class="vx-badge" data-tone="neutral">DÉMO</span>':'')+'</div>'
       +rows
+      /* COUVERTURE DES RÉSULTATS : servie, jetée quand `available` est faux.
+         Mesure du 06/09/2026 sur /api/skyler/calibration : n_decisions 7,
+         outcomes {available:false, measured:0, unmeasured:7, coverage_pct:0.0,
+         reason:'aucune paire prix enregistré + cote actuelle — rien de
+         mesurable, rien d'inventé'}. La carte affichait « 7 décision(s)
+         journalisée(s) · REFUSER × 7 » et TAISAIT que zéro de ces sept a un
+         résultat mesuré — c'est-à-dire l'information qui empêche de lire la
+         répartition comme un bilan. La branche ne s'ouvrait que sur
+         `available`, exactement l'état où il n'y a rien à dire ; la cause
+         SERVIE reste donc la seule chose à dire quand il n'y a rien à
+         compter. */
       +'<div class="vx-meta" style="margin-top:.35rem">'
-      +(oc.available?oc.measured+' mesurée(s), '+(oc.unmeasured||0)+' non mesurée(s) (sans cote — jamais inventé) · ':'')
+      +(oc.available
+        ?(oc.measured+' mesurée(s), '+(oc.unmeasured||0)+' non mesurée(s) (sans cote — jamais inventé) · ')
+        :((oc.unmeasured||0)+' décision(s) sans résultat mesuré — '
+          +esc(oc.reason||'cause non servie par la route')+' · '))
       +'Brier : '+esc((d.brier&&d.brier.reason)||'indisponible')+'</div>';
   }catch(e){host.innerHTML='<div class="vx-error-banner">Calibration injoignable : '+esc(e.message)+'</div>';}
 }

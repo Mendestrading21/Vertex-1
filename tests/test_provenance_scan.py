@@ -10,8 +10,8 @@ titres + 16 de contexte) et `edge_backtest`, lancé toutes les 6 h par
 scan :
 
 ```text
-APRES SCAN   source='yfinance'    detail={'yfinance':533,'univers':533} scanned_n=513
-APRES EDGE   source='yfinance'    detail={'yfinance':141,'univers':141} scanned_n=513
+APRES SCAN   source='yfinance'  detail={'yfinance':533,'symboles_demandes':533} scanned_n=513
+APRES EDGE   source='yfinance'  detail={'yfinance':141,'symboles_demandes':141} scanned_n=513
 edge_backtest a rendu : None      (sous 50 observations — il n'a rien produit)
 ```
 
@@ -102,7 +102,11 @@ def test_le_backtest_ne_reecrit_pas_la_provenance_du_scan(etat_isole):
                   dict(terminal.scan_state['source_detail']),
                   terminal.scan_state['abandon_debit'])
     assert apres_scan[0] == 'yfinance'
-    assert apres_scan[1] == {'ibkr': 0, 'yfinance': 3, 'stooq': 0, 'univers': 3}
+    #  'univers' -> 'symboles_demandes' : la clé compte les symboles DEMANDÉS
+    #  à la file (533 en production), pas l'univers servi (`universe_n`, 517)
+    #  ni le scanné (`scanned_n`, 513). Trois dénominateurs justes, un seul mot.
+    assert apres_scan[1] == {'ibkr': 0, 'yfinance': 3, 'stooq': 0,
+                             'symboles_demandes': 3}
 
     #  Le backtest, avec Yahoo muet : la population (3 symboles + le benchmark)
     #  et le verdict de source seraient publiés au nom du scan.
@@ -164,3 +168,44 @@ def test_le_scan_publie_toujours_sa_provenance(etat_isole):
         'le repli Stooq doit rester NOMMÉ : un repli invisible est un mensonge '
         'de source')
     assert terminal.scan_state['source_detail']['stooq'] == 2
+
+
+def test_yahoo_jamais_interroge_n_est_pas_yahoo_en_panne(etat_isole):
+    """Une SOURCE NON INTERROGÉE n'est pas une source indisponible.
+
+    MESURE (doublures en mémoire, IBKR sert tout l'univers) :
+
+    ```text
+    avant : manquants=[]  boucle yfinance non exécutée  yahoo_n=0
+            _SOURCE_BUDGET_STATE['yfinance'] = 'UNAVAILABLE'
+            → source_health.yfinance_budget = 'UNAVAILABLE'
+            → carte « Pannes en cours » : « Source yfinance_budget · source
+              indisponible » — une panne INVENTÉE, sur la carte dont la
+              fonction déclarée est de dire ce qui bloque la décision
+    après : 'NOT_COLLECTED' — « non collectée lors de ce scan » (libellé déjà
+            servi et déjà traduit par la page)
+    ```
+
+    Invariant 5 : absence, zéro et dégradation restent distincts. Une vraie
+    panne de Yahoo se noierait parmi les fausses.
+    """
+    monkeypatch = etat_isole
+    monkeypatch.setattr(terminal, 'IBKR_ENABLED', True)
+    monkeypatch.setattr(terminal, 'DEMO_MODE', False)
+
+    from vertex.data_sources import ibkr_historical as _hist
+    monkeypatch.setattr(_hist, 'fetch_universe_bars',
+                        lambda tickers, **kw: ({t: _serie() for t in tickers}, {}))
+
+    def _yahoo_interdit(tickers, **kw):      # DÉNOMINATEUR : si Yahoo est
+        raise AssertionError(               # appelé, le banc ne mesure pas
+            'yfinance interrogé alors qu’IBKR a tout servi : %s' % (tickers,))
+
+    monkeypatch.setattr(terminal.yf, 'download', _yahoo_interdit)
+    terminal._download_universe(list(_SCAN))
+
+    assert terminal.scan_state['source'] == 'ibkr'
+    assert terminal._SOURCE_BUDGET_STATE['yfinance'] == 'NOT_COLLECTED', (
+        'yfinance est déclaré « %s » sans avoir été interrogé une seule fois : '
+        'la page Système affiche une panne que rien ne mesure'
+        % terminal._SOURCE_BUDGET_STATE['yfinance'])

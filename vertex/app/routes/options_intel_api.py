@@ -611,18 +611,48 @@ def chart_interpretation(chart_id):
                            source='SCAN'))
 
 
+#  Borne du MODÈLE de doublement (coût de calcul), pas du câblage des données.
+_DOUBLE_PROB_TOP = 5
+
+
 @bp.route('/api/options/scanner/<universe>')
 def api_options_scanner(universe):
     """SCANNERS PAR UNIVERS (SKYLER LOT 6) : TACTICAL / SWING / LEAPS strictement
     séparés, mandat LEAPS V2 étiqueté par candidat, probabilité de doublement
-    (modèle documenté, ESTIMATED) sur les 5 meilleurs. Lecture seule."""
+    (modèle documenté, ESTIMATED) sur les 5 meilleurs — le cours, lui, est
+    câblé et tracé sur TOUS les candidats. Lecture seule."""
     from flask import request
     from vertex.options import double_prob as _dp, horizon_scanners as _hs
     sym = (request.args.get('sym') or '').upper().strip() or None
     res = _hs.scan(scan_state.get('options_board') or [], universe, sym=sym)
     if res.get('available'):
         _detail_all = scan_state.get('detail') or {}
-        for c in res['candidates'][:5]:
+        #  Le CÂBLAGE DU COURS vaut pour TOUS les candidats, pas seulement pour
+        #  ceux qui reçoivent le modèle de doublement. Mesure du 2026-09-06 :
+        #  la boucle s'arrêtait à `[:5]`, donc sur LEAPS (33 candidats) 5 lignes
+        #  portaient `spot: 230.36` et 28 gardaient `spot: null` dans LA MÊME
+        #  charge — la clé `spot` changeait de sens selon le rang, et un lecteur
+        #  de la queue aurait conclu à une absence de cours de marché.
+        #  Le repli reste NOMMÉ ligne par ligne (`spot_source`).
+        for c in res['candidates']:
+            _sym_line = str(c.get('sym') or '').upper()
+            _spot_line = c.get('spot')
+            _src_line = 'contrat' if _spot_line is not None else None
+            if _spot_line is None:
+                _spot_line = (_detail_all.get(_sym_line) or {}).get('price')
+                _src_line = 'scan.detail.price' if _spot_line is not None else None
+            c['spot'] = _spot_line
+            c['spot_source'] = _src_line
+        #  Le MODÈLE de doublement, lui, reste borné aux 5 meilleurs (coût de
+        #  calcul) — mais son absence se NOMME sur les suivants au lieu de
+        #  laisser un trou que la page rendait « non disponible » sans motif.
+        for c in res['candidates'][_DOUBLE_PROB_TOP:]:
+            c['double_prob'] = {
+                'available': False,
+                'reason': 'probabilité de doublement calculée sur les %d meilleurs '
+                          'candidats seulement — non calculée pour cette ligne'
+                          % _DOUBLE_PROB_TOP}
+        for c in res['candidates'][:_DOUBLE_PROB_TOP]:
             prem = (c.get('cost') / 100.0) if isinstance(c.get('cost'), (int, float)) else None
             #  Entrees MESUREES par candidat : le taux a SON echeance, et le
             #  dividende de SON sous-jacent. Avec les constantes (4,5 % / 0),
@@ -638,13 +668,10 @@ def api_options_scanner(universe):
             #  presente a l'humain comme une absence de donnee de marche.
             #  Le repli est NOMME dans la charge (`spot_source`) : le cours du
             #  scan n'est pas horodate sur la cotation du contrat.
+            #  Le cours est desormais pose par la boucle CI-DESSUS pour TOUS les
+            #  candidats ; le relire ici le re-etiquetterait « contrat » alors
+            #  qu'il vient du scan — le lignage serait faux.
             _spot = c.get('spot')
-            _spot_src = 'contrat' if _spot is not None else None
-            if _spot is None:
-                _spot = (_detail_all.get(_sym_c) or {}).get('price')
-                _spot_src = 'scan.detail.price' if _spot is not None else None
-            c['spot'] = _spot
-            c['spot_source'] = _spot_src
             c['double_prob'] = _dp.double_probability(
                 spot=_spot, strike=c.get('strike'), premium=prem,
                 dte=c.get('dte'), iv=c.get('iv'), right=c.get('type') or 'CALL',

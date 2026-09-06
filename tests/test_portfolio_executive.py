@@ -222,3 +222,28 @@ def test_single_decision_source():
             offenders.append(str(rel))
     assert not offenders, ('modules hors constitution définissant le vocabulaire '
                            f'décisionnel complet: {offenders}')
+
+
+def test_audit_du_timing_nomme_la_valeur_reellement_substituee():
+    """CONSTAT 5 (nuance) — l'audit annonçait 50.0 pendant qu'il substituait 0.0.
+
+    MESURE : `decide({'technical': None})` rendait `scores.timing = 0.0` sous la
+    ligne d'audit « timing non mesuré — neutre 50.0 substitué ». La branche
+    `timing = 50.0 if tech else 0.0` a DEUX issues, le message n'en nommait
+    qu'une. L'audit est le canal qui explique le chiffre servi : s'il en nomme
+    un autre, il ment sur la substitution qu'il est censé avouer. Aucune route
+    du scan n'atteint cette branche (le paquet porte toujours un bloc
+    technique), mais `decide()` est publique et appelée avec des paquets
+    construits à la main.
+    """
+    sans_tech = EE.decide({'symbol': 'X', 'technical': None})
+    ligne = [l for l in sans_tech['audit_trail'] if 'timing non mesuré' in l]
+    assert len(ligne) == 1
+    assert sans_tech['scores']['timing'] == 0.0
+    assert '0.0 substitué' in ligne[0] and '50.0' not in ligne[0]
+    assert 'sans bloc technique' in ligne[0]
+    # L'autre issue reste dite avec SA valeur.
+    avec_tech = EE.decide({'symbol': 'X', 'technical': {'score': 70}})
+    ligne = [l for l in avec_tech['audit_trail'] if 'timing non mesuré' in l]
+    assert avec_tech['scores']['timing'] == 50.0
+    assert '50.0 substitué' in ligne[0]

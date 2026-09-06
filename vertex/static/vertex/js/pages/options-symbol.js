@@ -131,6 +131,21 @@
       var indic = c.stale
         ? ' title="Hors séance : IV recalculée depuis le prix et/ou mid issu du dernier échange — valeur indicative, pas une cotation"'
         : '';
+      /* Un attribut `title` n'est annoncé par AUCUN lecteur d'écran de façon
+         fiable et n'existe pas au tactile : la dégradation de CES DEUX
+         cellules (IV et Coût) n'était portée que par lui. Le jeton muet
+         existant `vx2-sr-only` la met dans le flux du texte, sans ajouter une
+         couleur ni un second signal visuel à la ligne — le badge « Hors
+         séance » du type reste la marque visible. */
+      /* DOUTE MESURÉ du recontrôle, fermé : la marque était posée même quand
+         la cellule vaut « — ». Un contrat hors séance SANS IV se lisait alors
+         « — (valeur indicative, hors séance) » au lecteur d'écran : une
+         ABSENCE annoncée comme une estimation, soit les deux états que cette
+         marque existe pour séparer. Elle ne suit désormais qu'une valeur. */
+      var indicSr = function (rempli) {
+        return (c.stale && rempli)
+          ? '<span class="vx2-sr-only"> (valeur indicative, hors séance)</span>' : '';
+      };
       var nom = esc(c.type || '') + ' ' + VXf.nd(c.strike) + (c.exp ? ' · ' + esc(String(c.exp).slice(0, 10)) : '');
       return '<tr>' +
         '<td data-label="Type"><span class="vx-badge" style="color:' + (c.type === 'PUT' ? VIOLET : 'var(--vx-text-secondary)') + '">' + esc(c.type || '') + '</span>' +
@@ -140,8 +155,8 @@
         '<td class="vx-mono" style="font-size:11.5px">' + esc(String(c.exp || '').slice(0, 10)) + '</td>' +
         '<td class="vx-num vx-mono">' + (c.dte != null ? c.dte + ' j' : '—') + '</td>' +
         '<td class="vx-num vx-mono">' + (c.delta != null ? VXf.num(c.delta, 2) : '—') + '</td>' +
-        '<td class="vx-num vx-mono"' + indic + '>' + (c.iv != null ? VXf.num(c.iv, 1) + ' %' : '—') + '</td>' +
-        '<td class="vx-num vx-mono"' + indic + '>' + (c.cost != null ? VXf.price(c.cost) + ' $' : '—') + '</td>' +
+        '<td class="vx-num vx-mono"' + indic + '>' + (c.iv != null ? VXf.num(c.iv, 1) + ' %' : '—') + indicSr(c.iv != null) + '</td>' +
+        '<td class="vx-num vx-mono"' + indic + '>' + (c.cost != null ? VXf.price(c.cost) + ' $' : '—') + indicSr(c.cost != null) + '</td>' +
         '<td class="vx-num vx-mono">' + (c.oi != null ? c.oi.toLocaleString('fr-FR') : '—') + '</td>' +
         '<td class="vx-num vx-mono' + (spr > 5 ? ' vx-warn' : '') + '">' + (spr != null ? VXf.num(spr, 1) + ' %' : '—') + '</td>' +
         microBar(c.pop, ' %', BRAND, 'PoP') +
@@ -170,6 +185,18 @@
     var reading = it.dominant_reading || (it.status === 'INCONNU' || !it.status
       ? 'Statut inconnu : le moteur n’a pas assez de données pour juger si les options sont chères.'
       : '—');
+    /* Les PREUVES du moteur n’étaient peintes nulle part ici : seules les
+       incertitudes l’étaient. La prime IV/RV — « IV sous la vol réalisée
+       (-0,03) » — est la SEULE grandeur mesurée de la carte (l’IV rank n’a
+       aucune série historique câblée) et elle restait invisible sur cette page
+       alors que /options?view=volatility l’imprimait. Même contrat des deux
+       côtés : positives puis négatives, tonalité portée par data-tone. */
+    var evid = function () {
+      var pos = it.positive_evidence || [], neg = it.negative_evidence || [];
+      if (!pos.length && !neg.length) return '';
+      var l = function (arr, tone) { return arr.map(function (x) { return '<li data-tone="' + tone + '">' + esc(x) + '</li>'; }).join(''); };
+      return '<p class="vx-meta vx-mt2">Ce que le moteur mesure</p><ul class="vx-verdict-evidence">' + l(pos, 'pos') + l(neg, 'neg') + '</ul>';
+    };
     body('vx-osym-verdict',
       '<div class="vx-verdict" data-status="' + esc(it.status || 'INCONNU') + '">' +
       '<div class="vx-flex" style="gap:.6rem;align-items:center;margin-bottom:.5rem"><span class="vx-badge" data-tone="' + st[0] + '">' + st[1] + '</span>' +
@@ -177,10 +204,15 @@
       (it.source ? '<span class="vx-muted">· ' + esc(it.source) + '</span>' : '') + '</div>' +
       '<p class="vx-lead">' + esc(reading) + '</p>' +
       (it.strategy_impact ? '<p class="vx-sub">' + esc(it.strategy_impact) + '</p>' : '') +
+      evid() +
       ((it.uncertainties || []).length ? '<p class="vx-meta vx-mt2">Incertitudes</p><ul class="vx-verdict-evidence">' + li(it.uncertainties) + '</ul>' : '') +
       '</div>' +
       '<div class="vx-table-stamp"><span>Contrats analysés : <b>' + VXf.nd(v && v.contracts) + '</b></span>' +
-      (v && v.current_iv != null ? '<span>IV médiane ' + VXf.num(v.current_iv * 100, 1) + ' %</span>' : '') + '</div>');
+      (v && v.current_iv != null ? '<span>IV médiane ' + VXf.num(v.current_iv * 100, 1) + ' %</span>' : '') +
+      /* `iv_rank_note` était servi par /api/options/volatility et lu par ZÉRO
+         page : l’explication de l’absence restait dans le JSON pendant que
+         l’humain ne lisait que « Statut inconnu ». Nommée ici, au pied. */
+      (v && v.iv_rank_note ? '<span>' + esc(v.iv_rank_note) + '</span>' : '') + '</div>');
   }
   function paintVol(d) {
     var envB = document.getElementById('vx-osym-envbadge');

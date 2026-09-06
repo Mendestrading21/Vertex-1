@@ -48,12 +48,58 @@ def _check(p: dict) -> list[str]:
     return errs
 
 
+def _hachable(v):
+    """La même valeur si elle peut servir de clé, sinon sa forme textuelle.
+
+    MESURE : une échéance déclarée sous forme de liste ou d'objet JSON
+    (`{'expiration': ['2027-01-15']}` — le desk accepte la saisie libre) faisait
+    lever `TypeError: unhashable type: 'list'` à `key in seen`, et
+    `/api/positions/audit` répondait 500 sur un desk réel. L'audit d'intégrité
+    est précisément la route censée SURVIVRE à une donnée malformée pour la
+    nommer : planter dessus la rend invisible.
+
+    `repr` ne devine aucune identité — deux déclarations identiques restent
+    identiques, deux différentes restent différentes — et `EXPIRATION_ILLISIBLE`
+    nomme déjà le défaut par ailleurs (`echeance_normalisee` rend None sur ces
+    formes, vérifié).
+    """
+    try:
+        hash(v)
+    except TypeError:
+        return repr(v)
+    return v
+
+
+def _identite(p: dict) -> tuple:
+    """Identité d'une ligne, pour la détection de doublons.
+
+    Deux corrections MESURÉES, dans les deux sens de l'erreur :
+
+    1. L'échéance entrait BRUTE. Le même contrat MSFT 2027-01-15 500 C déclaré
+       une fois '2027-01-15' et une fois '2027.01.15' (le format réellement
+       présent sur le desk) sortait `HEALTHY` / 0 critique, alors que les deux
+       MÊMES formats sortent `CRITICAL` — la ligne était comptée deux fois
+       (9 800 $ engagés × 2, poids doublé) sans que l'audit d'intégrité la
+       voie. L'échéance est donc normalisée POUR LA COMPARAISON quand elle est
+       lisible ; illisible, elle entre brute (aucune identité devinée) et
+       `EXPIRATION_ILLISIBLE` la nomme déjà par ailleurs.
+
+    2. Le sens de l'option (`right`) manquait. Mesuré : un straddle MSFT
+       2027-01-15 500 (un CALL + un PUT) sortait `CRITICAL` avec
+       `DUPLICATE_IDENTITY` — deux contrats DIFFÉRENTS déclarés comme une
+       double saisie. Un défaut inventé est aussi faux qu'un défaut caché.
+    """
+    exp = p.get('expiration')
+    return tuple(_hachable(v) for v in
+                 (p.get('asset_type'), p.get('symbol'), p.get('strike'),
+                  echeance_normalisee(exp) or exp, p.get('right'), p.get('source')))
+
+
 def audit_positions(positions: list[dict]) -> dict:
     findings, seen = [], {}
     for p in positions:
         errs = _check(p)
-        key = (p.get('asset_type'), p.get('symbol'), p.get('strike'),
-               p.get('expiration'), p.get('source'))
+        key = _identite(p)
         if key in seen:
             errs.append('DUPLICATE_IDENTITY')
         seen[key] = True

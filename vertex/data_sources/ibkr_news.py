@@ -94,7 +94,19 @@ def depeches_pour(symbole: str, n: int = 4, *, gateway=None, jours: int = 3):
                 vus.add(t)
                 out.append({'title': t,
                             'pub': getattr(a, 'providerCode', '') or 'IBKR',
-                            'time': str(getattr(a, 'time', ''))[:16],
+                            #  L'HORODATAGE N'EST PLUS TRONQUE. `[:16]` gardait
+                            #  « 2026-09-05 13:22 » et jetait la QUEUE, qui
+                            #  porte le fuseau declare par le courtier :
+                            #  `ib_insync` rend un datetime UTC, dont le
+                            #  `str()` est « 2026-09-05 13:22:11+00:00 ».
+                            #  Consequence mesuree : `horodatage_source` ne
+                            #  voyait plus aucun fuseau et rendait
+                            #  « 2026-09-05T13:22 » — l'ecran affichait
+                            #  « fuseau n/d » sur une source qui, elle, le
+                            #  declare. On garde donc la chaine ENTIERE ; c'est
+                            #  `horodatage_source` qui normalise, et lui
+                            #  n'invente pas de fuseau quand la source se tait.
+                            'time': str(getattr(a, 'time', '') or '').strip(),
                             'link': ''})   # IBKR n'expose pas d'URL publique
     finally:
         if notre:

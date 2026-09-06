@@ -35,12 +35,33 @@
     connections: ['/api/live', '/api/ibkr', '/api/system'],
     system: []
   };
+  /* ── CANAUX TÉLÉMÉTRIQUES : pas de rejeu complet de la page ────────────
+     `jobs` annonce qu'une BOUCLE DE FOND a battu, pas qu'une donnée affichée a
+     changé : sa seule cible de cache est `/api/system`. Le rejeu de TOUTES les
+     tâches de la page était donc payé par toutes les pages ouvertes — Marchés,
+     Portefeuille, Aujourd'hui rejouaient l'intégralité de leurs fetch pour un
+     battement qui ne touche aucun de leurs chiffres. C'est l'amplification
+     inter-pages du constat 23, et elle s'auto-entretient : certains de ces
+     fetch font battre des jobs à leur tour.
+     Le rejeu reste INSTANTANÉ là où il a un sens. Système enregistre ses tâches
+     PAR VUE : `jobs` peint « Automatisations » (system_page.py:1584) et
+     `alertes` peint « Tâches en échec » / « dernière erreur consignée »
+     (l.1587) — et `loadAlerts` lit BIEN `/api/system/jobs` (l.1414). Le premier
+     filtre ne nommait que `jobs` : mesuré, la carte Alertes gardait un cache
+     invalidé mais n'était repeinte que par son intervalle de 60 s, contre
+     ~1,5 s avant. Les deux labels sont donc rejoués.
+     Ailleurs, rien à rejouer — le cache est invalidé et `vx:live:jobs` /
+     `vx:data-refreshed` partent comme avant, donc aucun abonné n'est privé de
+     l'information.
+     Les autres canaux gardent le rejeu complet : ils annoncent des données
+     réellement peintes (cotations, scan, actualités, alertes, décisions). */
+  const REJEU_CIBLE = { jobs: ['jobs', 'alertes'] };
   const timers = {}, pending = {};
   function appliquer(channel) {
     const c = CIBLES[channel];
     if (c === null) VX.fetch.invalidate();
     else if (c && c.length) c.forEach((p) => { try { VX.fetch.invalidate(p); } catch (e) {} });
-    if (VX.refresh && VX.refresh.runTasks) VX.refresh.runTasks();
+    if (VX.refresh && VX.refresh.runTasks) VX.refresh.runTasks(REJEU_CIBLE[channel]);
     /* Les pages qui écoutent `vx:data-refreshed` (Marchés, Performance,
        Calendrier, Aujourd'hui…) rejouent APRÈS l'invalidation : avant, il
        partait par événement brut, cache intact → rejeu à vide. */

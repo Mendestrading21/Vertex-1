@@ -129,6 +129,120 @@ def test_aggregate_par_sujet_ne_compte_que_les_articles_du_titre():
     assert 'AMZN' not in sujets and 'META' not in sujets
 
 
+#: Les tickers de l'univers scanné (`vertex/data/universe`, 517 titres) qui
+#: sont aussi des mots anglais courants. Ils sont ÉLIGIBLES aux 6 titres
+#: « chauds » que la boucle d'actualités injecte à chaque tour.
+_TICKERS_MOTS_COURANTS = ('A', 'ALL', 'ARE', 'CAT', 'COST', 'DD', 'FAST', 'HAS',
+                          'IT', 'KEY', 'KO', 'LOW', 'NOW', 'ON', 'SO', 'T', 'WELL')
+
+#: Titres REÉLS servis par `/news-feed` le 2026-09-06, choisis parce qu'ils
+#: faisaient confirmer un sujet à tort (mesure ci-dessous).
+_TITRES_REELS = (
+    'Fed Holds Rates Steady on Inflation Concerns',
+    'All Eyes Are on the Jobs Report',
+    "Bill Gates Says He Still Won't Invest in Crypto, Calls It a Pure Mania",
+    'CrowdStrike (CRWD) Unveiled A Broad AI Security Platform Push',
+    'Equifax (EFX) Faces Complaint Portal Focus, Is It A Bargain?',
+    'The Agent Production Gap: When 171% ROI Isn’t Enough to Ship',
+)
+
+
+def test_un_ticker_qui_est_un_mot_courant_ne_confirme_aucun_sujet():
+    """MESURE DU 2026-09-06 — le juge de sujet confirmait À TORT.
+
+    Le premier correctif comparait le ticker APRÈS abaissement de casse
+    (`(?<![a-z0-9])t(?![a-z0-9])`). Croisé avec les 45 titres réellement servis
+    et les 17 tickers de l'univers qui sont des mots anglais courants, cela
+    faisait **20 confirmations dont 19 fausses** sur 765 paires : « Fed Holds
+    Rates Steady on Inflation » confirmait ON, « All Eyes Are on the Jobs
+    Report » confirmait ALL *et* ARE, « Bill Gates… Won't Invest in Crypto »
+    confirmait T (la frontière de mot accepte l'apostrophe). La chaîne complète
+    rendait alors `aggregate(..., sujets_seulement=True)` =
+    `{'T': {'score': 1.0, 'n': 1}}` — le score de ticker fabriqué que ce lot
+    prétend supprimer, seulement plus rare.
+
+    Après correctif, sur les mêmes paires : **0 confirmation fausse**.
+    """
+    fausses = [(m, t) for t in _TITRES_REELS for m in _TICKERS_MOTS_COURANTS
+               if np.sujet_confirme({'sym': m, 'title': t})]
+    assert fausses == [], fausses
+    #  La chaîne complète : plus aucun score de ticker n'en sort.
+    items = [{'sym': 'T', 'title': _TITRES_REELS[2], 'senti': 1}]
+    assert np.aggregate(items, sujets_seulement=True) == {}
+    assert np.aggregate(items)['T'] == {'score': 1.0, 'n': 1}, 'la provenance, elle, reste'
+
+
+def test_un_ticker_court_n_est_etabli_que_par_le_nom_de_la_societe():
+    """Un code d'une ou deux lettres écrit en majuscules n'est pas distinctif :
+    mesuré, « A » (Agilent, dans l'univers) se confirmait sur 2 des 45 titres
+    réels, où le « A » est l'article anglais d'un titre en casse de titre."""
+    assert np.LONGUEUR_TICKER_PROBANTE == 3
+    assert np.sujet_confirme({'sym': 'A', 'title': 'Is It A Bargain?'}) is False
+    assert np.sujet_confirme({'sym': 'IT', 'title': 'IT spending rebounds'}) is False
+    #  Le nom de société reste une preuve, quelle que soit la longueur du code.
+    assert np.sujet_confirme({'sym': 'V', 'title': 'Visa Inc lifts guidance'}) is True
+    #  À partir de 3 lettres, le code ÉCRIT COMME UN TICKER vaut preuve…
+    assert np.sujet_confirme({'sym': 'AMD', 'title': 'AMD unveils new chip'}) is True
+    #  … mais seulement en majuscules : « amd » en minuscules dans un mot
+    #  ordinaire n'en est pas un.
+    assert np.sujet_confirme({'sym': 'ALL', 'title': 'all eyes on the jobs report'}) is False
+
+
+def test_l_attestation_du_vendeur_suit_ses_producteurs_reels():
+    """La déclaration de `PREUVES_SUJET` doit suivre le CODE — dans les deux sens.
+
+    ## Le gardien ne voyait pas le producteur (mesure du 2026-09-06)
+
+    Version précédente : balayage de `vertex/**/*.py` (322 fichiers) et
+    assertion « aucun producteur, donc NON_IMPLÉMENTÉ ». Or le SEUL producteur
+    du fil est `terminal.py::_news_loop`, à la RACINE du dépôt : il n'entrait
+    pas dans le glob. Le jour où quelqu'un y posait le drapeau — geste
+    explicitement demandé par le reste de programme — le test restait VERT
+    pendant que `/news-feed` continuait d'annoncer `NON_IMPLÉMENTÉ` sur un
+    canal devenu vivant : l'invariant 8 inversé, avec un gardien aveugle.
+
+    ## Le détecteur ne voyait pas la forme réelle de la pose
+
+    Second trou mesuré : le motif n'acceptait que `'sym_atteste':` (littéral de
+    dictionnaire) et `sym_atteste =`. La pose réelle s'écrit
+    `_it['sym_atteste'] = True` — un indiçage — qu'aucune des deux alternatives
+    ne reconnaît. Le motif couvre désormais les trois formes.
+
+    ## Ce que ce test fige aujourd'hui
+
+    Balayage élargi : 1 producteur, `terminal.py` (branche courtier
+    `depeches_lot`, où IBKR rattache la dépêche au `conId` qualifié). La valeur
+    attendue est DÉRIVÉE du balayage : si le producteur disparaît, ce test
+    exige de repasser la déclaration à `NON_IMPLÉMENTÉ` ; s'il reste et que la
+    déclaration retombe, il tombe aussi.
+    """
+    import pathlib
+    import re as _re
+    racine = pathlib.Path(__file__).resolve().parents[1]
+    #  POSER le drapeau, pas en parler : clé de dictionnaire, indiçage ou
+    #  affectation. Les mentions en prose (docstring de la route) ne comptent
+    #  pas — elles décrivent le canal, elles ne le posent pas.
+    pose = _re.compile(r'''['\"]sym_atteste['\"]\s*(?::|\]\s*=)|(?<!\.)\bsym_atteste\s*=''')
+    #  terminal.py vit à la RACINE : sans lui, le balayage manque le seul
+    #  producteur du fil.
+    fichiers = [racine / 'terminal.py'] + sorted(racine.glob('vertex/**/*.py'))
+    producteurs = [str(c.relative_to(racine)) for c in fichiers
+                   if c.name != 'news_plus.py'
+                   and pose.search(c.read_text(encoding='utf-8', errors='replace'))]
+    attendu = 'ACTIF' if producteurs else 'NON_IMPLÉMENTÉ'
+    assert np.PREUVES_SUJET['attestation_vendeur'] == attendu, producteurs
+    assert 'terminal.py' in producteurs, (
+        'le seul producteur du fil ne pose plus l’attestation du courtier : '
+        'les dépêches IBKR retomberaient en « fil » dès que leur titre ne '
+        'nomme pas la société')
+    assert np.PREUVES_SUJET['ticker_ecrit_en_majuscules'] == 'ACTIF'
+    assert np.PREUVES_SUJET['nom_de_societe'] == 'ACTIF'
+    #  La règle reste juste et reste lue : un producteur qui l'attesterait
+    #  serait cru immédiatement.
+    assert np.sujet_confirme({'sym': 'NVDA', 'title': 'Chip demand stays hot',
+                              'sym_atteste': True}) is True
+
+
 def test_marquer_sujets_est_additif_et_ne_retire_aucune_information():
     items = [{'sym': 'AMZN', 'title': 'Costco silently kills member perk', 'senti': 1},
              {'sym': 'NVDA', 'title': 'Nvidia beats estimates'},
@@ -169,3 +283,27 @@ def test_dedupe_by_normalized_title_and_link_keeps_first():
     out = np.dedupe_news(items)
     assert [i['title'] for i in out] == ['Apple beats!', 'Troisième'], (
         'premier conservé tel quel, ordre préservé, non-dicts ignorés')
+
+
+def test_les_raisons_sociales_manquantes_rendaient_de_VRAIES_attributions():
+    """MESURE DU CONTRÔLE ADVERSE (2026-09-06) — `NOMS_SOCIETE` ne couvrait
+    que 11 des 16 tickers réellement servis par le fil.
+
+    Sur la tranche des 5 non couverts (ALAB, EFX, FICO, LULU, SNDK), la règle
+    « pas de nom, pas de preuve » supprimait 3 attributions VRAIES : les titres
+    ci-dessous NOMMENT la société en toutes lettres. Rappel 100 % → 67 % sur
+    cette tranche, pour une précision passée de 75 % à 100 %. Le trou est
+    structurel — il se comble par des raisons sociales RÉELLES, écrites à la
+    main, jamais en relâchant la preuve.
+    """
+    for sym, titre in (
+            ('LULU', 'Lululemon makes big cuts to one kind of store'),
+            ('LULU', "Lululemon's Earnings Beat Hid a Bigger Problem"),
+            ('SNDK', 'Prediction: This Is What Sandisk Stock Will Be Worth in 12 Months')):
+        assert np.sujet_confirme({'sym': sym, 'title': titre}) is True, titre
+    #  Le ticker seul ne suffit toujours pas : « Lululemon » n'est pas « LULU ».
+    assert np.sujet_confirme({'sym': 'LULU', 'title': 'lululemon in lowercase'}) is True
+    #  Et la preuve reste une preuve : un titre qui ne nomme pas la société
+    #  n'est pas confirmé, exactement comme avant l'ajout.
+    assert np.sujet_confirme({'sym': 'SNDK', 'title': 'Nike Exits the S&P 100 Index'}) is False
+    assert np.sujet_confirme({'sym': 'ALAB', 'title': 'Chip demand stays hot'}) is False

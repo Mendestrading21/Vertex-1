@@ -6,10 +6,16 @@ POURQUOI CE MODULE EXISTE (mesure du 2026-09-06, instance de contrôle, board
 RÉEL yfinance, DEMO_MODE=false) : le producteur canonique
 `legacy_engine.build_board` (l. 383) publie `spread` (déjà en %, calculé l. 338
 `(ask - bid) / mid * 100`) et `vol`. Le board de DÉMONSTRATION
-(`vertex/data/demo.py`:111) et les fixtures de tests publient `spread_pct` et
-`volume`. Comptage sur le board servi : `spread` présent 96/96 contrats,
-`spread_pct` 0/96 ; sur `options_cache.json` : 481 contrats, `spread_pct` 0/481,
-`volume` 0/481.
+(`vertex/data/demo.py`:111) publie `spread_pct` et `vol` ; seules les fixtures
+de tests publient `volume`. Comptage sur le board servi : `spread` présent
+96/96 contrats, `spread_pct` 0/96 ; sur `options_cache.json` : 481 contrats,
+`spread_pct` 0/481, `volume` 0/481.
+
+(Ce paragraphe affirmait que la démonstration publie `volume` — vérifié le
+2026-09-06 : `demo.py:111` écrit `'oi': oi, 'vol': vol, 'spread_pct': …`. Le
+fichier se contredisait, le commentaire interne de `spread_pct()` disant déjà
+la bonne chose. Trois alias, trois producteurs distincts : le dire faux ici,
+c'est la première marche vers un quatrième alias mort.)
 
 Tous les consommateurs qui lisaient `spread_pct` voyaient donc une ABSENCE
 PERMANENTE sur données réelles, et ne fonctionnaient qu'en démonstration :
@@ -75,14 +81,32 @@ def spread_pct(contract):
     `spread` (board réel, MÊME grandeur et MÊME unité, cf. legacy_engine.py:345
     qui réinjecte cette valeur exacte sous le nom `spread_pct` dans le scoring).
     Aucune conversion d'unité : les deux sont déjà des pourcentages.
+
+    L'ORDRE DES ALIAS N'EST PAS UNE AUTORITÉ : le refus d'imputation passe
+    AVANT lui. Mesure du 2026-09-06 sur un contrat portant `spread_pct: 99.0`
+    et `quoted_bid_ask: false` — l'accesseur rendait 99.0, c'est-à-dire la
+    pénalité servie comme une mesure, le défaut même que ce module existe pour
+    fermer, simplement arrivé par l'autre nom. Aucun producteur n'émet
+    aujourd'hui les deux clés (board réel `spread` 96/96, démo `spread_pct`,
+    fixtures `spread_pct`), donc l'ordre est inobservable : raison de plus pour
+    qu'il ne décide de rien.
+
+    CONTREPARTIE ASSUMÉE du refus, pour qu'elle ne surprenne personne : le
+    refus porte sur le CONTRAT, pas sur la valeur. Un producteur futur qui
+    servirait un spread RÉELLEMENT mesuré à côté d'un `quoted_bid_ask: false`
+    verrait sa mesure refusée elle aussi. C'est délibéré — aucun producteur
+    n'émet cette combinaison aujourd'hui, et tant que le témoin dit « pas de
+    carnet exploitable », un pourcentage de fourchette n'a pas de référent
+    observable. Le jour où un tel producteur existe, c'est le TÉMOIN qu'il
+    faut enrichir (dire d'où vient le spread), pas ce refus qu'il faut lever.
     """
     if not isinstance(contract, dict):
+        return None
+    if _spread_impute(contract):
         return None
     value = _num(contract.get('spread_pct'))
     if value is not None:
         return value
-    if _spread_impute(contract):
-        return None
     return _num(contract.get('spread'))
 
 
@@ -92,14 +116,17 @@ def volume(contract):
     `volume` (fixtures) puis `vol` (board réel et démo). `legacy_engine._i`
     convertit un volume absent en 0 : `liquidity_coverage.volume_present`
     est le seul témoin de la différence, et un zéro imputé ne doit jamais
-    passer pour un volume observé.
+    passer pour un volume observé — QUEL QUE SOIT l'alias qui le porte.
+    Mesuré : un contrat `{'vol': 675, 'volume': 0, volume_present: false}`
+    rendait 0 (le zéro imputé servi comme une observation) parce que le témoin
+    n'était consulté que sur la branche de repli.
     """
     if not isinstance(contract, dict):
         return None
+    if _couverture(contract).get('volume_present') is False:
+        return None
     value = _num(contract.get('volume'))
     if value is None:
-        if _couverture(contract).get('volume_present') is False:
-            return None
         value = _num(contract.get('vol'))
     #  Un volume est un COMPTE : le rendre entier quand il l'est, pour ne pas
     #  servir « 675.0 » là où le board publiait 675.

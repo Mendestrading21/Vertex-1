@@ -98,7 +98,15 @@ def _fundamental(detail: dict) -> dict:
     # NaN/inf : une note illisible reste une inconnue, jamais un chiffre servi.
     if value != value or value in (float('inf'), float('-inf')) or value == 0.0:
         return {'score': None, 'is_proxy': None}
-    return {'score': value, 'is_proxy': bool(sub.get('fundamental_is_proxy'))}
+    #  Second tour — le lignage ABSENT ne se lit plus « mesure directe ».
+    #  Mesure : `bool(sub.get('fundamental_is_proxy'))` rendait `is_proxy: False`
+    #  pour un producteur MUET (clé absente du `sub`) exactement comme pour un
+    #  producteur qui affirme « note comptable directe ». Deux états distincts
+    #  (invariant 5) servis sous le même faux booléen ; `None` dit l'ignorance.
+    #  Aucun seuil ne bouge : les consommateurs testent la vérité du drapeau, et
+    #  None est falsy comme l'était False.
+    proxy = sub.get('fundamental_is_proxy')
+    return {'score': value, 'is_proxy': (None if proxy is None else bool(proxy))}
 
 
 def _catalysts(detail: dict) -> dict:
@@ -115,13 +123,29 @@ def _catalysts(detail: dict) -> dict:
     jours et à 300 jours inverserait un risque que le reste du code respecte.
     Tant qu'aucun moteur ne MESURE la nature, la nouveauté et le pricing du
     catalyseur, la note reste None et l'échéance reste une métadonnée descriptive.
+
+    Second tour — le texte est CONDITIONNEL à l'échéance. Mesuré sur
+    ``build('ZZ', {'score': 78}, ...)`` (aucune date) : le bloc rendait
+    ``earnings_dte: None`` sous le warning « proximité de résultats CONNUE » et
+    ``derived: True``. Deux affirmations fausses au même endroit : rien n'était
+    connu et rien n'avait été dérivé. Une absence décrite comme une proximité
+    connue est une donnée SUPPOSÉE, interdite au même titre qu'un chiffre
+    inventé. Une échéance non numérique (chaîne, booléen) n'est pas une échéance :
+    elle est ramenée à None plutôt que servie telle quelle.
     """
+    dte = detail.get('earnings_dte')
+    connue = isinstance(dte, (int, float)) and not isinstance(dte, bool)
     return {
         'score': None,
-        'earnings_dte': detail.get('earnings_dte'),
-        'derived': True,
-        'warning': 'proximité de résultats connue mais notation de catalyseur non '
-                   'calculée (nature, nouveauté et pricing non évalués)',
+        'earnings_dte': dte if connue else None,
+        # `derived` = « ce bloc a été dérivé d'une donnée réelle ». Sans échéance,
+        # rien n'a été dérivé : le drapeau doit le dire.
+        'derived': connue,
+        'warning': ('proximité de résultats connue (J%+d) mais notation de catalyseur '
+                    'non calculée (nature, nouveauté et pricing non évalués)' % dte)
+        if connue else
+        ('aucune échéance de résultats dans ce paquet — ni proximité connue, '
+         'ni catalyseur noté'),
     }
 
 
@@ -211,4 +235,15 @@ def build(symbol: str, detail: dict | None, scan_state: dict | None) -> dict:
     }
 
 
-__all__ = ['build', 'INCOMPLETE_PACKET_RULE', 'CRITICAL_SECTIONS']
+#  Lecteurs CANONIQUES exportés. Le constat 5 nommait TROIS sites jumeaux qui
+#  dupliquaient `detail['st_fund'] or detail['fund_score']` — deux clés sans
+#  producteur sur le `detail` du scan. Le paquet est corrigé ; les autres sites
+#  doivent RÉUTILISER ce lecteur au lieu d'en écrire une quatrième version.
+#  `vertex/app/routes/ai_api.py` (paquet de l'analyste) le fait depuis ce lot ;
+#  `vertex/positions/thesis_health.py` et `vertex/positions/recalculator.py`
+#  restent à brancher (hors périmètre de ce lot).
+read_fundamental = _fundamental
+read_catalysts = _catalysts
+
+__all__ = ['build', 'read_fundamental', 'read_catalysts',
+           'INCOMPLETE_PACKET_RULE', 'CRITICAL_SECTIONS']

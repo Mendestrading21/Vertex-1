@@ -47,18 +47,53 @@ def test_la_boucle_actualites_diffuse():
 
 
 def test_le_client_reagit_sans_rechargement():
+    """Le client réagit sans recharger — et sans rejouer ce qui n'a pas bougé.
+
+    MESURE (constat 23) : `appliquer()` appelait `VX.refresh.runTasks()` sans
+    argument pour TOUS les canaux, canal `jobs` compris. Or `jobs` annonce
+    qu'une boucle de fond a battu et sa seule cible de cache est `/api/system` :
+    chaque battement faisait donc rejouer l'INTÉGRALITÉ des tâches de la page
+    ouverte — Marchés, Portefeuille, Aujourd'hui relançaient tous leurs fetch
+    pour un événement qui ne touche aucun de leurs chiffres, et certains de ces
+    fetch font battre des jobs à leur tour. Amplification inter-pages, bornée
+    (≈1 événement / 10 s / job) mais entière.
+
+    Ce gardien épinglait la forme fautive au caractère près
+    (`VX.refresh.runTasks()` et `async runTasks()`). Il exige désormais le
+    rejeu CIBLÉ : `runTasks(labels)` filtre par label de tâche. Les autres
+    canaux, qui annoncent des données réellement peintes, gardent le rejeu
+    complet (`REJEU_CIBLE[channel]` vaut `undefined` → aucun filtre).
+
+    La LISTE elle-même n'est plus épinglée ici. Mesure du 2026-09-06 : figer
+    `{ jobs: ['jobs'] }` au caractère près a masqué un défaut réel — la vue
+    Alertes enregistre `loadAlerts` sous le label `alertes` et lit pourtant
+    `/api/system/jobs`, donc elle était exclue du rejeu et n'était repeinte
+    que par son intervalle de 60 s. Un gardien qui fige une liste empêche de
+    la corriger. Ce qui doit rester vrai, c'est le FILTRAGE ; la composition
+    de la liste est vérifiée par sa propre mesure, dans
+    tests/test_rejeu_canal_jobs.py, qui la confronte aux tâches réellement
+    enregistrées par la page.
+    """
     js = _src('vertex', 'static', 'vertex', 'js', 'live-updates.js')
     assert 'function reagir(channel)' in js and 'function appliquer(channel)' in js
     assert 'setTimeout(() => appliquer(channel), 1500)' in js, 'les événements doivent être regroupés'
     assert 'if (document.hidden) { pending[channel] = true; return; }' in js
     assert 'function rattraper()' in js and "connect(); rattraper();" in js
     assert 'location.reload' not in js
-    assert 'VX.refresh.runTasks()' in js
+    assert 'VX.refresh.runTasks(REJEU_CIBLE[channel])' in js
+    assert 'VX.refresh.runTasks()' not in js, (
+        'rejeu complet restauré : un battement `jobs` relance toutes les tâches'
+    )
+    assert 'const REJEU_CIBLE = {' in js and "jobs: [" in js, (
+        'le canal `jobs` n’a plus de liste de rejeu ciblé')
     # vx:data-refreshed part APRÈS l'invalidation (regroupé), plus par événement brut
     assert "VX.bus.emit('vx:data-refreshed', { channel, live: true });" in js
     assert "VX.bus.emit('vx:data-refreshed', { channel: ev.channel, live: true });" not in js
     core = _src('vertex', 'static', 'vertex', 'js', 'vx-core.js')
-    assert 'async runTasks()' in core and 'if (document.hidden) return false;' in core
+    assert 'async runTasks(labels)' in core and 'if (document.hidden) return false;' in core
+    # Le filtre est facultatif : sans argument, le rejeu reste complet.
+    assert 'const filtre = Array.isArray(labels) ? labels : null;' in core
+    assert 'this._tasks.filter((t) => filtre.indexOf(t.label) >= 0)' in core
 
 
 def test_les_pages_rejouent_leurs_chargeurs_en_preservant_les_filtres():

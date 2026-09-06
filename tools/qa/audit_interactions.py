@@ -61,11 +61,29 @@ JS_ETAT = r"""
 """
 
 
+
+def _normaliser_seul(seul: str) -> str:
+    """Rend un filtre de chemin utilisable depuis n'importe quel shell.
+
+    Mesuré le 2026-09-06 : lancé depuis Git Bash, `--seul /markets` arrive au
+    programme sous la forme `C:/Program Files/Git/markets` (conversion de
+    chemin MSYS), et le filtre ne retenait AUCUNE page — sans rien dire. Un
+    outil de mesure qui rend « 0 page » au lieu d'un refus est pire qu'inutile.
+    """
+    s = (seul or '').replace(chr(92), '/')
+    for jeton in ('/Git/', '/git/'):
+        if jeton in s:
+            s = '/' + s.split(jeton, 1)[1]
+    if not s.startswith('/'):
+        s = '/' + s
+    return s
+
 def auditer(base: str, largeur: int, maxi: int, seul: str | None = None) -> dict:
     from playwright.sync_api import sync_playwright
     liste = pages()
     if seul:
-        liste = [(n, c) for n, c in liste if c.startswith(seul)]
+        motif = _normaliser_seul(seul)
+        liste = [(n, c) for n, c in liste if c.startswith(motif) or motif in c]
     rapport = {'base': base, 'largeur': largeur, 'debut': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'pages': []}
     with sync_playwright() as p:
         nav = p.chromium.launch(headless=True)

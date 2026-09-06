@@ -26,10 +26,26 @@ CAPITAL_MAX = 1_000_000
 CAPITAL_DEFAULT = 100_000
 
 
-def _market_score(mc):
-    """Score marché /100 — source unique dans vertex/engines/market_lens.climate()."""
-    cl = market_lens.climate(mc)
-    return cl['score'] if cl else None
+def _climat(mc):
+    """Le climat de marché COMPLET — score ET marqueurs de couverture.
+
+    Remplace `_market_score`, qui ne rendait QUE le nombre (aucun autre
+    appelant dans le dépôt : relevé .py/.js du 2026-09-06, la seule autre
+    définition du nom vit dans `vertex/engines/session_digest.py` et lui est
+    propre). Un accesseur qui laisse le nombre partir sans ce qui le qualifie
+    est précisément ce qui a produit le défaut ci-dessous : il n'est pas
+    conservé « au cas où ».
+
+    MESURE DU 2026-09-06 : la route ne lisait que `cl['score']`. Or
+    `market_lens.climate` substitue 50 % à une largeur de marché ABSENTE — la
+    composante participation pèse 25 points sur 100 — et le dit dans le même
+    dictionnaire (`partiel`, `breadth_status`, `note`). Résultat servi :
+    largeur mesurée à 50 % et largeur absente rendaient le MÊME `score: 74`,
+    sans qu'aucun champ ne distingue une mesure d'une substitution. Le contrat
+    interdit la valeur supposée servie comme une valeur mesurée : les trois
+    marqueurs partent désormais avec le score.
+    """
+    return market_lens.climate(mc)
 
 
 @bp.route('/api/command')
@@ -40,7 +56,8 @@ def api_command():
     cm = scan_state.get('committee') or {}
     st = scan_state.get('strategy') or {}
     detail = scan_state.get('detail') or {}
-    score = _market_score(mc)
+    climat = _climat(mc)
+    score = climat['score'] if climat else None
     reg, roro = mc.get('spy_regime'), mc.get('roro')
     # régime final
     if roro == 'RISK-OFF':
@@ -50,6 +67,13 @@ def api_command():
     else:
         regime = {'label': '🟡 NEUTRE', 'color': '#FFB23F'}
     regime.update({'score': score, 'spy_regime': reg, 'roro': roro})
+    #  Les marqueurs ne sont posés QUE dans le cas dégradé : à couverture
+    #  complète, `regime` garde exactement sa forme historique — c'est la
+    #  convention du moteur, tenue jusqu'ici.
+    if climat and climat.get('partiel'):
+        regime.update({'score_partiel': True,
+                       'breadth_status': climat.get('breadth_status'),
+                       'score_note': climat.get('note')})
     # top 5 actions (comité actionnable) + bloc VERTEX (edge probabiliste)
     decisions = cm.get('decisions') or []
 
@@ -103,6 +127,14 @@ def api_command():
     else:
         decision = {'action': 'ATTENDRE / SÉLECTIF', 'color': '#FFB23F',
                     'msg': 'Peu d\'avantage statistique — n\'acheter que l\'exceptionnel, garder du cash.'}
+    #  Ces deux branches-ci COMPARENT le score (seuil 55) ; la branche
+    #  défensive, elle, ne dépend que du roro/régime. Quand la largeur manque,
+    #  le score comparé porte une participation SUBSTITUÉE (50 %) : la phrase
+    #  servie le dit, au lieu d'affirmer un « marché porteur » mesuré.
+    if climat and climat.get('partiel') and decision['action'] != 'RÉDUIRE / DÉFENSIF':
+        decision = {**decision, 'score_partiel': True,
+                    'msg': decision['msg'] + ' Score de marché PARTIEL : largeur de '
+                                             'marché non mesurée (25 pts sur 100).'}
     # RISK MANAGER portefeuille (corrélation / concentration / secteurs)
     risk_availability = {'available': False, 'status': 'PORTFOLIO_RISK_UNAVAILABLE',
                          'read_only': True,
@@ -116,11 +148,46 @@ def api_command():
                              'read_only': True}
     except Exception:
         risk = None
-    if risk and risk.get('no_new_risk'):
-        if 'correlation_panier_elevee' in risk.get('flags', []):
+    if risk:
+        #  DEUX FAMILLES DE DRAPEAUX, ET L'ÉCRAN N'EN VOYAIT QU'UNE.
+        #
+        #  Le moteur (`legacy_basket_risk`) sépare depuis le tour 1 ce qui
+        #  BLOQUE le risque neuf (corrélation, concentration sectorielle) de ce
+        #  qui est ARITHMÉTIQUE (`ligne_trop_grosse` : avec un plafond de 15 %
+        #  par ligne, cinq lignes valent 20 % chacune). La condition d'entrée
+        #  était `risk.get('no_new_risk')`, qui ne suit plus que la première
+        #  famille : le drapeau structurel — VRAI, servi, et le seul armé sur
+        #  tout panier de 2 à 6 lignes — ne pouvait donc plus produire aucune
+        #  ligne à l'écran. Mesure : sur un panier de 3 titres, `flags` porte
+        #  `ligne_trop_grosse`, `max_weight` vaut 33,3 % pour `limits.max_pos`
+        #  15 %, et `alerts` était vide.
+        #
+        #  Il est DIT, jamais transformé en blocage : pastille distincte, et le
+        #  texte nomme l'arithmétique et rappelle qu'ajouter reste permis —
+        #  ajouter une ligne est précisément le remède à ce poids-là.
+        #
+        #  Les deux alertes bloquantes ne changent pas de comportement : leur
+        #  drapeau est ce qui arme `no_new_risk`, la garde extérieure était
+        #  redondante pour elles.
+        _bloquants = risk.get('flags_bloquants')
+        if _bloquants is None:                    # moteur antérieur à la séparation
+            _bloquants = risk.get('flags') or []
+        _structurels = risk.get('flags_structurels') or []
+        _lim = risk.get('limits') or {}
+        if 'correlation_panier_elevee' in _bloquants:
             alerts.append(['🟠', 'CORRÉLATION', f"Panier trop corrélé ({risk['avg_corr']}) — diversifier avant d'ajouter du risque."])
-        if 'concentration_sectorielle' in risk.get('flags', []):
+        if 'concentration_sectorielle' in _bloquants:
             alerts.append(['🟠', 'CONCENTRATION', f"Secteur {risk.get('max_sector_name')} à {risk.get('max_sector')}% — trop concentré."])
+        if 'ligne_trop_grosse' in _bloquants:
+            alerts.append(['🟠', 'POIDS DE LIGNE',
+                           f"Ligne la plus lourde à {risk.get('max_weight')} % pour un plafond de "
+                           f"{_lim.get('max_pos')} % — concentration subie sur {risk.get('n')} lignes."])
+        if 'ligne_trop_grosse' in _structurels:
+            alerts.append(['🟡', 'RÉPARTITION',
+                           f"Ligne la plus lourde à {risk.get('max_weight')} % pour un plafond de "
+                           f"{_lim.get('max_pos')} % : arithmétique de {risk.get('n')} lignes "
+                           f"({risk.get('n')} × {_lim.get('max_pos')} % < 100 %), pas une "
+                           "concentration subie — n'interdit pas d'ajouter une ligne."])
     validation_availability = {'available': False, 'status': 'PORTFOLIO_VALIDATION_UNAVAILABLE',
                                'read_only': True,
                                'reason': 'validation portefeuille indisponible'}

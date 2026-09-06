@@ -239,9 +239,32 @@ def test_chart_has_source():
 
 
 def test_chart_has_timestamp():
+    """L'indicateur date le chiffre — mais SEULEMENT quand un horodatage existe.
+
+    MESURE du 06/09/2026 sur le vx-core.js servi : `new Date(null)` coerce a
+    l'epoque 0, donc `isoFull(null)` rendait '01/01/1970 01:00:00'
+    (isoFull(undefined) -> '' et isoFull('') -> '' : seul `null` passait).
+    L'idiome du depot `updateIndicator(x || null, ...)` convertit `undefined`
+    en `null` sur 25 sites de vertex/, donc le pied degrade
+    `newsPied(null,0,0,0)` peignait `title="01/01/1970 01:00:00"` au-dessus
+    de « Age inconnu » : une valeur INVENTEE (invariant 5).
+
+    Ce gardien epinglait la forme fautive au caractere pres
+    (`title="${VX.fmt.isoFull(ts)}"`, inconditionnel). Il exige desormais ce
+    que l'invariant demande : un garde de nullite dans `isoFull` et une
+    info-bulle CONDITIONNELLE dans `updateIndicator`.
+    """
     core = (STATIC / 'js' / 'vx-core.js').read_text(encoding='utf-8')
     assert 'age_seconds' in core or 'isoFull' in core
-    assert 'title="${VX.fmt.isoFull(ts)}"' in core
+    # L'info-bulle existe toujours et vient toujours d'isoFull...
+    assert 'title="${iso}"' in core and 'const iso = VX.fmt.isoFull(ts);' in core
+    # ...mais elle n'est plus emise sans horodatage.
+    assert '(iso ? ` title="${iso}"` : \'\')' in core
+    assert 'title="${VX.fmt.isoFull(ts)}"' not in core, (
+        "forme inconditionnelle restauree : isoFull(null) peint l'epoque Unix"
+    )
+    # Et isoFull refuse la coercition de `new Date(null)` a sa source.
+    assert "if (ts == null || ts === '') return '';" in core
 
 
 # ── États UI ──────────────────────────────────────────────────────────
@@ -295,4 +318,4 @@ def test_mobile_action_bar(client):
 
 def test_service_worker_version(client):
     body = client.get('/sw.js').get_data(as_text=True)
-    assert 'td-shell-v299' in body
+    assert 'td-shell-v300' in body

@@ -294,8 +294,12 @@ def analyze_strategy(legs, spot, iv, days_to_exp, r=R_DEFAULT, name=None, q=Q_DE
         'spot': round(spot, 2),
         'iv': round(iv, 4) if iv else None,
         'days_to_exp': days_to_exp,
+        #  bid/ask SERVIS : la projection les coupait, donc la page ne pouvait
+        #  pas montrer d'où venait le rempli défavorable qu'elle affichait.
+        #  Absents quand le contrat n'est pas coté — une absence, pas un zéro.
         'legs': [{'type': l['type'], 'strike': l.get('strike'),
-                  'premium': l.get('premium'), 'qty': l.get('qty')} for l in legs],
+                  'premium': l.get('premium'), 'qty': l.get('qty'),
+                  'bid': l.get('bid'), 'ask': l.get('ask')} for l in legs],
         'net_premium': round(net, 2),          # >0 débit (on paie) · <0 crédit (on encaisse)
         'is_credit': net < 0,
         'max_profit': None if profit_unbounded else round(max_profit, 2),
@@ -344,7 +348,20 @@ def build_preset(kind, spot, ref, prem=None):
     def leg(t, node, key, qty):
         if not node or node.get('strike') is None or node.get(key) is None:
             return None
-        return {'type': t, 'strike': node['strike'], 'premium': node[key], 'qty': qty}
+        jambe = {'type': t, 'strike': node['strike'], 'premium': node[key], 'qty': qty}
+        #  Le carnet du contrat, RECOPIÉ s'il existe — jamais fabriqué. Les clés
+        #  sont préfixées par côté (`call_bid`/`put_bid`) parce que le nœud `atm`
+        #  porte les DEUX jambes. Sans ce report, `analyze_strategy` ne voyait
+        #  aucun bid/ask : `bid_ask_coverage_pct` valait 0,0 et
+        #  `net_premium_adverse` null sur 100 % des stratégies servies, alors
+        #  que le board portait bid et ask sur les mêmes contrats.
+        #  UNITÉ : `premium` vient de `cost / 100` (le coût est PAR CONTRAT),
+        #  tandis que `bid`/`ask` du board sont DÉJÀ par action — les diviser
+        #  fabriquerait un rempli défavorable faux d'un facteur 100.
+        bid, ask = node.get(key + '_bid'), node.get(key + '_ask')
+        if bid is not None and ask is not None:
+            jambe['bid'], jambe['ask'] = bid, ask
+        return jambe
 
     atm = (ref or {}).get('atm'); oc = (ref or {}).get('otm_call'); op = (ref or {}).get('otm_put')
     legs = None
@@ -518,6 +535,28 @@ def strategies_for_symbol(board, sym, spot, iv_hint=None, bias='neutral',
     def prem(c):
         return (c.get('cost') or 0.0) / 100.0 if c else None
 
+    def cotation(c):
+        """(bid, ask) PAR ACTION du contrat, ou (None, None) — jamais imputés.
+
+        `legacy_engine._f(None)` rend 0.0 : un contrat non coté porte donc
+        `bid: 0.0, ask: 0.0` dans le board. Les recopier chiffrerait un rempli
+        défavorable de 0 $ sur un carnet inexistant — exactement l'inverse de
+        l'honnêteté d'exécution que ce bloc sert. Un carnet croisé (ask < bid)
+        n'est pas un carnet non plus."""
+        if not c:
+            return (None, None)
+        if (c.get('liquidity_coverage') or {}).get('quoted_bid_ask') is False:
+            return (None, None)
+        bid, ask = _fin(c.get('bid')), _fin(c.get('ask'))
+        if bid is None or ask is None or bid <= 0 or ask <= 0 or ask < bid:
+            return (None, None)
+        return (bid, ask)
+
+    def cote(c, cle):
+        """Fragment `{'<cle>_bid':…, '<cle>_ask':…}` — vide si non coté."""
+        bid, ask = cotation(c)
+        return {} if bid is None else {cle + '_bid': bid, cle + '_ask': ask}
+
     otm_call_strike = min([k for k in strikes if k > atm_strike],
                           key=lambda k: abs(k - spot * 1.06), default=None)
     otm_put_strike = min([k for k in strikes if k < atm_strike],
@@ -525,11 +564,21 @@ def strategies_for_symbol(board, sym, spot, iv_hint=None, bias='neutral',
     atm_call, atm_put = at('CALL', atm_strike), at('PUT', atm_strike)
     otm_call, otm_put = at('CALL', otm_call_strike), at('PUT', otm_put_strike)
 
-    ref = {
-        'atm': {'strike': atm_strike, 'call': prem(atm_call), 'put': prem(atm_put)},
-        'otm_call': ({'strike': otm_call_strike, 'call': prem(otm_call)} if otm_call else None),
-        'otm_put': ({'strike': otm_put_strike, 'put': prem(otm_put)} if otm_put else None),
-    }
+    #  Le carnet suit la prime : `ref` ne transportait QUE `strike` et la prime,
+    #  donc bid/ask du board mouraient ici et toutes les stratégies servies
+    #  déclaraient « spread bid/ask non fourni ».
+    _atm = {'strike': atm_strike, 'call': prem(atm_call), 'put': prem(atm_put)}
+    _atm.update(cote(atm_call, 'call'))
+    _atm.update(cote(atm_put, 'put'))
+    _oc = None
+    if otm_call:
+        _oc = {'strike': otm_call_strike, 'call': prem(otm_call)}
+        _oc.update(cote(otm_call, 'call'))
+    _op = None
+    if otm_put:
+        _op = {'strike': otm_put_strike, 'put': prem(otm_put)}
+        _op.update(cote(otm_put, 'put'))
+    ref = {'atm': _atm, 'otm_call': _oc, 'otm_put': _op}
     # IV : le contrat d'unité du board historique est mixte (%/décimal). La détection
     # vit dans l'UNIQUE frontière documentée iv_units.from_legacy_board — étiquetée
     # et propagée (iv_unit, avertissement), jamais silencieuse dans le cœur.

@@ -298,6 +298,139 @@ def test_une_attente_qui_ne_finit_jamais_cesse_de_se_dire_en_attente():
         _reg._JOBS[job].update(memoire)
 
 
+def test_une_boucle_vivante_qui_attend_son_entree_n_est_pas_dite_morte():
+    """RÉGRESSION DU LOT PRÉCÉDENT — un état FAUX à la place d'un silence.
+
+    MESURE (registre en processus isolé, 6 sept. 2026) : quatre boucles réelles
+    sont gardées par la disponibilité du scan (`_opt_loop`, `_weekly_loop`,
+    `_fund_loop`, `_edge_loop` : `if scan_state.get('rows')…` puis `sleep(8)`
+    sans battre). Passé 2× leur cadence depuis la naissance du processus, elles
+    étaient servies :
+
+    ```text
+    OPTIONS_BOARD_REFRESH  cadence 120 s  uptime   241 s → JAMAIS_DEMARRE
+    WEEKLY_REVIEW          cadence 300 s  uptime   601 s → JAMAIS_DEMARRE
+    FUNDAMENTALS_REFRESH   cadence   6 h  uptime 43201 s → JAMAIS_DEMARRE
+    TRACK_RECORD_UPDATE    cadence   6 h  uptime 43201 s → JAMAIS_DEMARRE
+    ```
+
+    L'écran ajoute « boucle non démarrée dans cette configuration ou arrêtée
+    avant son premier passage » : c'est faux, elles tournent et attendent leur
+    entrée. La fenêtre s'ouvre dès que le premier scan traîne — le chemin
+    `abandon_debit` et ses backoffs anti-429 de 6 s suffisent.
+
+    Le signal de vie vient de la boucle, jamais d'une supposition du registre,
+    et il PÉRIME : une boucle morte en attendant redevient « jamais démarrée ».
+    """
+    job = 'OPTIONS_BOARD_REFRESH'
+    memoire = _fige(job)
+    demarrage = _reg._DEMARRAGE
+    _reg._ATTENTES.pop(job, None)
+    try:
+        interval = {x['name']: x for x in _reg.jobs()}[job]['interval_s']
+        _reg._DEMARRAGE = time.time() - (2 * interval + 1)
+        #  Sans signal : le diagnostic d'origine tient (boucle vraiment morte).
+        assert {x['name']: x for x in _reg.jobs()}[job]['etat'] == 'JAMAIS_DEMARRE'
+        #  La boucle dit qu'elle tourne et ce qu'elle attend.
+        _reg.attente(job, 'MARKET_DATA_REFRESH')
+        ligne = {x['name']: x for x in _reg.jobs()}[job]
+        assert ligne['etat'] == 'EN_ATTENTE_ENTREE', (
+            'une boucle vivante qui attend le premier scan est declaree « %s » '
+            'apres %g s d\'uptime : un diagnostic faux, pire que le silence '
+            'qu\'il remplace' % (ligne['etat'], 2 * interval + 1))
+        assert ligne['attente_de'] == 'MARKET_DATA_REFRESH', (
+            'l\'ecran ne peut pas renvoyer vers la vraie cause : %s' % ligne)
+        assert ligne['runs'] == 0 and ligne['last_run'] is None, (
+            'attendre a ete compte comme un passage : le registre se met a '
+            'mentir dans l\'autre sens')
+        #  Le signal périme : plus rien ne l'entretient → la boucle est morte.
+        _reg._ATTENTES[job] = (time.time() - _reg._ATTENTE_TTL_S - 1,
+                               'MARKET_DATA_REFRESH')
+        assert {x['name']: x for x in _reg.jobs()}[job]['etat'] == 'JAMAIS_DEMARRE', (
+            'un signal de vie perime tient toujours lieu de vie : une boucle '
+            'morte en attendant resterait invisible pour toujours')
+    finally:
+        _reg._DEMARRAGE = demarrage
+        _reg._ATTENTES.pop(job, None)
+        _reg._JOBS[job].update(memoire)
+
+
+def test_les_boucles_gardees_par_le_scan_signalent_TOUTES_leur_attente():
+    """Le signal serait du code mort s'il n'était appelé nulle part.
+
+    Dérivé de l'AST de terminal.py, dans les deux sens : toute boucle dont le
+    corps est gardé par `scan_state.get('rows')` doit signaler, dans son
+    `else`, l'attente du job qu'elle bat dans son `if`. Une cinquième boucle
+    gardée ajoutée demain sans signal échouera ici.
+    """
+    import ast
+
+    src = RACINE.joinpath('terminal.py').read_text(encoding='utf-8')
+    arbre = ast.parse(src)
+
+    def _noms(noeuds, fonction):
+        out = set()
+        for n in noeuds:
+            for x in ast.walk(n):
+                if (isinstance(x, ast.Call)
+                        and isinstance(x.func, ast.Attribute)
+                        and x.func.attr == fonction and x.args
+                        and isinstance(x.args[0], ast.Constant)
+                        and isinstance(x.args[0].value, str)):
+                    out.add(x.args[0].value)
+        return out
+
+    def _garde_le_scan(test):
+        for x in ast.walk(test):
+            if (isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute)
+                    and x.func.attr == 'get' and isinstance(x.func.value, ast.Name)
+                    and x.func.value.id == 'scan_state' and x.args
+                    and getattr(x.args[0], 'value', None) == 'rows'):
+                return True
+        return False
+
+    gardees = {}
+    for fn in [n for n in ast.walk(arbre) if isinstance(n, ast.FunctionDef)]:
+        for boucle in [n for n in ast.walk(fn) if isinstance(n, ast.While)]:
+            for si in [n for n in boucle.body if isinstance(n, ast.If)]:
+                if _garde_le_scan(si.test) and si.orelse:
+                    gardees[fn.name] = (_noms(si.body, 'beat'),
+                                        _noms(si.orelse, 'attente'))
+    assert len(gardees) >= 4, (
+        'la mesure ne retrouve plus les boucles gardees par le scan : %s'
+        % sorted(gardees))
+    for nom, (bat, attend) in sorted(gardees.items()):
+        assert bat and bat == attend, (
+            '%s bat %s mais signale son attente pour %s : la boucle se taira '
+            'pendant qu\'elle attend le premier scan, et le registre la '
+            'declarera « jamais demarree » (mesure : des 241 s d\'uptime)'
+            % (nom, sorted(bat), sorted(attend)))
+
+
+def test_le_signal_d_attente_est_joignable_par_le_chemin_des_boucles():
+    """`from vertex.scheduler import registry` rend l'OBJET, pas le module.
+
+    Les boucles appellent `_sched.attente(...)` sous `except Exception: pass` :
+    une fonction absente de `_Registry` y serait avalée en silence — un
+    correctif qui ne corrige rien, invisible à l'exécution."""
+    from vertex.scheduler import registry as _sched_comme_les_boucles
+
+    assert hasattr(_sched_comme_les_boucles, 'attente'), (
+        'le chemin d\'appel reel des boucles ne porte pas `attente` : le '
+        'signal de vie est du code mort, avale par leur except')
+    job = 'MARKET_RADAR_REFRESH'
+    memoire = _fige(job)
+    try:
+        _sched_comme_les_boucles.attente(job, 'MARKET_DATA_REFRESH')
+        assert _reg._ATTENTES[job][1] == 'MARKET_DATA_REFRESH'
+        #  Un battement referme l'attente : elle appartient au passe.
+        _sched_comme_les_boucles.beat(job, ok=True)
+        assert job not in _reg._ATTENTES
+    finally:
+        _reg._ATTENTES.pop(job, None)
+        _reg._JOBS[job].update(memoire)
+
+
 def test_un_job_sur_evenement_reste_en_attente_meme_longtemps_apres():
     """Contre-épreuve : `JAMAIS_DEMARRE` accuserait à tort un job qu'aucune
     horloge ne cadence. `POSITION_REFRESH` (interval_s None) est déclenché par

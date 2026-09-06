@@ -145,7 +145,17 @@ def _publier() -> None:
 
 
 def snapshot() -> dict:
-    """Instantané borné pour l'API : jamais de collecte réseau ici."""
+    """Instantané borné pour l'API : jamais de collecte réseau ici.
+
+    Le verdict de ponctualité est RECALCULÉ ici, à la lecture, à partir de
+    `observed_at`. Il n'est ni stocké dans l'observation ni persisté dans
+    `macro_officiel_cache.json` : mesuré le 2026-09-06, le cache figeait
+    `ch_saron` à `A_JOUR` (6 j) et `us_10a` à `A_JOUR` (3 j) ; rejugées au
+    2026-11-15 sur le MÊME `observed_at`, ces séries valent `RETARD` (76 j) et
+    `RETARD_FORT` (73 j). Sur le chemin de reprise depuis cache — sources
+    injoignables au démarrage, `restaure_depuis_cache=True` — l'API aurait
+    affirmé « à jour » sur une donnée périmée.
+    """
     with _LOCK:
         series = list(_ETAT['series'])
         communiques = list(_ETAT.get('communiques') or [])
@@ -159,6 +169,10 @@ def snapshot() -> dict:
             age_s = max(0, int(time.time() - calendar.timegm(time.strptime(as_of, '%Y-%m-%dT%H:%M:%SZ'))))
         except ValueError:
             age_s = None
+    #  Verdict de ponctualité JUGÉ MAINTENANT (voir la docstring) : les séries
+    #  rendues portent `fraicheur` et `age_jours`, jamais un `retard_jours`
+    #  laissé par un cache écrit avant le renommage.
+    series = _src.juger_series(series)
     return {'as_of': as_of, 'age_s': age_s, 'cadence_min': cadence_min(),
             'series': series, 'sources': _src.SOURCES,
             'disponibles': sum(1 for s in series if s.get('value') is not None),

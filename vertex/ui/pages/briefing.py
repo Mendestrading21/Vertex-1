@@ -710,7 +710,15 @@ _JS = r"""
 const $=(id)=>document.getElementById(id);
 const E=()=>window.VXEntities;
 function esc(s){return String(s??'').replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
-function modeOf(scan){return scan&&scan.data_source==='demo'?'fallback':(scan&&scan.source==='ibkr'?'live':'delayed');}
+/* MODE des données du scan (8 pieds de cette page). « live » n'y est pas
+   prouvable : /scan ne transporte que des BARRES QUOTIDIENNES (terminal.py :
+   fetch_universe_bars(duration='1 Y') côté courtier, yf.download(interval='1d')
+   côté web) et la route le dit (scan_api.py : « le badge LIVE IBKR reste piloté
+   par l'overlay /quotes — lui seul voit les ticks »). Mesure du 06/09/2026 :
+   quand le courtier sert TOUT l'univers, scan.source vaut exactement 'ibkr' et
+   ces pieds annonçaient « ibkr Live » sur des clôtures. Le pied « Essentiels »
+   (loadEssential) pratiquait déjà la forme honnête ; elle devient la règle. */
+function modeOf(scan){return scan&&scan.data_source==='demo'?'fallback':'delayed';}
 /* Hauteurs STANDARD des graphiques : compact 160 · standard 240 · héros 320 */
 const H_CPT=160,H_STD=240,H_HERO=320;
 
@@ -1796,7 +1804,7 @@ async function loadPortfolio(){
         <span class="vx-badge" ${isOpt?'style="color:var(--vx-violet)"':''}>${esc(t.type)}${t.strike?' '+esc(t.strike):''}</span></div>
       <div class="pf-pl" style="color:${plCol}">${pl!==null?((pl>0?'+':'')+VX.fmt.num(pl,1)+' %'):'n/d'}</div>
       <div class="pf-sub">${esc(t.qty)} × ${VX.fmt.price(t.cost)} $${t.exp?' · éch. '+esc(t.exp)+(dte!=null?' ('+dte+' j)':''):''}</div>
-      <div class="pf-sub">${value!==null?('valeur '+VX.fmt.price(value)+' $'+(q.delayed?' · différé':'')):'marque indisponible'}</div>
+      <div class="pf-sub">${value!==null?('valeur '+VX.fmt.price(value)+' $'+(VX.quotes.differee(q)?' · différé':'')):'marque indisponible'}</div>
       <div class="vx-flex" style="gap:6px;align-items:center"><span class="vx-meta" style="flex:0 0 auto;font-size:9.5px">poids</span><span style="flex:1;height:4px;border-radius:99px;background:var(--vx-surface-1)"><i style="display:block;height:100%;width:${Math.max(3,Math.min(100,wgt))}%;background:var(--vx-brand);border-radius:99px"></i></span><b class="vx-mono" style="font-size:10px">${wgt} %</b></div>
       <div class="vx-flex" style="justify-content:flex-end;margin-top:auto">
         <button class="vx-btn vx-btn-icon vx-btn-ghost" data-entity-menu="${esc(t.sym)}" aria-label="Actions ${esc(t.sym)}">⋯</button></div>
@@ -1810,9 +1818,15 @@ async function loadPortfolio(){
      `fallback_used:true`). Deux témoins servis et jamais lus corrigent le
      mensonge sans rien recalculer ici : `fallback_used` (au moins une marque
      de repli) et `live` (preuve de socket). `pfLive===null` = non mesuré :
-     on ne prétend ni live ni hors ligne. */
+     on ne prétend ni live ni hors ligne.
+     Second tour : le témoin de CARTE était corrigé, la ligne PAR POSITION ne
+     l'était pas — « valeur 4 512 $ » restait muette sur une marque de scan,
+     parce qu'elle testait encore `q.delayed` seul. Or chaque cote de repli
+     ACTION porte `mode:'DELAYED'` et `fallback_used:true` (cotation_unifiee
+     .en_charge_client) : le différé est lisible POSITION PAR POSITION sans
+     rien attendre du serveur. La règle est dans VX.quotes.differee. */
   +`<div class="vx-card-footer">${pos.length} position(s) · marques ${Object.keys(quotes).length
-      ?((Object.values(quotes).some(q=>q.delayed)||pfRepli)?'différées (scan)'
+      ?((Object.values(quotes).some(q=>VX.quotes.differee(q))||pfRepli)?'différées (scan)'
         :(pfLive===true?'IBKR temps réel/desk':pfLive===false?'desk — IBKR hors ligne':'provenance non mesurée'))
       :'indisponibles'}</div>`;
 }
@@ -1952,25 +1966,50 @@ async function loadEssential(scan){
    HTML VALIDE : le lien source (↗) et le bouton ticker sont FRÈRES — jamais
    de bouton imbriqué dans un lien. ── */
 let NEWS_FILTER='all';
+/* Plafond d'affichage du fil — UN SEUL endroit (il était écrit dans le `slice`
+   et le pied ne le nommait pas : 8 lignes sur 45 servies, sans le dire). */
+const NEWS_MAX=8;
+const NEWS_LIB={all:'Tout',pos:'Positives',neg:'Négatives'};
 async function loadNews(){
   const el=$('vx-news-body');if(!el)return;
-  let d=null;try{d=await VX.fetch('/news-feed',{ttl:120000});}catch(e){}
+  /* `err` séparé de « rien servi » : le contrat produit exige que l'ERREUR,
+     l'ABSENCE et le ZÉRO restent distincts. Avant, un fetch en échec et un fil
+     vide rendaient le MÊME texte, qui affirmait de surcroît une cause jamais
+     mesurée (« hors ligne dans cet environnement »). */
+  let d=null,err=null;
+  try{d=await VX.fetch('/news-feed',{ttl:120000});}catch(e){err=e;}
   /* Filtre de sentiment : côté affichage uniquement (le flux reste complet) */
   const all=((d&&d.items)||[]);
   const head=el.closest('section').querySelector('.vx-card-header');
   if(head&&!head.querySelector('[data-newsf]')){
+    /* Les chips et le pied nomment le filtre depuis la MÊME table : deux listes
+       de libellés finissent toujours par diverger, et le pied doit dire
+       exactement le filtre que le lecteur a cliqué. */
     head.insertAdjacentHTML('beforeend','<span class="vx-actions">'
-      +[['all','Tout'],['pos','Positives'],['neg','Négatives']].map(([id,l])=>
-        `<button class="vx-chip" data-newsf="${id}" aria-pressed="${id===NEWS_FILTER}">${l}</button>`).join('')+'</span>');
+      +Object.keys(NEWS_LIB).map(id=>
+        `<button class="vx-chip" data-newsf="${id}" aria-pressed="${id===NEWS_FILTER}">${NEWS_LIB[id]}</button>`).join('')+'</span>');
     head.querySelectorAll('[data-newsf]').forEach(b=>b.addEventListener('click',()=>{
       NEWS_FILTER=b.dataset.newsf;
       head.querySelectorAll('[data-newsf]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
       loadNews();}));
   }
-  const items=all.filter(n=>{const v=+n.senti||0;
-    return NEWS_FILTER==='all'||(NEWS_FILTER==='pos'?v>0:v<0);}).slice(0,8);
+  const retenus=all.filter(n=>{const v=+n.senti||0;
+    return NEWS_FILTER==='all'||(NEWS_FILTER==='pos'?v>0:v<0);});
+  const items=retenus.slice(0,NEWS_MAX);
+  /* PIED DATÉ, dans TOUTES les branches. Mesure du 06/09/2026 : l'early-return
+     ci-dessous était à l'offset 63 de la fonction et le pied à l'offset 3993 —
+     autrement dit le cas dégradé (fetch en échec, fil vide, filtre sans
+     résultat) rendait une carte à ZÉRO `.vx-update`, exactement le défaut que
+     le pied était censé corriger, et précisément quand le lecteur a besoin de
+     savoir de quand date ce qu'il ne voit pas. */
+  const pied=newsPied(d,items.length,retenus.length,all.length);
   if(!items.length){
-    el.innerHTML=VX.states.empty(all.length?'Aucune actualité ne correspond à ce filtre de sentiment.':'Flux d’actualités hors ligne dans cet environnement — sur ton poste, les actualités réelles du jour s’affichent ici (sources publiques, filtrées).');
+    el.innerHTML=(err
+      ?VX.states.error('Fil d’actualités injoignable — '+esc(err.message||'requête en échec'))
+      :VX.states.empty(all.length
+        ?('Aucun titre ne correspond au filtre « '+NEWS_LIB[NEWS_FILTER]+' » — '+all.length+' titre(s) servis, aucun de ce sentiment.')
+        :'Le fil n’a servi aucun titre. Ni la cause ni la disponibilité chez la source ne sont mesurées ici : le pied ci-dessous dit l’âge et la provenance de ce fil.'))
+      +pied;
     return;
   }
   el.innerHTML=items.map(n=>{
@@ -1998,22 +2037,44 @@ async function loadNews(){
       <div style="font-size:12.5px;line-height:1.45;color:var(--vx-text-secondary)">${dot}${t}</div>
       <div class="vx-meta vx-mt1">
         ${sym?`<button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${esc(sym)}" style="padding:0 4px">${esc(sym)}</button> · `:''}
-        <span title="${esc(VX.fmt.instantSourceNote(iso))}${n.received_at?' · reçu '+esc(n.received_at)+' UTC':''}">${src}${hm?` · ${hm}`:''}${nsrc}</span>
+        <span title="${esc(VX.fmt.instantSourceNote(iso))}${n.received_at?' · reçu par Vertex '+esc(n.received_at):''}">${src}${hm?` · ${hm}`:''}${nsrc}</span>
         ${link?` · <a href="${esc(link)}" target="_blank" rel="noopener noreferrer" aria-label="Ouvrir la source">source ↗</a>`:''}
       </div></article>`;
   }).join('')
-  /* PIED DATÉ (constat 43 du 06/09/2026) : la carte rendait 8 titres sur 45
-     sans un seul `.vx-update`, quand 19 autres tampons vivaient sur la MÊME
-     page (« Il y a 25 min · yfinance Différé ») — et /news-feed sert déjà
-     `ts`, `as_of`, `source` et `source_detail` {ibkr, web} que personne
-     n'affichait. Sans âge ni provenance, un onglet laissé ouvert présentait
-     des titres figés sous un intertitre qui promet « aujourd'hui ».
-     `d` nul (fetch en échec) → « Âge inconnu » : l'absence reste dite. */
-  +`<div class="vx-card-footer">${VX.updateIndicator((d&&(d.ts?d.ts*1000:d.as_of))||null,
+  +pied
+  +`<div class="vx-meta vx-mt2">Sources publiques, assainies côté serveur — de l’information, jamais un conseil.</div>`;
+}
+/* PIED DATÉ du fil (constat 43 du 06/09/2026) : la carte rendait 8 titres sur
+   45 sans un seul `.vx-update`, quand 19 autres tampons vivaient sur la MÊME
+   page (« Il y a 25 min · yfinance Différé ») — et /news-feed sert déjà `ts`,
+   `as_of`, `source` et `source_detail` {ibkr, web} que personne n'affichait.
+   Sans âge ni provenance, un onglet laissé ouvert présente des titres figés
+   sous un intertitre qui promet « aujourd'hui ». `d` nul (fetch en échec) →
+   « Âge inconnu » : l'absence reste dite, et ce pied est rendu AUSSI dans les
+   branches dégradées, qui n'en avaient aucun.
+   Le compte disait « 8 sur 45 servis » sans nommer NI le plafond NI le filtre :
+   avec « Positives » actif, le lecteur ne pouvait pas savoir si 8 était la
+   récolte du filtre ou une troncature. Les trois nombres sont désormais
+   distincts — affichés, retenus par le filtre, servis par le fil. */
+function newsPied(d,nAffiches,nRetenus,nServis){
+  const compte=nAffiches+' titre(s) affiché(s)'
+    +(nRetenus>nAffiches?' sur '+nRetenus+' retenu(s) — plafond d’affichage '+NEWS_MAX:'')
+    +(NEWS_FILTER!=='all'?' · filtre « '+NEWS_LIB[NEWS_FILTER]+' »':'')
+    +' · '+nServis+' servi(s) par le fil';
+  /* MODE MESURÉ, jamais posé d'office. `d` nul = la requête a échoué : AUCUNE
+     charge n'a été servie, donc il n'y a pas de mode à qualifier. Coder
+     'delayed' en dur collait l'étiquette d'une donnée servie (« Différé ») sur
+     une ABSENCE de donnée — mesure du 06/09/2026 : newsPied(null,0,0,0) rendait
+     « Âge inconnu · fil source inconnue Différé ». Le contrat exige que
+     l'erreur, l'absence et le zéro restent distincts ; c'est la règle que
+     `pfModeMarques` applique déjà côté Portefeuille (mode '' quand rien n'est
+     mesuré). Charge servie → 'delayed' est MESURÉ et non supposé : /news-feed
+     ne transporte aucun tick, seulement des dépêches déjà publiées. */
+  const mode=d?'delayed':'';
+  return `<div class="vx-card-footer">${VX.updateIndicator((d&&(d.ts?d.ts*1000:d.as_of))||null,
       'fil '+((d&&d.source)||'source inconnue')
       +((d&&d.source_detail)?` (courtier ${d.source_detail.ibkr||0} · web ${d.source_detail.web||0})`:''),
-      'delayed')} · ${items.length} titre(s) affiché(s) sur ${all.length} servis</div>`
-  +`<div class="vx-meta vx-mt2">Sources publiques, assainies côté serveur — de l’information, jamais un conseil.</div>`;
+      mode)} · ${compte}</div>`;
 }
 
 /* ── Ancres de section : générées DEPUIS le DOM (ordre chips = ordre DOM,
@@ -2091,8 +2152,16 @@ VX.refresh.register(loadAlerts,60000,'alerts');
 /* Le fil d'actualités n'était rejoué NULLE PART (mesuré : loadNews n'apparaît
    qu'au boot et au clic de filtre ; 4 s après `VX.liveReact('news')`, zéro
    requête /news-feed supplémentaire). Un onglet ouvert affichait donc les
-   titres de l'heure du chargement. Cadence alignée sur le `ttl:120000` déjà
-   passé à VX.fetch et sur la boucle serveur du fil. */
+   titres de l'heure du chargement.
+   CE QUE CET ENREGISTREMENT APPORTE RÉELLEMENT — le commentaire précédent
+   attribuait le gain à la cadence, la mesure dit autre chose : `/news-feed`
+   n'est pas dans LIVE_TTL, et vx-core `_effTtl` relève son TTL à
+   SESSION_TTL = 1 800 000 ms dès que `session_status === 'ready'`. Le tour de
+   120 s re-rend donc la carte SANS refetch pendant 30 min (l'âge du pied, lui,
+   continue de vieillir honnêtement). Le vrai déblocage est l'entrée dans
+   `VX.refresh.runTasks()` : live-updates.js invalide le préfixe '/news' —
+   `VX.fetch.invalidate` est bien préfixe — PUIS rejoue les tâches de la page.
+   C'est l'événement serveur qui rafraîchit ce canal, pas l'horloge. */
 VX.refresh.register(loadNews,120000,'actualités');
 VX.refresh.register(loadSession,45000,'session-digest');
 VX.bus.on('vx:position-changed',loadPortfolio);

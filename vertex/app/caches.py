@@ -45,7 +45,22 @@ _STOOQ_TTL = 6 * 3600
 
 # Santé des sources de données. Un écrivain PAR CLÉ : chaque source déclare son
 # propre état, ce qui est la seule forme de multi-écriture acceptable ici.
-# Valeurs : 'UNKNOWN' | 'OK' | 'UNAVAILABLE'.
+#
+# Valeurs RÉELLEMENT écrites, relevées chez les deux seuls écrivains :
+#   'UNKNOWN'       — valeur initiale, aucune tentative depuis le démarrage ;
+#   'AVAILABLE'     — la source a servi des données (terminal.py, stooq.py) ;
+#   'CACHED'        — servi depuis le cache après échec réseau (stooq.py) ;
+#   'NOT_COLLECTED' — pas de tentative sur ce cycle (terminal.py) ;
+#   'UNAVAILABLE'   — tentative faite, rien servi (terminal.py, stooq.py).
+#
+# Le commentaire précédent annonçait « 'UNKNOWN' | 'OK' | 'UNAVAILABLE' ». `OK`
+# n'a JAMAIS été écrit par personne : c'était un vocabulaire d'état inventé par
+# la documentation, et la page Système avait fini par bâtir sa liste blanche de
+# sources saines dessus — cinq sources à `AVAILABLE` étaient donc affichées
+# « dégradé » en permanence (constat 4). Le vocabulaire public servi est borné
+# par `_PUBLIC_SOURCE_STATES` (vertex/app/routes/analysis_api.py), que Stooq
+# complète de `CACHED` ; ce commentaire s'aligne sur les ÉMETTEURS, et
+# `tests/test_pannes_sources.py` le vérifie en dérivant la liste du code.
 _SOURCE_BUDGET_STATE = {'yfinance': 'UNKNOWN', 'stooq': 'UNKNOWN'}
 
 # ── Instantanés des routes interactives ────────────────────────────────────

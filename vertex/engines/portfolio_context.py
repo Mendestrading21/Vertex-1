@@ -159,12 +159,16 @@ def build(positions, quotes=None, sym=None, capital=None, profile=None, series_b
             continue
         asset_values[asset_type] = asset_values.get(asset_type, 0.0) + val
         asset_counts[asset_type] = asset_counts.get(asset_type, 0) + 1
-        e = by_sym.setdefault(s, {'value': 0.0, 'cost': 0.0, 'qty': 0.0,
-                                  'quotable_cost': 0.0, 'quotable_qty': 0.0,
-                                  'option_lines': 0})
+        #  `cost` et `qty` TOUS LIGNES CONFONDUES sont retirés : depuis la
+        #  séparation `quotable_*`, ils étaient écrits et plus jamais lus
+        #  (vérifié : `by_sym` ne sort pas de cette fonction, et les seules
+        #  lectures sont value / quotable_cost / quotable_qty / option_lines).
+        #  Les garder côte à côte, c'est laisser à portée de main exactement la
+        #  paire qui fabriquait le −64 % : un coût par contrat divisé par un
+        #  nombre de contrats, confronté à un spot par titre.
+        e = by_sym.setdefault(s, {'value': 0.0, 'quotable_cost': 0.0,
+                                  'quotable_qty': 0.0, 'option_lines': 0})
         e['value'] += val
-        e['cost'] += cost or 0.0
-        e['qty'] += qty
         if asset_type == 'OPTION':
             e['option_lines'] += 1
         else:
@@ -385,6 +389,16 @@ def build(positions, quotes=None, sym=None, capital=None, profile=None, series_b
         'n_positions': n, 'bounds': {'min': pmin, 'max': pmax},
         'in_bounds': bool(pmin <= n <= pmax), 'free_slots': max(0, pmax - n),
         'total_value': round(total, 2), 'weights': weights, 'hhi': hhi,
+        #  Le périmètre voyage AVEC la mesure. DEUX « HHI » cohabitent dans le
+        #  produit et ne répondent pas à la même question : celui-ci porte sur
+        #  TOUTES les lignes valorisées (options au capital engagé comprises),
+        #  celui de portfolio/risk_engine sur le seul compartiment actions
+        #  renormalisé. Sur la même page, sous le même nom et avec des seuils
+        #  différents, ils rendaient deux verdicts opposés sans que rien ne dise
+        #  lequel mesurait quoi. Nommer la base est la moitié serveur du
+        #  correctif ; l'étiquetage à l'écran appartient à la page.
+        'hhi_basis': ('toutes les lignes valorisées (actions, ETF et options au capital '
+                      'engagé) ; le cash n’est pas une ligne et n’entre pas au dénominateur'),
         'asset_mix': asset_mix,
         'sector_mix': sector_mix,
         'sector_coverage': sector_coverage,

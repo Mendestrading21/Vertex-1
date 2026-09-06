@@ -134,10 +134,20 @@ def decide(packet: dict, profile=None) -> dict:
         # le canal d'ignorance déjà servi à l'utilisateur dans l'audit_trail.
         # `unknowns_critical` ne retient que fundamental/technical : aucune décision
         # ne change, seule l'honnêteté du dossier change.
+        #  Second tour — le message annonçait « neutre 50.0 substitué » de façon
+        #  INCONDITIONNELLE alors que la branche sans bloc technique substitue 0.0.
+        #  Mesuré : `decide({'technical': None})` rendait `scores.timing = 0.0`
+        #  sous un audit affirmant 50.0. L'audit est le canal qui EXPLIQUE le
+        #  chiffre servi ; s'il en nomme un autre, il ment sur la substitution
+        #  qu'il est censé avouer. `decide()` est publique et appelée avec des
+        #  paquets construits à la main (le paquet du scan porte toujours un bloc
+        #  technique) : le texte porte désormais la valeur réellement substituée.
         timing = 50.0 if tech else 0.0
         unknowns.append('timing')
-        audit.append('timing non mesuré — neutre 50.0 substitué (aucune note de '
-                     'timing calculée pour ce titre)')
+        audit.append('timing non mesuré — %s substitué (%s)' % (
+            timing,
+            'aucune note de timing calculée pour ce titre' if tech
+            else 'paquet sans bloc technique — substitution basse, pas un neutre'))
     scores = {'conviction': conviction, 'risk': risk_score, 'timing': timing,
               'asymmetry': asym, 'data_quality': dq_score}
 

@@ -34,13 +34,32 @@ def assess(p: dict, detail: dict | None = None,
                 'updated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
 
     # FUNDAMENTAL
-    fund = d.get('st_fund') or d.get('fund_score')
+    #  CONSTAT 5, SITE JUMEAU. Ce module lisait `d.get('st_fund') or
+    #  d.get('fund_score')`. Les deux clés sont MORTES sur le `detail` du scan
+    #  que lui passe `recalculator.assess(p, d, …)` : `fund_score` n'a aucune
+    #  assignation dans le dépôt, `st_fund` n'est posée que sur la LIGNE de
+    #  tableau, jamais sur le `detail`. MESURE : avec
+    #  `detail['sub']['fundamental'] = 72` réellement servi, `assess()` rendait
+    #  unknowns ['fondamental'] et confidence 0.67 — une note MESURÉE déclarée
+    #  inconnue, sur des positions DÉCLARÉES par l'utilisateur (invariant 5).
+    #  Le lecteur canonique est celui de `decision_packet` : même producteur
+    #  (`detail['sub']`), même sémantique du 0 (« fondamentaux non branchés »,
+    #  donc absent, jamais « mauvais »), et le lignage `is_proxy` voyage avec
+    #  la note au lieu d'être perdu (invariant 6).
+    from vertex.strategy.decision_packet import read_fundamental
+    _f = read_fundamental(d)
+    fund, fund_proxy = _f['score'], _f['is_proxy']
+    #  Un fondamental DÉRIVÉ d'un proxy technique ne se lit pas comme une
+    #  mesure comptable : la preuve le dit au lieu de laisser croire l'inverse.
+    _prov = ' (proxy technique)' if fund_proxy else ''
     if fund is None:
         unknowns.append('fondamental')
     elif fund >= 60:
-        pos_ev.append(f'fondamental {fund}')
+        #  `:g` — le lecteur canonique rend un float ; « fondamental 72.0 »
+        #  suggérerait une précision décimale que la note sur 100 n'a pas.
+        pos_ev.append(f'fondamental {fund:g}{_prov}')
     elif fund < 45:
-        neg_ev.append(f'fondamental faible {fund}')
+        neg_ev.append(f'fondamental faible {fund:g}{_prov}')
     # CATALYST
     edte = d.get('earnings_dte') if d.get('earnings_dte') is not None else p.get('days_to_earnings')
     if edte is None:

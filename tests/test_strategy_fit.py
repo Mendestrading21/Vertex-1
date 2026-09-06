@@ -53,3 +53,53 @@ def test_attach_mutates_rows():
 def test_terminal_bindings_are_the_module():
     import terminal
     assert terminal._strat_tilt is sf.strat_tilt
+
+
+def test_tilt_largeur_absente_ne_pousse_jamais_le_ton_offensif():
+    """CONSTAT 30, second moteur — un neutre 50 non marqué pilotait la prescription.
+
+    MESURE avant correctif, mctx = {'spy_regime':'TREND','roro':'RISK-ON',
+    'vix_band':'stress'} : breadth {'above50': 50}, {} et {'above50': None}
+    rendaient TOUS `score 74 / FAVORABLE / call_size « normale → agressive »`,
+    identiques au bit près. `_strat_tilt` substituait 50 à une participation
+    JAMAIS mesurée (``(a50 if a50 is not None else 50)``) et cette invention
+    poussait le ton le plus offensif du produit — taille de CALL « agressive »
+    contre « réduite (½ taille) » au palier voisin — sans aucune marque.
+    Ce tilt n'est pas mort : terminal.py:845 l'appelle et le publie dans
+    `scan_state['strat_tilt']` (terminal.py:901).
+    """
+    mesure = sf.strat_tilt({'spy_regime': 'TREND', 'roro': 'RISK-ON',
+                            'vix_band': 'stress', 'breadth': {'above50': 50}})
+    absente = sf.strat_tilt({'spy_regime': 'TREND', 'roro': 'RISK-ON',
+                             'vix_band': 'stress', 'breadth': {}})
+    # Le score reste celui du moteur (aucun seuil déplacé) …
+    assert mesure['score'] == absente['score'] == 74
+    # … mais la couverture est dite, et la prescription plafonnée au palier NEUTRE.
+    assert mesure.get('partiel') is None and 'agressive' in mesure['call_size']
+    assert absente['partiel'] is True and absente['breadth_status'] == 'MISSING'
+    assert absente['call_size_plafonne'] is True
+    assert 'agressive' not in absente['call_size'] and 'réduite' in absente['call_size']
+    assert 'Levier LEAPS' not in absente['emphasis']
+    assert absente['couverture_note'] and 'Largeur' in absente['note']
+
+
+def test_tilt_delegue_sa_borne_au_moteur_de_climat(monkeypatch):
+    """CONSTAT 48, troisième propriétaire — la borne FAVORABLE était recopiée.
+
+    `_strat_tilt` répliquait la formule entière de `market_lens.climate`
+    (35/18/6/14, 25/2/12, /100*25, 15/2/8) et étiquetait FAVORABLE sur un `65`
+    LITTÉRAL. La divergence numérique disparaissait par coïncidence — les deux
+    valaient 65 — mais la duplication qui l'avait produite restait : une
+    prochaine modification de CLAUDE_FAVORABLE_MIN l'aurait rouverte en
+    silence. Ce test déplace la borne du moteur : si la formule est de nouveau
+    recopiée ici, le tilt ignore le déplacement et le test échoue.
+    """
+    from vertex.engines import market_lens
+    mc = {'spy_regime': 'TREND', 'roro': 'RISK-ON', 'vix_band': 'calme',
+          'breadth': {'above50': 70}}
+    assert sf.strat_tilt(mc)['regime'] == 'FAVORABLE'      # score 93, borne 65
+    monkeypatch.setattr(market_lens, 'CLIMAT_FAVORABLE_MIN', 95)
+    deplace = sf.strat_tilt(mc)
+    assert deplace['score'] == 93, 'la formule ne bouge pas, seule la borne bouge'
+    assert deplace['regime'] == 'NEUTRE', 'le tilt suit la borne du moteur canonique'
+    assert market_lens.climate(mc)['label'] == deplace['regime']

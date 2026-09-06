@@ -170,7 +170,17 @@ def make_blueprint(scan_state: dict) -> Blueprint:
         from vertex.options import on_demand as _od
         _greeks = _od.desk_greeks(body.get('option_positions') or [])
         _legs = _greeks.get('legs') or []
+        #  Aucune série de rendements n'est alignée sur cette route. La variable
+        #  le DIT au lieu de le sous-entendre : la cause servie plus bas est
+        #  conditionnée à ce fait mesurable, et non plus à « la matrice est vide ».
+        #  Sans cela, le jour où `returns_by_symbol` sera branché, une matrice
+        #  légitimement vide (aucune paire à 30 rendements communs) recevrait
+        #  encore le texte « cette route ne fournit aucune série de rendements »,
+        #  qui serait alors FAUX — une cause inventée à la place d'une cause
+        #  mesurée.
+        _returns_by_symbol = None
         risk = risk_engine.portfolio_risk(snap, profile,
+                                          returns_by_symbol=_returns_by_symbol,
                                           options_greeks=_legs if _legs else None)
         # ── Corrélations : capacité NON BRANCHÉE sur cette route, dite comme telle ──
         # Mesure : POST /api/portfolio/team avec 1 puis 3 positions rend le MÊME
@@ -183,7 +193,9 @@ def make_blueprint(scan_state: dict) -> Blueprint:
         # laissait l'interface promettre un flux live qui ne l'alimentera jamais
         # (invariant 8). Les corrélations MESURÉES sont servies par
         # /api/portfolio/context, qui aligne de vraies séries de rendements.
-        if isinstance(risk.get('correlations'), dict) and not risk['correlations'].get('pairs'):
+        if (_returns_by_symbol is None
+                and isinstance(risk.get('correlations'), dict)
+                and not risk['correlations'].get('pairs')):
             risk['correlations']['reason'] = (
                 'NON_IMPLÉMENTÉ sur /api/portfolio/team — cette route ne fournit '
                 'aucune série de rendements au moteur ; les corrélations mesurées '
@@ -201,9 +213,22 @@ def make_blueprint(scan_state: dict) -> Blueprint:
         _NDX_SECTORS = {'Technology', 'Communication Services'}
         _nasdaq_exposure = {p.symbol: (_sector_of.get(p.symbol) in _NDX_SECTORS)
                             for p in snap.positions}
+        #  CONSTAT 26 — LE PÉRIMÈTRE OPTIONS N'ARRIVAIT PAS AU MOTEUR. Cette
+        #  route ne transmettait que le vega ; `options_open` restait None, et
+        #  le moteur ne pouvait donc pas distinguer « aucune option » (IV crush
+        #  réellement nul) de « des options sans greeks broker » (impact
+        #  inconnu). Conséquence mesurée sur un desk sans aucune option (KO
+        #  88,07 $ + 25 000 $ de cash) : IV_CRUSH et VIX_PLUS_50 sortaient tous
+        #  deux `impact_pct: null` alors que le premier vaut un 0,0 % VRAI et
+        #  le second -0,01 %. Deux mesures justes perdues sur TOUTE route
+        #  réelle — l'état `options_open == 0` était inatteignable en
+        #  production. `desk_greeks` compte déjà les jambes déclarées
+        #  (`open_options` = len(legs), 0 quand le corps n'en porte aucune) :
+        #  c'est le périmètre DÉCLARÉ par l'utilisateur, jamais une déduction.
         stress = stress_tests.run_stress_tests(
             snap, profile, sector_of=_sector_of, nasdaq_exposure=_nasdaq_exposure,
-            options_vega_value=_greeks.get('vega_usd'))
+            options_vega_value=_greeks.get('vega_usd'),
+            options_open=_greeks.get('open_options'))
         # Le scan ne porte pas les dates de résultats → on n'affiche PAS un faux 0 :
         # le scénario « gap résultats » devient honnêtement « inconnu ».
         _has_earn = any(isinstance((_det.get(p.symbol) or {}).get('earnings_dte'), (int, float))

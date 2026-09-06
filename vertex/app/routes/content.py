@@ -34,6 +34,23 @@ def news_feed_ep():
     confirmé est servi à côté de l'agrégat de provenance, qui nomme désormais
     sa base. Aucun item n'est retiré : une dépêche hors sujet reste de
     l'information réelle, elle cesse seulement d'affirmer un sujet.
+
+    ## Pourquoi la table par sujet est peu peuplée, DIT au lieu d'être subi
+
+    `sujet_preuves` sert l'état RÉEL des trois canaux de preuve, DÉRIVÉ d'un
+    balayage du dépôt — jamais écrit en dur ici. Sans cette déclaration, un
+    lecteur de l'API ne peut pas distinguer « peu de sujets établis » de « un
+    canal de preuve est éteint », et la seconde explication resterait invisible.
+
+    Cette prose affirmait encore que l'attestation du vendeur valait
+    `NON_IMPLÉMENTÉ` faute de producteur. Mesuré le 2026-09-06 par appel
+    direct : la MÊME fonction sert `attestation_vendeur: 'ACTIF'` depuis que
+    `terminal.py::_news_loop` pose `sym_atteste` sur la seule branche courtier.
+    Aucune valeur servie n'était fausse — c'est la documentation de la route
+    qui contredisait sa propre sortie, ce qui est la façon la plus discrète de
+    rendre une garde inutile : un lecteur qui croit le commentaire ne va pas
+    vérifier la réponse. La valeur reste dérivée du balayage, donc elle
+    retombera d'elle-même si le producteur disparaît.
     """
     items = news_state.get('items') or []
     sym = (request.args.get('sym') or '').upper().strip()
@@ -62,6 +79,8 @@ def news_feed_ep():
                     #  Agrégat par sujet ÉTABLI : un ticker sans article confirmé
                     #  en est absent, il n'y reçoit pas un score fabriqué.
                     'sentiment_sujets': news_plus.aggregate(items, sujets_seulement=True),
+                    #  Quels canaux de preuve de sujet sont RÉELLEMENT actifs.
+                    'sujet_preuves': news_plus.PREUVES_SUJET,
                     'ai_on': ai.available()})
 
 

@@ -42,6 +42,29 @@ def test_parser_bns_rend_des_communiques_dates_par_dc_date():
     assert out[0]['published_at'] == '2026-09-02T10:15Z'
 
 
+def test_le_repli_de_date_cite_dublin_core_et_pas_n_importe_quel_date():
+    """Le repli ne doit pas être un repli sur `<*:date>` DÉNAMESPACÉ.
+
+    `_items_surs` retirait le préfixe de namespace : `<dc:date>` (Dublin Core,
+    date de publication) et un `<foo:date>` de sémantique différente — date de
+    révision, date d'événement — arrivaient tous deux sous la clé `date`, et le
+    second aurait alimenté `published_at` comme s'il s'agissait de la
+    publication. Mesure du 2026-09-06 : aucun flux actuel n'est concerné (BCE
+    15 `pubDate` / 0 `dc:date` d'item ; BNS 0 `pubDate` / 36 `dc:date`), c'est
+    donc le NOM qui est corrigé, pas un comportement observé — et le nom
+    qualifié est désormais conservé à côté du nom local.
+    """
+    gabarit = ('<?xml version="1.0"?><rss xmlns:dc="http://purl.org/dc/elements/1.1/" '
+               'xmlns:foo="https://exemple.invalid/foo"><channel><item>'
+               '<title>Communiqué</title><link>https://www.snb.ch/x</link>'
+               '%s</item></channel></rss>')
+    dublin = src.parser_communiques(gabarit % '<dc:date>2026-09-02T10:15:00Z</dc:date>', 'BNS')
+    assert dublin[0]['published_at'] == '2026-09-02T10:15Z', 'le vocabulaire attendu est lu'
+    autre = src.parser_communiques(gabarit % '<foo:date>2026-09-02T10:15:00Z</foo:date>', 'BNS')
+    assert autre[0]['published_at'] is None, 'un autre *:date n’est pas une date de publication'
+    assert autre[0]['title'] == 'Communiqué', 'le communiqué reste servi, sans date'
+
+
 def test_la_date_bns_vient_du_flux_jamais_du_titre():
     """Le titre BNS commence par une date en clair (« 2026-09-02 - Federal
     Council… ») : on ne l'extrait PAS. Une chaîne d'affichage n'est pas un

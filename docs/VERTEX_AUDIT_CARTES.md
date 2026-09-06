@@ -23,6 +23,77 @@ vides, débordement horizontal, `/api/client-log`.
 59 relevés (une largeur), **0 problème** — même mesure que les passages à
 1600 et 390 px.
 
+## Passage APRÈS les corrections de la vérification en direct (2026-09-06)
+
+Les 45 corrections issues de la vérification en direct
+(`VERTEX_VERIFICATION_DIRECTE.md`) touchent des dizaines de cartes. Les deux
+audits ont donc été rejoués sur une instance de contrôle reconstruite à partir
+du code corrigé :
+
+| Audit | Portée | Résultat |
+|---|---|---|
+| Affichage | 59 pages × 1600 et 390 px = 118 relevés | **0 problème** |
+| Interactions | 59 pages, 593 clics | **0 problème** |
+| Gardiens navigateur (Chromium) | 5 bancs | **53 réussis** |
+
+## Graphiques et widgets (`tools/qa/audit_graphiques.py`, 1600 px)
+
+Les deux premiers outils mesurent la PAGE (statut, erreurs, squelettes,
+débordements) et les COMMANDES (clics). Aucun ne répondait à la question de
+l’utilisateur : *le graphique trace-t-il une courbe, le widget montre-t-il un
+chiffre ?* Une carte peut être présente, sans erreur, sans squelette — et vide.
+
+`audit_graphiques.py` ouvre les 59 vues, fait défiler la page (les cartes en
+`content-visibility` ne dessinent pas hors écran), puis mesure :
+
+- les **canevas** par les pixels réellement peints (`getImageData`) : un canevas
+  monté mais jamais dessiné est le défaut invisible par excellence ;
+- les **SVG** par leur nombre de tracés, jugés PAR FAMILLE ;
+- les **widgets de valeur**, et pour chaque tiret : la carte hôte
+  explique-t-elle l’absence ?
+
+### Deux défauts de l’outil, corrigés avant de conclure
+
+Le premier relevé annonçait « 40 SVG sans tracé » et « 319 widgets creux ».
+Les deux chiffres étaient faux, et le vérifier valait mieux que les publier.
+
+1. **Seuil unique sur les SVG.** La règle « moins de 3 tracés = vide » accusait
+   124 widgets sains : une jauge de score (anneau 78 × 78) porte exactement DEUX
+   cercles — piste et arc — et c’est sa forme complète ; un treemap de deux
+   contrats porte deux rectangles. Le seuil est désormais donné par famille
+   (`jauge`, `aires`, `graphique`), et un SVG dont la carte annonce un gabarit
+   (le tracé « fantôme » de Performance) n’est plus compté.
+2. **`innerText` sur du contenu replié.** `innerText` est calculé sur le RENDU :
+   dans un `<details>` fermé il rend `''` alors que `textContent` porte
+   « 513 » — et Chromium donne quand même une boîte non nulle à ces éléments.
+   L’audit comptait donc chaque valeur repliée comme creuse : 19 sur 19 pour
+   « Système › données », dont **pas une seule** ne l’était. L’outil écarte
+   maintenant ce qui n’est pas affiché, au lieu de le déclarer vide.
+
+### Relevé après correction de la mesure
+
+| Mesure | Valeur |
+| --- | --- |
+| Vues ouvertes | 59 |
+| Canevas mesurés | 38 |
+| Canevas jamais dessinés | 0 |
+| SVG de graphique mesurés | 188 |
+| SVG sans tracé | 0 |
+| Cartes-graphiques muettes | 0 |
+| Widgets de valeur | 2089 |
+| Widgets affichant un tiret | 195 |
+| Tirets SANS explication sur leur carte | 2 |
+
+Un tiret n’est pas un défaut : c’est la représentation honnête d’une absence,
+et l’instance de mesure tourne sans IBKR, sans portefeuille déclaré et sans
+journal de trades. Le défaut est le tiret MUET. Il en reste deux, tous deux sur
+Portefeuille :
+
+- `?view=options` — KPI « Risque événementiel » : `—` ne distingue pas « aucune
+  échéance de résultats proche » de « date de résultats inconnue » ;
+- `?view=risk` — KPI « Bêta » : `—` ne dit pas si le bêta est incalculable
+  (série de référence absente) ou simplement non déclaré.
+
 ## Interactions (`tools/qa/audit_interactions.py`, 1280 px)
 
 Sur chaque page et sous-vue, clic sur chaque bouton, onglet, puce et lien de

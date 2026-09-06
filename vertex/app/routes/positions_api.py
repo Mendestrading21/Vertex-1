@@ -42,6 +42,45 @@ _FRONTIERE_COURTIER = {
              'clôture automatique.'),
 }
 
+#: CE QUE LA ROUTE RETIRE, et pourquoi le renommage de la note ne suffisait pas.
+#:
+#: MESURE (client de test, `NO_IBKR=1`, clés servies avant ce correctif) :
+#:
+#: ```text
+#: /api/positions/report    → […, 'ibkr_online': False, 'missing_positions': 0,
+#:                             'closed_positions_detected': 0, …]
+#: /api/positions/reconcile → […, 'ibkr_online': False, …]
+#: ```
+#:
+#: `ibkr_online` RESTAIT servi : le même processus pouvait donc continuer
+#: d'annoncer `ibkr_connected=True, ibkr_live=True` sur /healthz et
+#: `ibkr_online: false` ici — exactement la contradiction que la note en
+#: français venait d'arrêter d'écrire. Un champ n'est pas moins faux qu'une
+#: phrase. Il n'a aucun consommateur hors bancs (relevé sur tout le dépôt :
+#: `.py`, `.js`, `.html`) : la route, propriétaire de la frontière, cesse de
+#: le servir au lieu d'en servir une valeur inventée.
+#:
+#: Les deux compteurs de disparition suivent la même règle : une DÉTECTION qui
+#: n'a jamais eu lieu ne vaut pas zéro (invariant 5 — absence et zéro restent
+#: distincts). `0` se lit « vérifié, rien ne manque » ; c'est `null` qui dit
+#: « jamais comparé ». Les moteurs (`vertex/positions/detector.py`,
+#: `reconciler.py`) portent encore le paramètre `ibkr_online` et sa sémantique
+#: « hors ligne » : hors périmètre de ce lot, sans effet servi tant que ces
+#: deux routes restent leurs seules appelantes.
+_CHAMPS_NON_MESURES = ('ibkr_online',)
+_COMPTEURS_JAMAIS_MESURES = ('missing_positions', 'closed_positions_detected')
+
+
+def _frontiere(rapport: dict) -> dict:
+    """Rend le rapport HONNÊTE à la frontière : rien d'inventé sur le courtier."""
+    for cle in _CHAMPS_NON_MESURES:
+        rapport.pop(cle, None)
+    for cle in _COMPTEURS_JAMAIS_MESURES:
+        if cle in rapport:
+            rapport[cle] = None
+    rapport.update(_FRONTIERE_COURTIER)
+    return rapport
+
 
 def make_blueprint(scan_state: dict, *, opt_job=None, ibkr_enabled=False) -> Blueprint:
     bp = Blueprint('positions_api', __name__)
@@ -122,9 +161,8 @@ def make_blueprint(scan_state: dict, *, opt_job=None, ibkr_enabled=False) -> Blu
         #  choix, donc elle en nomme la cause (cf. `_FRONTIERE_COURTIER`) au
         #  lieu de laisser servir « IBKR hors ligne », mesure contredite par
         #  le meme processus.
-        rapport = startup_position_report(_desk_blob(), ibkr_online=False)
-        rapport.update(_FRONTIERE_COURTIER)
-        return jsonify(rapport)
+        return jsonify(_frontiere(
+            startup_position_report(_desk_blob(), ibkr_online=False)))
 
     @bp.route('/api/positions/audit')
     def positions_audit():
@@ -142,9 +180,7 @@ def make_blueprint(scan_state: dict, *, opt_job=None, ibkr_enabled=False) -> Blu
         #  rend l'etat honnete « courtier non lu », jamais un faux accord.
         pos = load_positions(_desk_blob())
         local = [p for p in pos if p['source'] != 'IBKR']
-        rapport = reconcile(local, [], ibkr_online=False)
-        rapport.update(_FRONTIERE_COURTIER)
-        return jsonify(rapport)
+        return jsonify(_frontiere(reconcile(local, [], ibkr_online=False)))
 
     @bp.route('/api/portfolio/stress')
     def portfolio_stress():

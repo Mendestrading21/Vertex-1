@@ -38,11 +38,8 @@ Et le contrôle du symbole inconnu doit savoir distinguer **refuser** de
 **fabriquer** : un test qui exigerait simplement « pas d'erreur » serait vert
 sur un produit qui invente un verdict.
 """
-import json
 import pathlib
 import sys
-import urllib.error
-import urllib.request
 
 import pytest
 
@@ -64,35 +61,21 @@ from tools.mesures import mesurer_qa_degrade as _mes  # noqa: E402
 #  Le défaut sans variable reste 5002 : aucun poste existant ne change.
 BASE = _mes.BASE_DEFAUT
 
-
-def _serveur_repond():
-    try:
-        with urllib.request.urlopen(BASE + '/healthz', timeout=3) as r:
-            return r.status == 200
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _serveur_verrouille():
-    """Le serveur exige-t-il un code d'accès (`VERTEX_CODE`) ?
-
-    `/healthz` reste ouvert — c'est une sonde d'infrastructure. Les surfaces
-    mesurées ici, elles, sont derrière le verrou : sur un poste où l'accès est
-    protégé, l'instrument reçoit `{"error":"auth"}` partout.
-
-    Sans ce contrôle, il **accusait le produit à tort** : « la réponse ne
-    contient aucun mot d'aveu — le vide n'est pas nommé » alors qu'il n'avait
-    jamais vu la réponse, seulement le mur d'authentification. Une mesure qui
-    ne peut pas être faite doit se déclarer impossible, jamais se transformer
-    en défaut imaginaire.
-    """
-    try:
-        with urllib.request.urlopen(BASE + '/api/live/status', timeout=3) as r:
-            return b'"auth"' in r.read()
-    except urllib.error.HTTPError as e:
-        return e.code in (401, 403)
-    except Exception:  # noqa: BLE001
-        return False
+#  LE MÊME CRITÈRE QUE LES TROIS MODULES FRÈRES, ET IL VIT DANS L'INSTRUMENT.
+#
+#  Ce banc demandait `/healthz` puis `/api/live/status` : une surface que la
+#  mesure n'examine pas, pour décider du sort de 12 pages HTML qu'elle examine.
+#  Deux faiblesses mesurées : le verrou n'est pas la seule raison de ne pas
+#  voir le produit (page servie sans son espace, interstitiel de proxy), et
+#  toute erreur non HTTP — expiration, connexion coupée — rendait « pas
+#  verrouillé », donc « mesure ». L'instrument accusait alors le produit de ne
+#  pas nommer un vide qu'il n'avait jamais vu.
+#
+#  `etat_instance` exige désormais une PAGE ouverte (`data-space="markets"`,
+#  sans `name="code"` ni `type="password"`), exactement comme test_qa_espaces,
+#  test_couche_visuelle et test_regles_mortes. La décision est PURE et éprouvée
+#  plus bas sur des corps fabriqués ; ici on ne fait que l'appeler.
+_ETAT_INSTANCE = _mes.etat_instance(BASE)
 
 
 #  ------------------------------------------------------- les contrôles purs
@@ -175,6 +158,45 @@ def test_le_controle_de_fraicheur_refuse_un_age_nul_sur_un_domaine_hors_ligne():
         'ressort en anomalie')
 
 
+def test_le_critere_d_instance_refuse_l_ecran_de_connexion_et_le_silence():
+    """MESURÉ le 6 sept. 2026 : deux gardiens ont mesuré l'ÉCRAN DE CONNEXION
+    de l'instance de travail en le prenant pour le produit.
+
+    Les quatre cas, sans serveur, avec un lecteur fabriqué :
+
+    ```text
+    /healthz muet                        → ABSENTE  (rien à mesurer)
+    /healthz 200 + page de connexion     → FERMEE   (on s'abstient)
+    /healthz 200 + /markets sans réponse → FERMEE   (l'ancien critere disait
+                                                     « pas verrouille » → mesure)
+    /healthz 200 + espace Marchés servi  → OUVERTE  (on mesure)
+    ```
+    """
+    def lecteur(reponses):
+        return lambda base, chemin, defaut='': reponses[chemin]
+
+    absente = lecteur({'/healthz': (None, 'connexion refusee')})
+    assert _mes.etat_instance('http://x', lire=absente) == 'ABSENTE'
+
+    verrou = lecteur({'/healthz': (200, '{"ok":true}'),
+                      '/markets': (200, _mes.CORPS_ECRAN_DE_CODE)})
+    assert _mes.etat_instance('http://x', lire=verrou) == 'FERMEE', (
+        'un ecran de connexion est pris pour le produit : c\'est lui qui sera '
+        'mesure, et le produit sera accuse de ne rien nommer')
+
+    muette = lecteur({'/healthz': (200, '{"ok":true}'),
+                      '/markets': (None, 'expiree apres 60 s')})
+    assert _mes.etat_instance('http://x', lire=muette) == 'FERMEE', (
+        'une page qui ne repond pas vaut « instance ouverte » : la mesure part '
+        'sur une instance qu\'on n\'a pas vue')
+
+    ouverte = lecteur({'/healthz': (200, '{"ok":true}'),
+                       '/markets': (200, _mes.CORPS_ESPACE_OUVERT)})
+    assert _mes.etat_instance('http://x', lire=ouverte) == 'OUVERTE', (
+        'la page Marches du produit ne suffit plus a declarer l\'instance '
+        'mesurable : le controle produit dormira pour toujours')
+
+
 def test_les_temoins_de_l_instrument_sont_tous_eprouves():
     """Le jeu de témoins complet, tel que l'outil l'exécute."""
     faux_releve = {'statuts': {'/': 200}}
@@ -192,14 +214,15 @@ def test_l_instrument_ne_recopie_jamais_le_secret_qu_il_trouve():
 
 #  ------------------------------------------------ la mesure sur le produit
 
-@pytest.mark.skipif(not _serveur_repond(),
-                    reason='serveur absent sur 127.0.0.1:5002 — la mesure '
-                           'porterait sur rien')
-@pytest.mark.skipif(_serveur_repond() and _serveur_verrouille(),
-                    reason="serveur protege par VERTEX_CODE — l'instrument ne "
-                           "voit que le mur d'authentification, pas les "
-                           'surfaces. Mesurer ici accuserait le produit de ne '
-                           'pas nommer un vide que personne ne lui a montre.')
+@pytest.mark.skipif(_ETAT_INSTANCE == 'ABSENTE',
+                    reason='aucun serveur sur %s — la mesure porterait sur '
+                           'rien' % BASE)
+@pytest.mark.skipif(_ETAT_INSTANCE == 'FERMEE',
+                    reason="le produit ne se montre pas sur %s (verrou "
+                           "VERTEX_CODE, ou page servie sans son espace) : "
+                           "l'instrument ne verrait que cet ecran. Mesurer ici "
+                           'accuserait le produit de ne pas nommer un vide que '
+                           'personne ne lui a montre.' % BASE)
 def test_le_produit_servi_ne_fuit_rien_et_ne_sait_pas_passer_d_ordre():
     r = _mes.mesurer(BASE)
     assert _mes._temoins(r) == []
@@ -213,7 +236,35 @@ def test_le_produit_servi_ne_fuit_rien_et_ne_sait_pas_passer_d_ordre():
     assert not [k for k, v in r['statuts'].items() if v != 200], r['statuts']
 
 
-def test_le_banc_vise_l_instance_que_l_instrument_vise(monkeypatch):
+def _recharger_instrument(valeur):
+    """Pose (ou retire) VERTEX_MESURE_BASE PUIS recharge l'instrument.
+
+    L'ordre est le correctif. La version précédente utilisait `monkeypatch`,
+    dont la restauration de l'environnement n'a lieu qu'APRÈS le test : le
+    `finally` rechargeait donc le module pendant que la variable était encore
+    retirée. MESURE, sur un poste qui pose la variable :
+
+    ```text
+    VERTEX_MESURE_BASE=http://127.0.0.1:5003 pytest tests/test_qa_degrade.py
+      avant : environnement restauré à …:5003, _mes.BASE_DEFAUT figé à …:5002
+      après : environnement restauré à …:5003, _mes.BASE_DEFAUT = …:5003
+    ```
+
+    Sans effet sur la suite actuelle (aucun autre module ne lit
+    `BASE_DEFAUT`), mais c'est un état global laissé faux — et le prochain
+    banc qui le lira mesurera l'instance que personne n'a demandée.
+    """
+    import importlib
+    import os
+
+    if valeur is None:
+        os.environ.pop('VERTEX_MESURE_BASE', None)
+    else:
+        os.environ['VERTEX_MESURE_BASE'] = valeur
+    return importlib.reload(_mes).BASE_DEFAUT
+
+
+def test_le_banc_vise_l_instance_que_l_instrument_vise():
     """Le gardien ne refige plus son adresse — c'est ce qui l'endormait.
 
     MESURE (6 sept. 2026) : l'instance de travail est verrouillée par
@@ -227,19 +278,35 @@ def test_le_banc_vise_l_instance_que_l_instrument_vise(monkeypatch):
     Ce banc-ci ne mesure rien du produit : il vérifie que le contrôle qui, lui,
     le mesure, regarde bien la même instance que son instrument.
     """
-    import importlib
+    import os
 
     assert BASE == _mes.BASE_DEFAUT, (
         'l’adresse du banc est refigée : le contrôle produit dormira sur toute '
         'machine dont l’instance mesurable n’est pas celle par défaut')
+    poste = os.environ.get('VERTEX_MESURE_BASE')
     try:
-        monkeypatch.setenv('VERTEX_MESURE_BASE', 'http://127.0.0.1:5003')
-        assert importlib.reload(_mes).BASE_DEFAUT == 'http://127.0.0.1:5003', (
+        assert _recharger_instrument('http://127.0.0.1:5003') == 'http://127.0.0.1:5003', (
             'l’instrument ignore VERTEX_MESURE_BASE, contrairement à ses trois '
             'modules frères')
-        monkeypatch.delenv('VERTEX_MESURE_BASE')
-        assert importlib.reload(_mes).BASE_DEFAUT == 'http://127.0.0.1:5002', (
+        assert _recharger_instrument(None) == 'http://127.0.0.1:5002', (
             'le défaut a changé : un poste existant se met à mesurer une autre '
             'instance sans l’avoir demandé')
     finally:
-        importlib.reload(_mes)
+        #  L'ENVIRONNEMENT DU POSTE D'ABORD, LE MODULE ENSUITE.
+        _recharger_instrument(poste)
+
+
+def test_l_instrument_reste_accorde_a_l_environnement_du_poste():
+    """Le banc précédent manipule un module global : il doit le rendre INTACT.
+
+    MESURE : `VERTEX_MESURE_BASE=http://127.0.0.1:5003 pytest -q
+    tests/test_qa_degrade.py` laissait `_mes.BASE_DEFAUT` à `…:5002` alors que
+    la variable, elle, était bien restaurée à `…:5003` — l'instrument et son
+    environnement racontaient deux instances différentes pour le reste de la
+    session pytest."""
+    import os
+
+    attendu = os.environ.get('VERTEX_MESURE_BASE') or 'http://127.0.0.1:5002'
+    assert _mes.BASE_DEFAUT == attendu, (
+        'l’instrument vise %s alors que l’environnement dit %s : un banc l’a '
+        'rechargé au mauvais moment' % (_mes.BASE_DEFAUT, attendu))

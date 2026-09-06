@@ -35,13 +35,40 @@
   function analyseDe(s) { return (s && s.analyse) || null; }
 
   /* ════════════════ VUE STRUCTURE ════════════════ */
+
+  /* La vue porte QUATRE hôtes de contenu. Mesure du 2026-09-06 : les branches
+     dégradées n'en remplissaient que deux — `vx-os-scenarios` et
+     `vx-os-compare` étaient vidés au chargement (l. 44) et jamais remplis,
+     donc littéralement vides et sans motif dans TOUS les états dégradés, y
+     compris la panne réseau où seul l'hôte du verdict était servi. Un hôte
+     vide ne distingue pas « rien à montrer » de « la lecture a échoué ».
+     Un seul endroit nomme donc l'absence, pour que le prochain état dégradé
+     ne puisse pas en oublier un. */
+  var HOTES_STRUCTURE = [
+    ['vx-os-scenarios', 'Pas de scénarios'],
+    ['vx-os-compare', 'Pas de comparaison de structures'],
+    ['vx-os-payoff', 'Pas de courbe de P&amp;L'],
+    ['vx-os-greeks', 'Pas de greeks de position'],
+  ];
+  function nommerAbsenceStructure(motif, enPanne) {
+    HOTES_STRUCTURE.forEach(function (h) {
+      var el = $(h[0]); if (!el) return;
+      el.innerHTML = (enPanne ? VX.states.error(h[1] + ' : ' + motif)
+                              : '<div class="vx-empty">' + h[1] + ' : ' + motif + '.</div>');
+    });
+  }
+
   var _structRetry = {};
   function loadStructure(sym) {
     try { if (window.VX && VX.store) VX.store.set('active_ticker', sym); } catch (e0) {}
     var vHost = $('vx-os-verdict'); if (!vHost) return;
     vHost.innerHTML = '<div class="vx-skeleton" style="height:150px"></div>';
-    ($('vx-os-scenarios')||{}).innerHTML = ''; ($('vx-os-compare')||{}).innerHTML = '';
-    ($('vx-os-payoff')||{}).innerHTML = '<div class="vx-empty">Calcul…</div>'; ($('vx-os-greeks')||{}).innerHTML = '';
+    /* Chargement : les quatre hôtes disent qu'ils travaillent. Deux d'entre
+       eux restaient à '' — indiscernable d'une carte qui n'a rien à dire. */
+    ($('vx-os-scenarios')||{}).innerHTML = '<div class="vx-empty">Calcul…</div>';
+    ($('vx-os-compare')||{}).innerHTML = '<div class="vx-empty">Calcul…</div>';
+    ($('vx-os-payoff')||{}).innerHTML = '<div class="vx-empty">Calcul…</div>';
+    ($('vx-os-greeks')||{}).innerHTML = '<div class="vx-empty">Calcul…</div>';
     Promise.all([VX.fetch('/api/options/strategies/' + encodeURIComponent(sym), { ttl: 60000 }), board()])
       .then(function (r) {
         var d = r[0], bd = r[1];
@@ -54,14 +81,27 @@
           }, ((d.retry_s || 8) * 1000));
         }
         if (!d || !d.available || !(d.strategies || []).length) {
-          vHost.innerHTML = insufficientCard(sym, (d && d.reason) || 'aucune structure constructible depuis le board');
-          ($('vx-os-payoff')||{}).innerHTML = '<div class="vx-empty">—</div>'; return;
+          /* MESURE du 2026-09-06 : `vx-os-greeks` restait à '' (vidé l. 44 et
+             jamais rempli) et `vx-os-payoff` affichait un TIRET NU — deux
+             hôtes muets sur un écran dont la carte verdict, elle, nomme la
+             cause. Un tiret sans motif ne distingue pas l'absence de la
+             panne. On répète ICI le motif que la carte verdict possède,
+             plutôt que d'inventer un second vocabulaire. */
+          var motif = (d && d.reason) || 'aucune structure constructible depuis le board';
+          vHost.innerHTML = insufficientCard(sym, motif);
+          nommerAbsenceStructure(esc(motif), false);
+          return;
         }
         var s = d.strategies.filter(function (x) { return x.recommended; })[0] || d.strategies[0];
         var a = analyseDe(s);
         if (!a || !a.verdict) {
-          vHost.innerHTML = insufficientCard(sym, 'analyse serveur absente (structure_verdict)');
-          ($('vx-os-payoff')||{}).innerHTML = '<div class="vx-empty">—</div>'; return;
+          /* Second site du même défaut : ici la structure EXISTE mais son
+             analyse serveur manque — un état différent du précédent, et les
+             deux hôtes doivent le dire au lieu de rendre un tiret nu. */
+          var motifA = 'analyse serveur absente (structure_verdict)';
+          vHost.innerHTML = insufficientCard(sym, motifA);
+          nommerAbsenceStructure(esc(motifA), false);
+          return;
         }
         vHost.innerHTML = verdictCard(d, s, {
           spot: a.spot, dte: a.dte, capital: a.capital, gainProb: a.gain_prob, gainExc: a.gain_exc,
@@ -72,7 +112,13 @@
         renderGreeks(s, a.iv_dec);
         renderCompare(d, bd);
       })
-      .catch(function (e) { vHost.innerHTML = VX.states.error('Analyse indisponible : ' + esc(e.message)); });
+      .catch(function (e) {
+        /* Une lecture EN ÉCHEC n'est pas une absence : les quatre hôtes le
+           disent avec l'état d'erreur, pas avec un vide. */
+        var motifE = esc(e.message || 'lecture en échec');
+        vHost.innerHTML = VX.states.error('Analyse indisponible : ' + motifE);
+        nommerAbsenceStructure('la lecture a échoué (' + motifE + ')', true);
+      });
   }
 
   function insufficientCard(sym, reason) {

@@ -189,7 +189,13 @@ def enrich_option(p: dict, quote: dict | None, underlying_quote: dict | None = N
     #  en silence, jusqu'au jour de l'expiration. On NOMME le défaut ; la
     #  déclaration de l'utilisateur, elle, n'est jamais réécrite.
     from vertex.positions.models import echeance_normalisee as _echeance
-    if p.get('expiration') and _echeance(p['expiration']) is None:
+    #  `not in issues` : mesuré, deux enrichissements du MÊME dict empilaient
+    #  'EXPIRATION_ILLISIBLE' deux fois, et `data_quality.issues` est publié tel
+    #  quel. Un défaut listé deux fois n'est pas deux défauts. (Le motif
+    #  `issues.append` sans dédoublonnage préexiste sur les drapeaux de signe ;
+    #  seul le drapeau ajouté au constat 29 est traité ici.)
+    if (p.get('expiration') and _echeance(p['expiration']) is None
+            and 'EXPIRATION_ILLISIBLE' not in issues):
         issues.append('EXPIRATION_ILLISIBLE')
     for name in ('delta', 'gamma', 'theta', 'vega'):
         per = g.get(name)
@@ -220,7 +226,19 @@ def enrich_option(p: dict, quote: dict | None, underlying_quote: dict | None = N
     if bd is not None and md is not None and abs(bd - md) >= 0.12:
         issues.append('BROKER_MODEL_GREEK_DIVERGENCE')
 
-    p['data_quality']['overall'] = ('OK' if _n(mark) else 'MISSING_MARK')
+    #  UNE SYNTHÈSE QUI CONTREDIT SON PROPRE DÉTAIL. Mesuré sur une option à
+    #  échéance illisible avec marque 6,00 : `overall: 'OK'`,
+    #  `issues: ['EXPIRATION_ILLISIBLE']`, `dte: None` — le badge disait « OK »
+    #  pendant que la liste juste à côté nommait une échéance dont les gates de
+    #  cycle de vie ne s'armeront jamais. Un badge ne peut pas être plus propre
+    #  que ce qu'il résume. `DEGRADED` n'invente rien : il est VRAI dès qu'un
+    #  défaut est listé, et il disparaît dès que la liste est vide.
+    #  Ni `alerts.py` (== 'STALE') ni `thesis_health` (STALE/MISSING_*) ne lisent
+    #  cet état : l'ajout est additif, aucun seuil ne bouge.
+    if not _n(mark):
+        p['data_quality']['overall'] = 'MISSING_MARK'
+    else:
+        p['data_quality']['overall'] = 'DEGRADED' if issues else 'OK'
     if q.get('stale'):
         p['data_quality']['overall'] = 'STALE'
     return p

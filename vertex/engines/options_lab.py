@@ -18,6 +18,18 @@ import math
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+#  Liquidité d'une ligne de board : UN SEUL accesseur pour tout le dépôt.
+#  Ce moteur lisait `.get('spread_pct')` et `.get('vol')` à la main — les clés
+#  du board de DÉMONSTRATION et des fixtures. Le producteur canonique
+#  (`legacy_engine.build_board`) publie `spread` et `vol`, et marque les
+#  valeurs IMPUTÉES (`liquidity_coverage`). Conséquence mesurée le 2026-09-06
+#  sur un board à la forme RÉELLE (spread 6,5 sur 2/2 contrats) : la carte
+#  « Meilleure liquidité » du comité rendait winner « — », value null, status
+#  COMMITTEE_LIQUIDITY_UNAVAILABLE, pendant que « Meilleur volume » servait
+#  675 dans la MÊME charge. Dégradation honnête, mais structurellement
+#  inatteignable sur données réelles.
+from vertex.options import board_fields as _bf
+
 # ─── petits outils numériques (Black-Scholes léger, sans dépendance) ───
 
 def _ncdf(x):
@@ -92,7 +104,7 @@ def _overview(board, detail, market, demo):
     quals = [c['quality'] for c in board if c.get('quality') is not None]
     rrs = [r for r in (_rr(c) for c in board) if r is not None]
     ois = [c['oi'] for c in board if c.get('oi') is not None]
-    vols = [c['vol'] for c in board if c.get('vol') is not None]
+    vols = [v for v in (_bf.volume(c) for c in board) if v is not None]
     pcr = _r2(len(puts) / len(calls), 2) if calls else None
     # flux : proxy honnête = anomalies de volume du sous-jacent (vol_z du scan)
     flow = sorted(((s, (detail.get(s) or {}).get('vol_z')) for s in syms),
@@ -191,7 +203,7 @@ def _research(star, board, detail, market, pick, company=None):
         'capital': (leg.get('sizes') if leg else None),
         'hold': ('%s j' % leg['hold']) if leg and leg.get('hold') else None,
         'iv': iv, 'delta': star.get('delta'), 'theta_burn': star.get('theta_burn'),
-        'oi': star.get('oi'), 'vol': star.get('vol'), 'spread_pct': star.get('spread_pct'),
+        'oi': star.get('oi'), 'vol': _bf.volume(star), 'spread_pct': _bf.spread_pct(star),
         'sector': d.get('sector'), 'stock_score': d.get('score'), 'stock_verdict': d.get('verdict'),
         'thesis': thesis,
         'exec_summary': ('Vertex retient ce %s car son score composite (%s/100) domine le board : '
@@ -348,7 +360,8 @@ def _analysis(star, detail, market, sectors, overview):
                             'read_only': True}
     rows.append(momentum)
     # liquidité
-    oi, spr = star.get('oi'), star.get('spread_pct')
+    oi, spr = star.get('oi'), _bf.spread_pct(star)
+    _vol_star = _bf.volume(star)
     oi_available = isinstance(oi, (int, float)) and not isinstance(oi, bool) and oi >= 0
     spread_available = isinstance(spr, (int, float)) and not isinstance(spr, bool) and spr >= 0
     lsc = (max(5, min(95, (min(oi, 20000) / 20000 * 60) + (35 - min(spr, 12) * 3)))
@@ -357,7 +370,7 @@ def _analysis(star, detail, market, sectors, overview):
         'exécutable' if lsc is not None and lsc >= 55 else 'coûteuse' if lsc is not None else 'indisponible', 'haute',
         ('OI %s · volume %s · spread %s%%. Un spread large est un péage payé deux fois (entrée + sortie).'
          % (f"{oi:,}".replace(',', ' ') if oi_available else '—',
-            f"{star.get('vol'):,}".replace(',', ' ') if star.get('vol') else '—',
+            f"{_vol_star:,}".replace(',', ' ') if _vol_star is not None else '—',
             spr if spread_available else '—') if lsc is not None else
          'Liquidité non quantifiée — OI ou spread indisponible, aucune imputation appliquée.'),
         'ordres à cours limité uniquement' if lsc is None or lsc < 55 else 'limite au milieu de fourchette')
@@ -948,19 +961,20 @@ def _committee(board, detail, tops, star):
     c = best(lambda x: True, lambda x: dz(x).get('mom') or -99)
     add('Meilleur momentum', c, 'le sous-jacent le plus dynamique', _r2(dz(c).get('mom'), 1) if c else None)
     def liquidity_ready(contract):
-        oi, spread = contract.get('oi'), contract.get('spread_pct')
+        oi, spread = contract.get('oi'), _bf.spread_pct(contract)
         return (isinstance(oi, (int, float)) and not isinstance(oi, bool) and oi >= 0
                 and isinstance(spread, (int, float)) and not isinstance(spread, bool) and spread >= 0)
 
-    c = best(liquidity_ready, lambda x: x.get('oi') - x.get('spread_pct') * 1000)
+    c = best(liquidity_ready, lambda x: x.get('oi') - _bf.spread_pct(x) * 1000)
     add('Meilleure liquidité', c,
         'OI massif + spread serré = exécution propre' if c else 'Liquidité non classable — OI ou spread indisponible.',
         (f"OI {c.get('oi'):,}".replace(',', ' ') if c and c.get('oi') is not None else None),
         {'available': c is not None,
          'status': 'COMMITTEE_LIQUIDITY_AVAILABLE' if c else 'COMMITTEE_LIQUIDITY_UNAVAILABLE',
          'read_only': True})
-    c = best(lambda x: x.get('vol') is not None, lambda x: x.get('vol') or 0)
-    add('Meilleur volume', c, 'l\'activité du jour la plus dense', (f"{c.get('vol'):,}".replace(',', ' ') if c and c.get('vol') else None))
+    c = best(lambda x: _bf.volume(x) is not None, lambda x: _bf.volume(x) or 0)
+    _vol_c = _bf.volume(c)
+    add('Meilleur volume', c, 'l\'activité du jour la plus dense', (f"{_vol_c:,}".replace(',', ' ') if _vol_c is not None else None))
     c = best(lambda x: True, lambda x: dz(x).get('vol_z') or -9)
     add('Meilleur flux', c, 'volume anormal sur le sous-jacent (z-score)', 'z=%s' % _r2(dz(c).get('vol_z'), 1) if c else None)
     # secteur
@@ -998,7 +1012,7 @@ def _risks(star, market):
 
     iv = (star or {}).get('iv')
     dte = (star or {}).get('dte')
-    spr = (star or {}).get('spread_pct')
+    spr = _bf.spread_pct(star)
     iv_available = available_number(iv, strictly_positive=True)
     dte_available = available_number(dte, strictly_positive=True)
     spread_available = available_number(spr)

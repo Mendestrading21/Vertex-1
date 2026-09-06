@@ -62,7 +62,20 @@ def test_le_dedoublonnage_garde_toutes_les_sources():
 
 
 def test_la_carte_montre_publication_et_nombre_de_sources():
+    """L'heure de RÉCEPTION est rendue dans l'info-bulle, sous un libellé qui la
+    nomme — elle ne doit pas se confondre avec l'horodatage de PUBLICATION.
+
+    L'assertion portait sur le libellé EXACT `reçu '+esc(n.received_at)`. La
+    carte écrit désormais `· reçu par Vertex '+esc(n.received_at)` : même champ,
+    même place, libellé plus explicite. Ce qui est épinglé ici est donc la
+    RÈGLE (le mot « reçu » immédiatement suivi de la valeur échappée, dans la
+    même expression) et non une formulation, qu'un changement de libellé ferait
+    tomber sans qu'aucune donnée ne se perde.
+    """
+    import re as _re
     src = _src('vertex', 'ui', 'pages', 'briefing.py')
     assert "(n.published_at||n.time)" in src
     assert "n.n_sources" in src and "sources`" in src
-    assert "reçu '+esc(n.received_at)" in src
+    motif = r"reçu[^'\"]{0,20}'\s*\+\s*esc\(n\.received_at\)"
+    assert _re.search(motif, src), (
+        'l’heure de réception doit rester rendue, et rester nommée « reçu »')

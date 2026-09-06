@@ -153,7 +153,24 @@ def _analyst_agent():
 def _analyst_packet(sym, detail, resp):
     """Dossier RÉEL et complet passé à l'analyste : verdict déterministe + physique,
     Monte-Carlo, bootstrap, Kelly, MTF, anomalies — tout ce que l'app calcule déjà.
-    Aucune valeur inventée : les champs absents restent None."""
+    Aucune valeur inventée : les champs absents restent None — et un champ PRÉSENT
+    n'est jamais servi comme absent.
+
+    CONSTAT 5, site jumeau. Ce paquet lisait `detail['st_fund'] or
+    detail['fund_score']`, deux clés SANS producteur sur le `detail` du scan
+    (`fund_score` : 0 assignation dans le dépôt ; `st_fund` : posée uniquement sur
+    la LIGNE de tableau, terminal.py:609). Mesure sur un detail portant
+    `sub.fundamental = 100` : le dossier envoyé à Claude publiait
+    ``fundamental {'score': None, 'quality': None}`` alors que le moteur du même
+    appel rendait ``{'score': 100.0, 'is_proxy': False}``. Depuis que
+    `decision_packet` est corrigé, `unknowns` ne liste PLUS 'fundamental' : le
+    dossier affirmait donc un fondamental ABSENT tout en ne le déclarant PLUS
+    inconnu — deux mensonges qui se couvrent, état pire qu'avant le lot pour ce
+    chemin. Le `or` était un second défaut : il écrasait un 0 légitime.
+    Le lecteur canonique `decision_packet.read_fundamental` est réutilisé ici —
+    même note, même sémantique du 0, même lignage `is_proxy` que le verdict.
+    """
+    from vertex.strategy import decision_packet as _decision_packet
     vx = detail.get('vertex') or {}
     plan = detail.get('plan') if isinstance(detail.get('plan'), dict) else {}
     resp = resp or {}
@@ -170,8 +187,8 @@ def _analyst_packet(sym, detail, resp):
                       'setup_quality': detail.get('setup_quality'),
                       'overextended': (detail.get('ext_atr') or 0) >= 2.5,
                       'rsi': detail.get('rsi')},
-        'fundamental': {'score': detail.get('st_fund') or detail.get('fund_score'),
-                        'quality': vx.get('fund_quality')},
+        'fundamental': dict(_decision_packet.read_fundamental(detail),
+                            quality=vx.get('fund_quality')),
         'sector': detail.get('sector'), 'thesis': detail.get('thesis'),
         'chart_read': detail.get('chart_read'),
         'anomalies': detail.get('anomalies') or [],

@@ -95,8 +95,49 @@ def test_sans_aucune_option_le_zero_de_liv_crush_est_un_fait():
                            options_vega_value=None, options_open=0)
     assert out['scenarios']['IV_CRUSH']['impact_pct'] == 0.0
     assert 'aucune option' in out['scenarios']['IV_CRUSH']['note']
-    assert out['scenarios']['VIX_PLUS_50']['impact_pct'] is not None
+    vix = out['scenarios']['VIX_PLUS_50']
+    assert vix['impact_pct'] == -0.01                   # volet actions, seul volet réel
+    #  La note ne promet plus un « gain/perte vega des options » là où aucune
+    #  option n'existe : le chiffre était juste, la phrase décrivait un calcul
+    #  qui n'a pas eu lieu.
+    assert 'aucune option déclarée' in vix['note']
+    assert 'gain/perte vega' not in vix['note']
     assert out['warnings'] == []
+
+
+def test_volet_actions_mesure_du_vix_nest_plus_perdu_sans_perimetre_options():
+    """RÉGRESSION MESURÉE — signature EXACTE de strategy_os_api.py:204.
+
+    Sur KO + 25 000 $ de cash et AUCUNE option, la route n'envoie pas
+    `options_open` : `desk_greeks([])` rend `vega_usd=None`, donc le moteur
+    publiait `IV_CRUSH None` et `VIX_PLUS_50 None` là où la baseline servait
+    deux mesures VRAIES (IV_CRUSH 0.0 ; VIX_PLUS_50 −0,01 %) — et la note de
+    l'IV crush réclamait des « greeks broker » pour un desk sans aucune option.
+
+    Le TOTAL du VIX reste inconnu (le vega manque tant que le périmètre n'est
+    pas transmis), mais le volet actions est MESURÉ — poids KO 0,35 % × bêta de
+    repli 1,0 × −4 % = −0,01 % — et il est publié nommément, dans la clé et
+    dans la note (colonne « Note » de la carte §26, sans changement de page).
+    La note nomme désormais l'entrée manquante au lieu d'un pré-requis courtier
+    faux. Restauration COMPLÈTE des deux zéros vrais : elle exige la ligne
+    `options_open=_greeks.get('open_options')` dans la route (hors périmètre).
+    """
+    from vertex.portfolio.stress_tests import run_stress_tests
+    out = run_stress_tests(_snapshot_actions_et_cash(), _Profil(),
+                           sector_of={'KO': 'Consumer Defensive'},
+                           nasdaq_exposure={'KO': False},
+                           options_vega_value=None)
+    vix = out['scenarios']['VIX_PLUS_50']
+    assert vix['impact_pct'] is None                    # le total reste inconnu
+    assert vix['equity_leg_pct'] == -0.01               # la mesure perdue, rendue
+    assert 'volet actions seul' in vix['note'] and '-0,01' in vix['note']
+    ivc = out['scenarios']['IV_CRUSH']
+    assert ivc['impact_pct'] is None
+    assert 'greeks IBKR requis' not in ivc['note']      # aucune option déclarée ici
+    assert 'périmètre options non transmis' in ivc['note']
+    #  Un volet n'est pas un scénario : le pire cas ne lit que les impacts
+    #  totaux (TOP_SECTOR_MINUS_15 = −15 × 0,35 % = −0,05).
+    assert out['worst_case_pct'] == -0.05
 
 
 def test_perimetre_options_non_transmis_reste_inconnu_jamais_zero():

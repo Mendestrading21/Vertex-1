@@ -264,6 +264,44 @@ def _pick_expiries(exps, now, buckets=None):
     return picks
 
 
+def _horodatage_depeche(t):
+    """L'horodatage d'une dépêche TEL QUE LA SOURCE LE DÉCLARE — jamais tronqué.
+
+    RACINE DU CONSTAT 9, mesurée le 2026-09-06. Cette fonction remplace
+    `str(t)[:16].replace('T', ' ')`, qui détruisait DEUX choses :
+
+      1. le fuseau. yfinance sert `pubDate = '2026-09-04T23:42:00Z'` ; la
+         troncature à 16 caractères rendait `'2026-09-04 23:42'`, sans le `Z`.
+         En aval `news_plus.horodatage_source` sait lire `Z` et les décalages
+         `±HH:MM` et les convertit en UTC — mais il n'avait plus rien à lire,
+         donc `published_at` sortait SANS fuseau et l'écran devait afficher
+         « 04/09/2026 23:42 (fuseau n/d) » là où il pouvait dire « Il y a
+         12 min ». Mesure du fil servi : 45 items sur 45 arrivaient sans
+         fuseau alors que la source en portait un.
+      2. l'époque. L'ancien format plat de yfinance sert
+         `providerPublishTime`, un ENTIER de secondes UNIX ; `str(...)[:16]`
+         en faisait la chaîne `'1757000000'`, illisible pour tout le monde en
+         aval, d'où `published_at = None` — une absence là où la source avait
+         donné une date.
+
+    On ne fabrique rien : une époque est convertie (c'est une lecture d'unité,
+    pas une estimation), une chaîne est rendue telle quelle, et tout ce qui
+    n'est ni l'un ni l'autre rend `''` — l'absence, distincte d'une valeur.
+    """
+    if t is None or isinstance(t, bool):
+        return ''
+    if isinstance(t, (int, float)):
+        #  Époque UNIX en secondes, UTC — le `Z` est porté par la conversion,
+        #  pas supposé. Une valeur hors domaine reste une absence.
+        try:
+            from datetime import timezone
+            return datetime.fromtimestamp(float(t), tz=timezone.utc).strftime(
+                '%Y-%m-%dT%H:%M:%SZ')
+        except (OverflowError, OSError, ValueError):
+            return ''
+    return str(t).strip()
+
+
 def news_for(tk, n=5):
     """Dernières news d'un titre (yfinance) — gère l'ancien format plat et le nouveau imbriqué."""
     out = []
@@ -279,7 +317,8 @@ def news_for(tk, n=5):
             cu = c.get('canonicalUrl')
             link = cu.get('url') if isinstance(cu, dict) else (it.get('link') or '')
             if title:
-                out.append({'title': title, 'pub': pub or '', 'time': str(t)[:16].replace('T', ' '), 'link': link or ''})
+                out.append({'title': title, 'pub': pub or '',
+                            'time': _horodatage_depeche(t), 'link': link or ''})
     except Exception:
         pass
     return out

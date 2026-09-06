@@ -64,7 +64,22 @@ NOMS_SOCIETE: dict[str, tuple[str, ...]] = {
     'GOOGL': ('google', 'alphabet', 'youtube'),
     'GOOG': ('google', 'alphabet', 'youtube'),
     'AMZN': ('amazon', 'aws'),
-    'META': ('meta platforms', 'facebook', 'instagram', 'whatsapp'),
+    #  `meta` seul est AJOUTÉ après mesure : sans lui, la comparaison
+    #  sensible à la casse (voir `sujet_confirme`) perdait le seul vrai
+    #  sujet META des 45 items réels — « Meta stands to gain as Mark
+    #  Zuckerberg makes shocking decision » — parce que le titre écrit
+    #  « Meta » et non « META ». Le nom est comparé EN MOT ENTIER : la
+    #  confusion redoutée (« metadata ») reste écartée, elle est épinglée
+    #  par `test_le_sujet_est_confirme_par_le_ticker_le_nom_ou_l_attestation_du_vendeur`.
+    #  CE QUI RESTE OUVERT, NOMMÉ PLUTÔT QUE PASSÉ SOUS SILENCE (contrôle
+    #  adverse du 2026-09-06) : la frontière `(?<!\w)meta(?!\w)` traite le
+    #  trait d'union et l'espace comme des séparateurs, donc
+    #  « A meta-analysis of AI stocks » et « New meta description tool »
+    #  confirmeraient META à tort ; seul « Metadata leak » est écarté. Mesure
+    #  sur les 45 titres réels servis : 0 occurrence. Aucune règle n'est écrite
+    #  pour un cas qui ne s'observe pas — mais le jour où il s'observe, c'est
+    #  ici qu'il faut revenir.
+    'META': ('meta', 'meta platforms', 'facebook', 'instagram', 'whatsapp'),
     'TSLA': ('tesla',),
     'AMD': ('advanced micro devices',),
     'AVGO': ('broadcom',),
@@ -82,6 +97,81 @@ NOMS_SOCIETE: dict[str, tuple[str, ...]] = {
     'WMT': ('walmart',),
     'SPY': ('s&p 500', 's&p500'),
     'QQQ': ('nasdaq 100', 'nasdaq-100'),
+    #  CINQ NOMS AJOUTÉS APRÈS MESURE (contrôle adverse du 2026-09-06). La
+    #  table ne couvrait que 11 des 16 tickers réellement servis par le fil ;
+    #  sur la tranche des 5 non couverts, la règle « pas de nom, pas de preuve »
+    #  coûtait 3 attributions VRAIES — « Lululemon makes big cuts to one kind of
+    #  store », « Lululemon's Earnings Beat Hid a Bigger Problem » et
+    #  « Prediction: This Is What Sandisk Stock Will Be Worth in 12 Months »,
+    #  dont les titres NOMMENT la société en toutes lettres. Rappel mesuré sur
+    #  cette tranche : 67 % (6 rattachements sur 9) sans ces noms. Ce ne sont
+    #  pas des heuristiques : ce sont les raisons sociales, écrites à la main
+    #  comme les autres. La précision, elle, ne bouge pas — le nom reste
+    #  comparé en MOT ENTIER.
+    'LULU': ('lululemon',),
+    'SNDK': ('sandisk',),
+    'FICO': ('fair isaac',),
+    'EFX': ('equifax',),
+    'ALAB': ('astera labs',),
+}
+
+
+#: Longueur minimale d'un ticker pour qu'un CODE ÉCRIT vaille preuve de sujet.
+#: Mesure du 2026-09-06 sur les 45 titres réels : un ticker d'une ou deux
+#: lettres écrit en majuscules dans un titre en casse de titre n'est pas
+#: distinctif — « A » (Agilent, présent dans l'univers scanné) se confirmait
+#: sur « CrowdStrike (CRWD) Unveiled A Broad AI Security Platform Push » et sur
+#: « Equifax (EFX) … Is It A Bargain? », soit 2 attributions fausses sur ces
+#: 45 titres. Un ticker court ne peut donc être établi que par son NOM de
+#: société (ou l'attestation du vendeur) : une absence, jamais une supposition.
+LONGUEUR_TICKER_PROBANTE = 3
+
+_RE_TICKER: dict[str, 're.Pattern'] = {}
+_RE_NOM: dict[str, 're.Pattern'] = {}
+
+
+def _re_ticker(s: str):
+    """Le code du ticker, en MOT ENTIER et SENSIBLE À LA CASSE (mémoïsé)."""
+    r = _RE_TICKER.get(s)
+    if r is None:
+        r = _RE_TICKER[s] = re.compile(r'(?<![A-Za-z0-9])%s(?![A-Za-z0-9])' % re.escape(s))
+    return r
+
+
+def _re_nom(nom: str):
+    """Un nom de société, en MOT ENTIER, sur un texte déjà abaissé (mémoïsé).
+
+    Le test était une sous-chaîne (`nom in texte`) : `\\b` évite qu'un nom
+    court avalé par un mot plus long ne confirme (« meta » dans « metadata »).
+    """
+    r = _RE_NOM.get(nom)
+    if r is None:
+        r = _RE_NOM[nom] = re.compile(r'(?<!\w)%s(?!\w)' % re.escape(nom))
+    return r
+
+
+#: État RÉEL des trois canaux de preuve de sujet, servi par `/news-feed`.
+#: Un consommateur qui voit la table par sujet peu peuplée doit pouvoir lire
+#: POURQUOI sans ouvrir le code.
+#:
+#: `attestation_vendeur` est passée de `NON_IMPLÉMENTÉ` à `ACTIF` le
+#: 2026-09-06 : le SEUL producteur du fil — `terminal.py::_news_loop`, la
+#: boucle qui écrit `news_state['items']` — pose désormais `sym_atteste=True`
+#: sur la branche COURTIER (`ibkr_news.depeches_lot`, qui interroge
+#: `reqHistoricalNews` sur le `conId` qualifié : c'est IBKR qui rattache la
+#: dépêche au contrat). La déclaration décrit le CANAL, pas un taux : sur une
+#: instance sans TWS, `depeches` est vide, tout le fil part au repli web et
+#: AUCUN item n'est attesté — l'absence d'attestation reste alors une absence,
+#: jamais un « oui » par défaut. Le repli web n'est jamais attesté : c'est une
+#: recherche de mots-clés.
+#: Gardien : `test_news_plus.py::test_l_attestation_du_vendeur_suit_ses_producteurs_reels`,
+#: qui DÉRIVE la valeur attendue du balayage des producteurs (terminal.py
+#: inclus — il vit à la racine, hors du glob `vertex/**`, et c'est ce trou qui
+#: rendait la déclaration invérifiable).
+PREUVES_SUJET: dict[str, str] = {
+    'attestation_vendeur': 'ACTIF',
+    'ticker_ecrit_en_majuscules': 'ACTIF',
+    'nom_de_societe': 'ACTIF',
 }
 
 
@@ -104,15 +194,50 @@ def sujet_confirme(item, sym=None) -> bool:
     `NVDA {'n': 4, 'score': 0.5}` construit sur Snowflake, le pétrole, GitLab
     et Shopify — un sentiment de marché qu'aucune actualité NVDA ne soutient.
 
+    ## Le juge lui-même confirmait à tort — mesure du 2026-09-06
+
+    Le premier correctif comparait le ticker **après abaissement de casse**
+    (`(?<![a-z0-9])t(?![a-z0-9])`). Or l'univers scanné (`vertex/data/universe`,
+    517 titres) contient **17 tickers qui sont des mots anglais courants** :
+    A, ALL, ARE, CAT, COST, DD, FAST, HAS, IT, KEY, KO, LOW, NOW, ON, SO, T,
+    WELL — tous éligibles aux 6 titres « chauds » injectés dans la boucle.
+    Croisés avec les 45 titres réels servis (765 paires ticker x titre), cela
+    faisait **20 confirmations, dont 19 FAUSSES** : « Fed Holds Rates Steady on
+    Inflation » confirmait ON, « All Eyes Are on the Jobs Report » confirmait
+    ALL *et* ARE, et « Bill Gates Says He Still Won't Invest in Crypto »
+    confirmait T (la frontière de mot accepte l'apostrophe de « Won't »).
+    Chaîne complète mesurée : `aggregate(..., sujets_seulement=True)` rendait
+    alors `{'T': {'score': 1.0, 'n': 1}}` — exactement le score de ticker
+    fabriqué que ce lot prétend supprimer.
+
+    Règle corrigée : **un ticker n'est une preuve que s'il est écrit comme un
+    ticker**, c'est-à-dire en MAJUSCULES et en mot entier, et seulement à
+    partir de `LONGUEUR_TICKER_PROBANTE` lettres. Mesure après correctif, sur
+    les mêmes 765 paires : 20 confirmations → **1**, et celle qui subsiste est
+    VRAIE (COST sur « Costco silently kills member perk », par le nom de
+    société) — donc 19 attributions fausses supprimées, 0 restante. Sur les
+    45 items avec leur propre `sym`, les confirmations vraies restent à
+    **19/45** (la seule qui tombait — « Meta stands to gain… » — est rendue par
+    l'ajout du nom `meta`, comparé en mot entier).
+
+    Ce qui reste hors de portée, dit plutôt que masqué : un titre écrit
+    ENTIÈREMENT en majuscules rendrait de nouveau un code court distinctif.
+    Mesure : 0 titre sur les 45 servis est dans ce cas ; aucune règle n'est
+    donc écrite pour un cas qui ne s'observe pas.
+
     ## Ce qui vaut preuve, et rien d'autre
 
     1. l'attestation du VENDEUR (`sym_atteste`) : une dépêche du courtier est
-       attribuée au contrat par le fournisseur lui-même. Aucun producteur ne
-       pose ce drapeau aujourd'hui — il est lu ici pour que la chaîne devienne
-       juste dès que la boucle le posera, sans nouveau passage ici ;
-    2. le ticker écrit dans le texte servi (titre + traduction FR), en mot
-       entier ;
-    3. un nom de société de `NOMS_SOCIETE`.
+       attribuée au contrat par le fournisseur lui-même. Canal **ACTIF** depuis
+       le 2026-09-06 : `terminal.py::_news_loop` pose le drapeau sur la branche
+       `ibkr_news.depeches_lot`, qui interroge `reqHistoricalNews` sur le
+       `conId` QUALIFIÉ du contrat. Ce que l'attestation vaut, dit franchement :
+       elle prouve que le COURTIER rattache la dépêche à ce contrat, pas que le
+       titre nomme la société. Elle n'est jamais posée sur le repli web (une
+       recherche de mots-clés), et une instance sans TWS n'en produit aucune ;
+    2. le ticker écrit dans le texte servi (titre + traduction FR), en
+       majuscules et en mot entier, à partir de 3 lettres ;
+    3. un nom de société de `NOMS_SOCIETE`, en mot entier.
 
     Tout le reste est `False` : « pertinence sectorielle » n'est pas une
     preuve de sujet, et l'absence de preuve n'est pas une preuve d'absence —
@@ -125,11 +250,13 @@ def sujet_confirme(item, sym=None) -> bool:
         return False
     if item.get('sym_atteste'):
         return True
-    texte = ' %s %s ' % (item.get('title') or '', item.get('fr') or '')
-    texte = _html.unescape(str(texte)).lower()
-    if re.search(r'(?<![a-z0-9])%s(?![a-z0-9])' % re.escape(s.lower()), texte):
+    #  Le texte est gardé DANS SA CASSE pour le code du ticker (« META » ≠
+    #  « Meta » ≠ « meta ») et abaissé seulement pour les noms de société.
+    texte = _html.unescape(' %s %s ' % (item.get('title') or '', item.get('fr') or ''))
+    if len(s) >= LONGUEUR_TICKER_PROBANTE and _re_ticker(s).search(texte):
         return True
-    return any(nom in texte for nom in NOMS_SOCIETE.get(s, ()))
+    bas = texte.lower()
+    return any(_re_nom(nom).search(bas) for nom in NOMS_SOCIETE.get(s, ()))
 
 
 def role_sujet(item, sym=None) -> str:
@@ -172,14 +299,28 @@ def aggregate(items, sujets_seulement=False):
     encore la forme de provenance (`tests/test_real_data.py::test_aggregate_by_ticker`
     et `::test_news_feed_exposes_sentiment`, items sans titre) : les basculer
     est le geste qui manque, il appartient au lot qui possède ce fichier.
+    MESURE DU 2026-09-06, faite en basculant réellement la route : avec
+    `'sentiment': aggregate(items, sujets_seulement=True)` dans `content.py`,
+    `test_news_feed_exposes_sentiment` tombe sur `KeyError: 'NVDA'` — son item
+    est `{'sym': 'NVDA', 'title': 'record surge'}`, dont le titre ne nomme pas
+    Nvidia. Le geste complet est donc : migrer ces deux gardiens (docstring
+    portant la mesure, titres qui nomment le sujet), puis remplacer l'agrégat
+    servi et retirer `sentiment_sujets`/`sentiment_base`.
+
+    `sym_role` déjà posé est RÉUTILISÉ, jamais recalculé : sur `/news-feed`,
+    les items sont marqués avant l'agrégat, et re-juger les 45 items une
+    seconde fois dans la même requête était un balayage inutile du chemin
+    utilisateur (mesure du contrôle : deux passes par requête).
     """
     by = {}
     for it in items or []:
         s = it.get('sym')
         if not s:
             continue
-        if sujets_seulement and not sujet_confirme(it, s):
-            continue
+        if sujets_seulement:
+            role = it.get('sym_role') or role_sujet(it, s)
+            if role != 'sujet':
+                continue
         d = by.setdefault(s, {'sum': 0, 'n': 0})
         d['sum'] += it.get('senti', 0)
         d['n'] += 1
@@ -278,8 +419,17 @@ def _items_surs(brut: str, n: int) -> list:
         if local == 'item':
             items.append(courant)
             courant = None
-        elif local not in courant:
-            courant[local] = ''.join(texte).strip()
+        else:
+            valeur = ''.join(texte).strip()
+            if local not in courant:
+                courant[local] = valeur
+            #  Le nom QUALIFIÉ est conservé en plus du nom local : dénamespacer
+            #  seul rend `<dc:date>` et `<foo:date>` indiscernables, alors
+            #  qu'ils n'ont pas la même sémantique. Un consommateur qui
+            #  s'appuie sur un vocabulaire précis (Dublin Core) doit pouvoir le
+            #  nommer, plutôt que d'accepter n'importe quel `*:date`.
+            if ':' in nom and nom not in courant:
+                courant[nom] = valeur
         texte = []
 
     analyseur.StartElementHandler = _debut
@@ -565,4 +715,5 @@ def dedupe_news(items):
 
 __all__ = ['sentiment', 'aggregate', 'parse_rss', 'rss_news', 'sanitize_news',
            'dedupe_news', 'nom_publieur', 'CLES_PUBLIEUR', 'horodatage_source',
-           'sujet_confirme', 'role_sujet', 'marquer_sujets', 'NOMS_SOCIETE']
+           'sujet_confirme', 'role_sujet', 'marquer_sujets', 'NOMS_SOCIETE',
+           'PREUVES_SUJET', 'LONGUEUR_TICKER_PROBANTE']

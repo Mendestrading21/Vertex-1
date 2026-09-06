@@ -47,6 +47,11 @@ def _premium_per_contract(c):
 def _vol(c):
     #  Alias dupliqué ici auparavant : un seul propriétaire de la forme du board
     #  (board_fields), sinon les lecteurs redivergent du producteur.
+    #  ORDRE DES ALIAS : ce module lisait `vol` PUIS `volume`, l'accesseur lit
+    #  `volume` PUIS `vol`. Aucun producteur n'émet les deux (board réel `vol`
+    #  96/96, démo `vol`, fixtures `volume`), donc aucun contrat servi ne change
+    #  de valeur ; et l'accesseur refuse désormais un volume imputé AVANT de
+    #  choisir un alias, si bien que l'ordre ne décide plus d'aucune mesure.
     return _bf.volume(c)
 
 

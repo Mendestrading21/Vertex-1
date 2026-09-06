@@ -385,6 +385,17 @@ function renderVerdict(sym,question,strat,deci){
   const unknowns=(strat&&strat.unknowns)||[];
   const blocking=(strat&&strat.blocking_rules)||[];
   const lens=deci&&deci.market_lens;
+  /* CARTE MORTE, mesurée le 06/09/2026 : la ligne testait `lens.summary`, une
+     clé que le producteur ne rend PAS. `market_lens.build()` (routes/decision_api
+     .py:93) rend exactement alignment, climate, headline, lights, sector,
+     stock_strong, tone — jamais 'summary'. La condition était donc toujours
+     fausse et la ligne ne s'est jamais affichée, alors que le prisme marché est
+     servi à chaque appel de /api/decision.
+     On peint ce que le moteur DIT : `alignment` est son verdict d'alignement
+     (aligné / partiellement aligné / à contre-courant / défavorable) et
+     `headline` la phrase qui l'explique. Rien n'est recomposé ici ; si les deux
+     manquent, la ligne disparaît au lieu d'inventer un prisme. */
+  const lensTxt=lens?[lens.alignment,lens.headline].filter(Boolean).join(' — '):'';
   ($('vx-analyst-verdict')||{}).innerHTML=
     `<div class="vx-flex vx-mb3">
       <button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${sym}">${sym}</button>
@@ -392,7 +403,7 @@ function renderVerdict(sym,question,strat,deci){
       ${E()?E().badges(sym):''}</div>
     ${question?`<div class="vx-help vx-mb2">Question : &laquo; ${esc(question)} &raquo; — r&eacute;ponse via le dossier complet ci-dessous.</div>`:''}
     ${deci&&(deci.decision_label||deci.headline)?`<div class="vx-dim vx-mb2" style="font-size:13px">${esc(deci.decision_label||deci.headline)}</div>`:''}
-    ${lens&&lens.summary?`<div class="vx-kv"><span class="k">Prisme march&eacute;</span><span class="v">${esc(lens.summary)}</span></div>`:''}
+    ${lensTxt?`<div class="vx-kv"><span class="k">Prisme march&eacute;</span><span class="v">${esc(lensTxt)}</span></div>`:''}
     ${blocking.length?`<div class="vx-kv"><span class="k">R&egrave;gles bloquantes</span><span class="v vx-neg">${blocking.map(esc).join(' · ')}</span></div>`:''}
     ${unknowns.length?`<div class="vx-kv"><span class="k">Inconnues</span><span class="v vx-muted">${unknowns.map(esc).join(' · ')}</span></div>`
       :'<div class="vx-kv"><span class="k">Inconnues</span><span class="v vx-pos">aucune donn&eacute;e critique manquante</span></div>'}

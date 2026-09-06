@@ -155,11 +155,21 @@ def test_tilt_favorable_arithmetique_exacte():
 def test_tilt_neutre_climat_inconnu_prudence_mediane():
     # Régime NEUTRAL, roro/vix inconnus, breadth vide : 18+12+12+8 = 50
     # (round(12.5) bancaire → 12) → bande NEUTRE, CALL en taille réduite.
+    #  CONSTAT 30 (second tour) : ces 12 points de participation venaient d'un
+    #  50 SUBSTITUÉ à une largeur jamais mesurée. Le score ne bouge pas — aucun
+    #  seuil déplacé — mais la couverture est désormais MARQUÉE : sans cette
+    #  marque, ce 50 était indiscernable d'une participation réellement mesurée
+    #  à 50 % (mesuré : breadth {} et {'above50': 50} rendaient exactement le
+    #  même dictionnaire). La caractérisation fige donc les deux : le chiffre
+    #  ET son aveu de couverture.
     t = sf.strat_tilt({'spy_regime': 'NEUTRAL', 'roro': None,
                        'vix_band': None, 'breadth': {}})
     assert t['score'] == 50 and t['regime'] == 'NEUTRE'
     assert 'réduite' in t['call_size']
     assert t['emphasis'] == ['Repli sur tendance', 'Qualité forte']
+    assert t['partiel'] is True and t['breadth_status'] == 'MISSING'
+    #  Bande NEUTRE : la prescription est déjà prudente, rien à plafonner.
+    assert 'call_size_plafonne' not in t
 
 
 def test_tilt_dangereux_defense_et_bornes():

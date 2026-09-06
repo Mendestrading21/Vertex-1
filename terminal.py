@@ -348,7 +348,7 @@ def _yf_ttl():
         return _YF_TTL_CLOSED
 
 
-def _download_universe(tickers, period='1y', chunk=50, publier_provenance=True):
+def _download_universe(tickers, period='1y', chunk=50, *, publier_provenance=True):
     """Télécharge l'univers PAR LOTS (plus robuste/rapide qu'un seul gros appel
     sur le plan gratuit). Renvoie un dict {ticker: DataFrame} ; un lot ou un
     ticker en échec est simplement ignoré (jamais de plantage global).
@@ -367,8 +367,8 @@ def _download_universe(tickers, period='1y', chunk=50, publier_provenance=True):
     MESURE (doublures en mémoire, NO_IBKR=1) :
 
     ```text
-    APRES SCAN   source='yfinance'    detail={'yfinance':533,'univers':533} scanned_n=513
-    APRES EDGE   source='yfinance'    detail={'yfinance':141,'univers':141} scanned_n=513
+    APRES SCAN   source='yfinance'  detail={'yfinance':533,'symboles_demandes':533} scanned_n=513
+    APRES EDGE   source='yfinance'  detail={'yfinance':141,'symboles_demandes':141} scanned_n=513
     Yahoo bridé pendant le BACKTEST seulement :
     APRES EDGE   source='unavailable' abandon_debit={'restes_sans_donnee':41,
                  'exemples':['CAT','BA','HON','GE','RTX','LMT','DE','MMM']}
@@ -385,6 +385,11 @@ def _download_universe(tickers, period='1y', chunk=50, publier_provenance=True):
     Seul l'appelant qui EST le scan publie donc. `_SOURCE_BUDGET_STATE` reste
     hors du garde : il décrit l'état de la source elle-même (Yahoo a-t-il
     répondu à l'instant), pas une population attribuée au scan.
+
+    Le drapeau est KEYWORD-ONLY : `_download_universe(syms, '1y', 50, False)`
+    poserait `publier_provenance=False` par accident, en silence, et le scan
+    cesserait de publier sa provenance — la panne la plus discrète possible,
+    puisque tout continuerait de fonctionner.
     """
     ttl = _yf_ttl()
     now = time.time()
@@ -467,7 +472,25 @@ def _download_universe(tickers, period='1y', chunk=50, publier_provenance=True):
     #  alors que Yahoo n'avait rien servi — un diagnostic faux, et faux dans le
     #  sens rassurant.
     yahoo_n -= ibkr_n
-    _SOURCE_BUDGET_STATE['yfinance'] = 'AVAILABLE' if yahoo_n else 'UNAVAILABLE'
+    #  UNE SOURCE QU'ON N'A PAS INTERROGÉE N'EST PAS INDISPONIBLE (invariant 5 :
+    #  absence, zéro et dégradation restent distincts). Quand IBKR sert TOUT
+    #  l'univers, `manquants` est vide, la boucle yfinance ne s'exécute pas, et
+    #  `yahoo_n` vaut 0 — l'ancienne écriture en déduisait `UNAVAILABLE`, servi
+    #  tel quel dans `source_health.yfinance_budget`. MESURÉ sur la carte
+    #  « Pannes en cours » (page Système) : un budget `UNAVAILABLE` s'y affiche
+    #  « source indisponible », donc une panne INVENTÉE — et une vraie panne se
+    #  noierait dedans. `NOT_COLLECTED` (« non collectée lors de ce scan ») est
+    #  déjà du vocabulaire public, traduit par la page.
+    #
+    #  Le budget reste hors du garde `publier_provenance` : il décrit l'état de
+    #  la SOURCE à l'instant (Yahoo a-t-il répondu à qui l'interrogeait), pas
+    #  une population attribuée au scan. Il peut donc légitimement diverger de
+    #  `scan_state['source']` — Yahoo peut brider pendant le backtest alors que
+    #  le scan, servi plus tôt, était sain : ces deux phrases sont vraies.
+    if manquants:
+        _SOURCE_BUDGET_STATE['yfinance'] = 'AVAILABLE' if yahoo_n else 'UNAVAILABLE'
+    else:
+        _SOURCE_BUDGET_STATE['yfinance'] = 'NOT_COLLECTED'
     #  La provenance NOMME chaque contributeur. « ibkr+yfinance » n'est pas
     #  « ibkr » : l'ecran doit pouvoir dire qu'une partie de l'univers n'a pas
     #  ete servie par le courtier, sinon le repli devient invisible — et un
@@ -487,8 +510,17 @@ def _download_universe(tickers, period='1y', chunk=50, publier_provenance=True):
     #  population sous l'etiquette du scan.
     if publier_provenance:
         scan_state['source'] = '+'.join(contributeurs) if contributeurs else 'unavailable'
+        #  'univers' -> 'symboles_demandes'. TROIS DÉNOMINATEURS JUSTES sous un
+        #  mot qui en suggérait un seul : ce compte vaut 533 (517 titres + 16
+        #  symboles de contexte demandés à la file), pendant que `universe_n`
+        #  en sert 517 et `scanned_n` 513. Le nom invitait à les comparer, donc
+        #  à lire un écart de 20 titres là où il n'y a que trois questions
+        #  différentes. Aucun consommateur ne lisait cette clé par son nom
+        #  (relevé sur tout le dépôt : `.py`, `.js`) — seul le détail complet
+        #  circule, via /api/system/diagnostics.
         scan_state['source_detail'] = {'ibkr': ibkr_n, 'yfinance': yahoo_n,
-                                       'stooq': stooq_n, 'univers': len(tickers)}
+                                       'stooq': stooq_n,
+                                       'symboles_demandes': len(tickers)}
         scan_state['abandon_debit'] = {
             'apres_lots_vides': bool(_abandonnes),
             'symboles_abandonnes': len(_abandonnes),
@@ -1595,6 +1627,19 @@ def _opt_loop():
                 pass
             time.sleep(120)
         else:
+            #  LA BOUCLE TOURNE, SON ENTRÉE MANQUE — et elle est la seule à le
+            #  savoir. Sans ce signal, le registre ne voit rien pendant que la
+            #  garde ci-dessus attend le premier scan : MESURÉ, à 241 s
+            #  d'uptime (2× la cadence de 120 s), `jobs()` servait
+            #  `JAMAIS_DEMARRE` et l'écran « boucle non démarrée dans cette
+            #  configuration ou arrêtée avant son premier passage » pour une
+            #  boucle vivante. Le signal périme en 60 s : si cette boucle
+            #  meurt ici, le diagnostic redevient juste tout seul.
+            try:
+                from vertex.scheduler import registry as _sched
+                _sched.attente('OPTIONS_BOARD_REFRESH', 'MARKET_DATA_REFRESH')
+            except Exception:
+                pass
             time.sleep(8)
 
 
@@ -1715,6 +1760,16 @@ def _news_loop():
             for sym in NEWS_SYMS + hot:
                 try:
                     its = depeches.get(sym) or []
+                    #  ATTESTATION DU VENDEUR — ce que cette branche-ci SAIT.
+                    #  `depeches_lot` interroge `reqHistoricalNews` sur le
+                    #  `conId` QUALIFIE du contrat : c'est le courtier qui
+                    #  rattache la depeche au titre, pas Vertex. Le repli web,
+                    #  lui, est une recherche de mots-cles (`'%s stock'`) : rien
+                    #  n'y garantit que l'article PARLE du titre — mesure du
+                    #  2026-09-06 sur les 45 items servis, 22 titres sur 45 ne
+                    #  nommaient ni le ticker ni la societe du fil.
+                    #  Le drapeau n'est donc pose QUE sur la branche courtier.
+                    atteste = bool(its)
                     if its:
                         n_ibkr += 1
                     else:
@@ -1729,7 +1784,18 @@ def _news_loop():
                     its, _ = ai.fr_news(sym, its)
                     for it in its:
                         it['senti'] = _news_plus.sentiment((it.get('title') or '') + ' ' + (it.get('fr') or ''))
-                        feed.append({**it, 'sym': sym})
+                        #  `sym` est le FIL INTERROGE, jamais une affirmation de
+                        #  sujet : le role est POSE ICI, au seul producteur du
+                        #  fil, pour que tous les consommateurs (route, brief,
+                        #  pipeline) lisent le meme verdict au lieu de le
+                        #  rejuger — ou pire, de prendre la provenance pour le
+                        #  sujet. Pose apres `fr_news` : la traduction FR fait
+                        #  partie du texte servi, donc du texte juge.
+                        _it = {**it, 'sym': sym}
+                        if atteste:
+                            _it['sym_atteste'] = True
+                        _it['sym_role'] = _news_plus.role_sujet(_it, sym)
+                        feed.append(_it)
                 except Exception:
                     continue
             # LOT 605 : la deduplication se faisait sur `titre[:60]` — deux
@@ -1952,6 +2018,14 @@ def _fund_loop():
                 pass
             time.sleep(45 if still_missing else 6 * 3600)     # rapide tant que ça remplit, puis lent
         else:
+            #  Même signal que `_opt_loop` : cadence 6 h, donc le faux
+            #  `JAMAIS_DEMARRE` mesuré tombe à 43 201 s d'uptime. Plus rare,
+            #  même mensonge.
+            try:
+                from vertex.scheduler import registry as _sched
+                _sched.attente('FUNDAMENTALS_REFRESH', 'MARKET_DATA_REFRESH')
+            except Exception:
+                pass
             time.sleep(12)
 
 
@@ -2020,6 +2094,13 @@ def _edge_loop():
                 pass
             time.sleep(6 * 3600)
         else:
+            #  Même signal que `_opt_loop` (cadence 6 h, faux `JAMAIS_DEMARRE`
+            #  mesuré à 43 201 s d'uptime).
+            try:
+                from vertex.scheduler import registry as _sched
+                _sched.attente('TRACK_RECORD_UPDATE', 'MARKET_DATA_REFRESH')
+            except Exception:
+                pass
             time.sleep(20)
 
 
@@ -2067,6 +2148,14 @@ def _weekly_loop():
                 pass
             time.sleep(300)        # options réelles = lent → toutes les 5 min
         else:
+            #  Même signal que `_opt_loop` : mesuré à 601 s d'uptime (2× la
+            #  cadence de 300 s), cette boucle vivante était servie
+            #  `JAMAIS_DEMARRE`. Attendre son entrée n'est pas être morte.
+            try:
+                from vertex.scheduler import registry as _sched
+                _sched.attente('WEEKLY_REVIEW', 'MARKET_DATA_REFRESH')
+            except Exception:
+                pass
             time.sleep(8)
 
 

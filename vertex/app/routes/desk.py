@@ -204,6 +204,24 @@ def _scan_fallback_quote(p):
                     and abs(float(c.get('strike') or 0) - want_strike) < 0.01
                     and (not want_exp or str(c.get('exp', '')).startswith(want_exp))):
                 q['mark'] = c.get('mid')
+                #  CONSTAT 22 — LA PROVENANCE DE LA MARQUE PARTAIT AVEC LE
+                #  CONTRAT. Cette branche ne transmettait QUE `mark` : le
+                #  bloc de provenance servi plus bas recalcule le milieu
+                #  depuis bid/ask, n'en trouvait aucun, et
+                #  `source_de_marque(6.20, mid=None)` rendait INDETERMINEE —
+                #  « convention non renseignée » à l'écran — alors que le
+                #  chiffre EST, par construction, le milieu de fourchette du
+                #  board. `spread_pct` restait null pour la même raison
+                #  (mesuré sur NVDA 2026-10-23 245 C, marché 6,00/6,40 :
+                #  milieu 6,20, spread 6,45 %). On transmet ce que le board
+                #  a RÉELLEMENT publié — jamais plus : un côté manquant
+                #  reste absent, aucun bid/ask n'est reconstruit.
+                if c.get('mid') is not None:
+                    q['mid'] = c.get('mid')
+                if c.get('bid') is not None:
+                    q['bid'] = c.get('bid')
+                if c.get('ask') is not None:
+                    q['ask'] = c.get('ask')
                 break
         if 'mark' not in q and want_strike is not None:
             # Le board n'a que les « meilleurs » strikes — marque du contrat
@@ -499,6 +517,14 @@ def make_blueprint(*, opt_job, ibkr_enabled, cotation_repli=None):
                 continue
             _b, _a = _q.get('bid'), _q.get('ask')
             _mid = round((_b + _a) / 2, 4) if (_b and _a) else None
+            #  Un milieu DÉJÀ SERVI par le producteur fait foi : ce bloc ne le
+            #  recalculait que depuis bid/ask et ignorait `mid`, si bien qu'un
+            #  contrat du board (qui publie son milieu, pas toujours ses deux
+            #  côtés) repartait avec `mid=None` — donc une convention de marque
+            #  INDETERMINEE alors qu'elle est connue. On ne fabrique rien : on
+            #  cesse de jeter ce qui a été transmis.
+            if _mid is None:
+                _mid = _q.get('mid')
             #  Une cotation d'ACTION servie par le repli ne porte qu'un `px` :
             #  aucune convention de marque ne s'y applique. Lui coller une
             #  provenance « ABSENTE » serait doublement faux — le prix EXISTE, et

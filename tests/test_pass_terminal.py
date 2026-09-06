@@ -194,9 +194,28 @@ FICHIER = 'terminal.py'
 #  motifs sont désormais retenus, servis dans `scan_state['radar_ecart']` et
 #  transmis au registre. Une garde AJOUTÉE entoure l'émission du battement
 #  (« journal/persistance » 13 -> 14), comme chez ses sept voisines.
+#  MISE À JOUR (recensement du 2026-09-06, gardien ROUGE) : 31 -> 35. Le
+#  détecteur mesurait 35 handlers pour 31 recensés — le banc était donc rouge,
+#  et un banc rouge ne surveille plus rien. Les QUATRE ajoutés sont mesurés par
+#  AST et lus un par un ; ils sont tous les quatre le MÊME geste, arrivé avec
+#  le signal d'attente des boucles (`EN_ATTENTE_ENTREE`) :
+#    · `_opt_loop`   L1638 : `_sched.attente('OPTIONS_BOARD_REFRESH', …)` ;
+#    · `_fund_loop`  L2003 : `_sched.attente('FUNDAMENTALS_REFRESH', …)` ;
+#    · `_edge_loop`  L2078 : `_sched.attente('TRACK_RECORD_UPDATE', …)` ;
+#    · `_weekly_loop` L2133 : `_sched.attente('WEEKLY_REVIEW', …)`.
+#  Famille « journal/persistance » (14 -> 18) : c'est celle des battements —
+#  leur `try` n'entoure QU'un import de module déjà chargé et une écriture de
+#  dictionnaire dans le registre. Aucune donnée financière n'est entourée ; un
+#  registre indisponible ne doit pas coûter le cycle qu'il observe.
+#  CE QU'ILS COÛTENT, dit plutôt que supposé inoffensif : si l'émission
+#  échouait, la page Système réafficherait « JAMAIS_DEMARRE » au lieu de
+#  « EN_ATTENTE_ENTREE » — un diagnostic moins précis, jamais un chiffre faux.
+#  Ils ne sont PAS convertis en `contextlib.suppress` : le recensement ne voit
+#  que `except: pass`, et faire disparaître quatre avaleurs d'un census qui
+#  existe pour les compter serait masquer, pas corriger.
 FAMILLES = {
     'nettoyage/fermeture': 6,
-    'journal/persistance': 14,
+    'journal/persistance': 18,
     'import/config optionnel': 1,
     'infra thread': 2,
     'absence honnête': 4,
@@ -213,7 +232,7 @@ FAMILLES = {
 #  persistee laissant max-pain vide), quatre best-effort — chaine de
 #  demo, deux notifications SSE, arrondi du spot. Classement complet en
 #  tete de `test_pass_et_contexte.py`.
-TOTAL_PASS = 31
+TOTAL_PASS = 35
 
 # Fenêtre de fraîcheur de l'overlay IBKR. Au-delà, une valeur périmée serait
 # présentée comme du temps réel : c'est la borne d'honnêteté du mécanisme.

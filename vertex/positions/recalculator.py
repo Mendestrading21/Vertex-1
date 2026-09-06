@@ -87,41 +87,125 @@ def recalculate_all(scan_state: dict, desk_blob: dict | None = None,
     calculator.portfolio_weights(positions)
 
     # Verdict moteur (ExecutiveEngine) pour les actions scannées
+    #  Un verdict absent SANS cause nommée est une absence muette : mesuré en
+    #  faisant lever le lecteur de catalyseurs, `recalculate_all` rendait
+    #  `decision: None` sur TOUTES les positions sans qu'aucun champ ne dise
+    #  pourquoi. La cause est désormais publiée avec le lot (`decision_engine`).
+    moteur_indisponible = None
     try:
         from vertex.strategy import executive_engine as _ee
-        from vertex.market.regime_engine import classify_regime
-        market = scan_state.get('market') or {}
-        regime = classify_regime({'index_trend': market.get('spy_trend'),
-                                  'breadth_pct': market.get('breadth'),
-                                  'vix': market.get('vix')})
+        from vertex.strategy import decision_packet as _dp
+        #  DEUX AUTORITÉS DE DÉCISION, MESURÉ LE 2026-09-06 — et une garde
+        #  dure franchie par une valeur SUPPOSÉE.
+        #
+        #  Ce bloc construisait son paquet à la main. Les corrections
+        #  précédentes ont branché ses lecteurs un par un (fondamental,
+        #  catalyseurs, régime), mais trois entrées restaient des LITTÉRAUX :
+        #
+        #      'data_quality': {'overall': 'RECENT' if source not in (…) …},
+        #      'reconciliation': {'actionable_allowed': True},
+        #      'guard': {'blocking_rules': [], 'mandatory_reviews': []},
+        #
+        #  `reconciliation.actionable_allowed: True` est une AFFIRMATION sans
+        #  mesure. Or `scan_evidence.build_scan` pose sur CHAQUE titre le
+        #  rapprochement réellement calculé. Mesure sur un detail à la forme
+        #  d'un scan enrichi dont le rapprochement INTERDIT l'action
+        #  (`{'available': True, 'actionable_allowed': False,
+        #  'issues': ['SPOT_VS_CHAIN_MISMATCH']}`) : /api/positions/state
+        #  rendait « RENFORCER » sans règle bloquante pendant que
+        #  /api/strategy/decision rendait « ATTENDRE »
+        #  ['SOURCE_DISAGREEMENT'] pour le MÊME titre et le MÊME scan_state.
+        #  Le desk des positions détenues franchissait donc une garde dure —
+        #  sur des positions déclarées par l'utilisateur — parce qu'il
+        #  s'autorisait lui-même. Tant que le régime dégradait en UNKNOWN, un
+        #  `REGIME_BLOCKS_NEW_RISK` fabriqué MASQUAIT le contournement ; en
+        #  réparant le régime, la correction précédente l'a rendu atteignable.
+        #
+        #  Il n'y a donc plus de second constructeur : `decision_packet.build`
+        #  est le propriétaire canonique du paquet, y compris du régime (son
+        #  `_market_regime` appelle déjà `classify_regime(regime_inputs(…))`
+        #  avec un repli non actionnable). Ce module n'ajoute que ce que la
+        #  POSITION sait et que le scan ignore.
+        #  LE GARDE PORTEFEUILLE EST MESURÉ, PAS SUPPOSÉ — ni omis.
+        #
+        #  `decision_packet` traite un garde ABSENT comme une preuve manquante
+        #  et ajoute `DECISION_PACKET_INCOMPLETE`, ce qui plafonne le verdict à
+        #  ATTENDRE. Mesuré : sans cette section, TOUTES les positions
+        #  détenues rendent ATTENDRE en permanence — une garde toujours allumée
+        #  ne distingue plus rien, exactement le défaut reproché au
+        #  `REGIME_BLOCKS_NEW_RISK` fabriqué. L'ancien code résolvait ça par un
+        #  littéral `{'blocking_rules': []}` : une autorisation affirmée.
+        #
+        #  Le garde est donc CALCULÉ par son propriétaire canonique
+        #  (`portfolio_guard.guard_rules` sur `risk_engine.portfolio_risk`), à
+        #  partir des seules positions DÉCLARÉES par l'utilisateur.
+        #
+        #  CE QUE CE PLAN DE TRAVAIL NE MESURE PAS, et qui est dit : la
+        #  trésorerie et le pic d'équité ne sont pas déclarés sur cette
+        #  surface. Vérifié chez le producteur : sans pic, `drawdown_pct` vaut
+        #  None et `PORTFOLIO_DRAWDOWN_LIMIT` ne peut donc pas s'allumer à
+        #  tort — mais il ne peut pas s'allumer du tout, et la couverture le
+        #  nomme au lieu de laisser croire à un garde complet.
+        garde = None
+        try:
+            from vertex.portfolio import models as _pm
+            from vertex.portfolio import portfolio_guard as _pg
+            from vertex.portfolio import risk_engine as _re
+            from vertex.strategy import constitution as _const
+            profil = _const.load_profile()
+            lignes = [_pm.Position(symbol=p.get('symbol') or '',
+                                   quantity=float(p.get('quantity') or 0),
+                                   avg_cost=p.get('average_cost'),
+                                   last_price=p.get('current_price'),
+                                   sector=p.get('sector') or '',
+                                   beta=p.get('beta'),
+                                   sec_type=('OPT' if p.get('asset_type') == 'OPTION' else 'STK'))
+                      for p in positions]
+            instantane = _pm.PortfolioSnapshot(positions=lignes, cash=0.0,
+                                               provenance='REAL', peak_equity=None)
+            garde = _pg.guard_rules(_re.portfolio_risk(instantane, profil), profil)
+            garde['coverage'] = {
+                'cash_declared': False, 'peak_equity_declared': False,
+                'note': 'trésorerie et pic d’équité non déclarés sur le plan de '
+                        'travail : le plafond de drawdown portefeuille n’est pas '
+                        'évalué ici (il l’est sur /api/portfolio/team)'}
+        except Exception as exc:                          # noqa: BLE001
+            #  Un garde non calculable reste ABSENT : le paquet sera déclaré
+            #  incomplet et le verdict plafonné. Jamais un feu vert par défaut.
+            garde = None
+            moteur_indisponible = moteur_indisponible or type(exc).__name__
+        etat = dict(scan_state)
+        if garde is not None:
+            etat['guard'] = garde
+
         for p in positions:
             d = _detail_for(scan_state, p.get('symbol') or p.get('underlying_symbol'))
             if not d:
                 continue
             plan = d.get('plan') or {}
-            packet = {'symbol': p['symbol'],
-                      'fundamental': {'score': d.get('st_fund') or d.get('fund_score')},
-                      'catalysts': {'score': 60 if d.get('earnings_dte') is not None else None},
-                      'technical': {'score': d.get('score'),
-                                    'reward_risk': p.get('remaining_rr') or d.get('rr')
-                                    or (plan.get('rr') if isinstance(plan, dict) else None),
-                                    'timing_score': d.get('st_timing'),
-                                    'thesis_invalidated': p.get('thesis_health') == 'INVALIDATED'},
-                      'sentiment': {'score': d.get('rs')},
-                      'data_quality': {'overall': 'RECENT' if scan_state.get('source') not in (None, 'demo') else 'MISSING',
-                                       'actionable_allowed': scan_state.get('source') not in (None, 'demo')},
-                      'reconciliation': {'actionable_allowed': True},
-                      'guard': {'blocking_rules': [], 'mandatory_reviews': []},
-                      'position_held': True,
-                      'position_pl_pct': p.get('unrealized_pnl_pct'),
-                      'market_regime': regime}
+            packet = _dp.build(p['symbol'], d, etat)
+            #  Le rapport gain/risque RESTANT est propre à la position tenue
+            #  (le paquet du scan ne connaît que celui du plan d'entrée), et
+            #  l'invalidation de thèse est suivie par le desk.
+            tech = packet['technical']
+            tech['reward_risk'] = (p.get('remaining_rr') or d.get('rr')
+                                   or (plan.get('rr') if isinstance(plan, dict) else None))
+            if p.get('thesis_health') == 'INVALIDATED':
+                tech['thesis_invalidated'] = True
+            packet['position_held'] = True
+            packet['position_pl_pct'] = p.get('unrealized_pnl_pct')
             verdict = _ee.decide(packet)
             p['decision'] = verdict['final_decision']
             p['decision_blocking'] = verdict.get('blocking_rules', [])
-    except Exception:
-        pass
+    except Exception as exc:                              # noqa: BLE001
+        moteur_indisponible = type(exc).__name__
 
     return {'positions': positions, 'portfolio': aggregate(positions),
+            'decision_engine': {
+                'available': moteur_indisponible is None,
+                'reason': (None if moteur_indisponible is None else
+                           'moteur de verdict indisponible (%s) — aucune décision '
+                           'servie sur ce cycle' % moteur_indisponible)},
             'updated_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
 
 

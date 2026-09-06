@@ -116,6 +116,8 @@ def test_market_summary_signale_un_score_partiel():
                                           'vix_band': 'calme',
                                           'breadth': {'above50': 50}}
         complet = c.get('/api/market/summary').get_json()
+        state.scan_state['market_ctx'] = {}
+        aucun = c.get('/api/market/summary').get_json()
     finally:
         state.scan_state['market_ctx'] = prev
     # Même score servi : seule la COUVERTURE les distingue.
@@ -124,6 +126,13 @@ def test_market_summary_signale_un_score_partiel():
     assert partiel['breadth_status'] == 'MISSING' and partiel['score_note']
     assert complet['score_partiel'] is False
     assert complet['breadth_status'] is None and complet['score_note'] is None
+    #  Second tour — TROIS états, pas deux. `bool(cl and cl.get('partiel'))`
+    #  rendait `score_partiel: False` quand il n'y a AUCUN climat (mesuré :
+    #  `market_ctx` vide → `climate()` rend None à dessein, donc score null) :
+    #  la route affirmait une couverture COMPLÈTE sur un score ABSENT, la faute
+    #  même que la marque de couverture venait de corriger.
+    assert aucun['score'] is None and aucun['verdict'] is None
+    assert aucun['score_partiel'] is None, 'sans climat, la couverture est inconnue'
 
 
 def test_search_filters_universe():

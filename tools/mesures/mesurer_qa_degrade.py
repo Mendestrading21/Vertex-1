@@ -102,6 +102,60 @@ def _lire(base, chemin, defaut_texte=''):
     return None, rep.erreur or defaut_texte
 
 
+#  ------------------------------------------- L'INSTANCE EST-ELLE MESURABLE ?
+#
+#  MESURE (6 sept. 2026) : deux gardiens ont « mesuré » l'écran de connexion de
+#  l'instance de travail. Les trois modules frères (mesurer_qa_espaces,
+#  mesurer_couche_visuelle, mesurer_regles_mortes) exigent depuis lors une PAGE
+#  réellement ouverte — l'espace Marchés avec son attribut `data-space`, sans
+#  champ de code. Le banc de CE module-ci interrogeait encore `/api/live/status`
+#  et lisait `{"error":"auth"}` : un critère qui porte sur une AUTRE surface que
+#  celles mesurées (12 pages HTML sur 22 surfaces), et qui rend `False` — donc
+#  « instance ouverte, mesure ce produit » — sur toute erreur non HTTP
+#  (expiration, connexion coupée). Dans ce cas, l'instrument accusait le
+#  produit de « ne pas nommer un vide » qu'il n'avait jamais vu.
+#
+#  Le critère est PUR : `(statut, corps) -> bool`. Il peut donc être éprouvé
+#  sur des corps fabriqués, sans serveur, dans les deux sens.
+MARQUEUR_ESPACE = 'data-space="markets"'
+CHAMPS_DE_CODE = ('name="code"', 'type="password"')
+
+
+def page_ouverte(statut, corps) -> bool:
+    """Une PAGE du produit, pas un mur d'authentification ni un vide."""
+    txt = corps or ''
+    return (statut == 200 and MARQUEUR_ESPACE in txt
+            and not any(c in txt for c in CHAMPS_DE_CODE))
+
+
+#: DÉCIDER SI LA MESURE EST POSSIBLE N'EST PAS LA MESURE. Le plafond généreux
+#: de la sonde (60 s, justifié pour des routes à 9-31 s) gèlerait la collecte
+#: de pytest deux fois de suite sur un port muet — l'ancien banc sondait à 3 s.
+PLAFOND_SONDE_S = 5.0
+
+
+def _sonder(base: str, chemin: str):
+    from tools.mesures._sonde_http import appeler as _appeler
+    rep = _appeler(base, chemin, plafond=PLAFOND_SONDE_S)
+    return ((rep.statut, rep.texte) if (rep.a_repondu or rep.statut)
+            else (None, rep.erreur or ''))
+
+
+def etat_instance(base: str = BASE_DEFAUT, lire=None) -> str:
+    """`ABSENTE` | `FERMEE` | `OUVERTE` — ce que la mesure peut atteindre.
+
+    Trois causes, trois conduites : rien n'écoute (rien à mesurer), le produit
+    est là mais ne se montre pas (verrou, page servie sans son espace — on
+    s'abstient), ou la page est ouverte (on mesure). `lire` est injectable :
+    le banc éprouve la décision sans serveur.
+    """
+    lire = lire or _sonder
+    statut, _ = lire(base, '/healthz')
+    if statut != 200:
+        return 'ABSENTE'
+    return 'OUVERTE' if page_ouverte(*lire(base, '/markets')) else 'FERMEE'
+
+
 #  ------------------------------------------------------------- les prédicats
 
 def secrets_surveilles() -> dict:
@@ -313,6 +367,13 @@ PAQUET_HONNETE = {'decision': {'verdict': None,
                                          'note': 'blocs non branchés = 0, jamais estimés'},
                                'confidence': {'value': 0.0}}}
 
+#: Témoins du critère d'instance : la page du produit, et l'écran de connexion
+#: qui a réellement été mesuré à sa place le 6 septembre 2026.
+CORPS_ESPACE_OUVERT = ('<main id="vx-content" data-space="markets">'
+                       '<h1>Marchés</h1></main>')
+CORPS_ECRAN_DE_CODE = ('<form action="/login"><input name="code" '
+                       'type="password"></form>')
+
 STATUT_MENTEUR = {'domains': {'x': {'state': 'offline', 'age_s': 0, 'ts': None,
                                     'freshness': 'à l\'instant'}}}
 STATUT_HONNETE = {'domains': {'x': {'state': 'offline', 'age_s': None, 'ts': None,
@@ -352,6 +413,13 @@ def _temoins(r: dict) -> list:
     if controler_fraicheur_domaines(STATUT_HONNETE):
         e.append('TEMOIN NEGATIF ROMPU (fraicheur) : un domaine hors ligne qui '
                  'AVOUE (age null, « jamais synchronise ») ressort en anomalie')
+    if not page_ouverte(200, CORPS_ESPACE_OUVERT):
+        e.append('TEMOIN INSTANCE MUET : la page Marches du produit n\'est pas '
+                 'reconnue comme ouverte — le controle produit se sautera '
+                 'toujours, en silence')
+    if page_ouverte(200, CORPS_ECRAN_DE_CODE):
+        e.append('TEMOIN NEGATIF ROMPU (instance) : un ecran de connexion passe '
+                 'pour la page du produit — c\'est lui qui sera mesure')
     if not r['statuts']:
         e.append('aucune surface interrogee : la mesure porte sur rien')
     if all(v is None for v in r['statuts'].values()):

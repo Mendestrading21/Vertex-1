@@ -84,9 +84,17 @@ def test_option_nest_jamais_valorisee_par_la_cote_du_sous_jacent():
     assert out['hhi'] == 0.569                     # 0,7005 « concentré » était calculé sur la fable
     # La note ne peut plus valoir None : deux options sont au capital engagé.
     assert out['valuation_note'] and 'capital engagé' in out['valuation_note']
-    assert out['valuation'] == {'at_market': 1, 'at_cost': 0, 'at_committed': 2,
-                                'unvalued': 0, 'total_positions': 3, 'read_only': True,
-                                'method': out['valuation']['method']}
+    #  `method` était comparée à elle-même (`out['valuation']['method']`) : la
+    #  clé pouvait valoir n'importe quoi, y compris la phrase FAUSSE d'avant
+    #  correction (« cote réelle du titre » pour 14 100 $ de capital engagé).
+    #  On sépare : les compteurs sont comparés exactement, la méthode est jugée
+    #  sur ce qu'elle DIT — c'est elle qui rend le total auditable.
+    compteurs = dict(out['valuation'])
+    methode = compteurs.pop('method')
+    assert compteurs == {'at_market': 1, 'at_cost': 0, 'at_committed': 2,
+                         'unvalued': 0, 'total_positions': 3, 'read_only': True}
+    assert 'multiplicateur' in methode                   # marque × mult × qty
+    assert 'jamais la cote du sous-jacent' in methode    # la règle violée à l'origine
     # Le sizing ne part plus d'une base fabriquée : 4 256,59 → 14 188,07.
     sized = portfolio_context.build(positions, quotes={'MSFT': 499.7, 'GOOG': 335.31, 'KO': 88.07},
                                     profile=_ProfileAvecNiveaux())
@@ -107,7 +115,17 @@ def test_option_avec_marque_utilise_marque_multiplicateur_quantite():
 def test_pnl_du_candidat_ne_compare_pas_un_spot_a_un_cout_par_contrat():
     """9 800 $ / 7 contrats = 1 400 $ ; face à un spot de 499,70 $ cela ferait
     −64,3 % — un P&L inventé. Inconnu reste inconnu, donc renforcement non
-    autorisé (jamais un oui par défaut)."""
+    autorisé (jamais un oui par défaut).
+
+    PRÉCISION MESURÉE (rejeu de la baseline) : le −64 % n'a JAMAIS été servi.
+    Au SHA de référence, `e['cost']` lisait `cost_basis`, absent d'une option
+    canonique, donc `pnl_pct` valait déjà None — par accident, pas par règle.
+    C'est la séparation `quotable_cost`/`quotable_qty` qui empêche le −64 %
+    d'apparaître maintenant que le coût de l'option est enfin lu. Conséquence
+    pour la lecture de ce banc : les deux premières assertions ne
+    discrimineraient pas contre la baseline ; c'est `pnl_note` — l'inconnu
+    MOTIVÉ, absent avant — qui fait la différence.
+    """
     out = portfolio_context.build([_option_canonique('MSFT', 7.0, 9800.0)],
                                   quotes={'MSFT': 499.7}, sym='MSFT', profile=_Profile())
     assert out['candidate']['pnl_pct'] is None

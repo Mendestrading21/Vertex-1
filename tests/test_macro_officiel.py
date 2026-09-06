@@ -87,7 +87,12 @@ def test_chaque_serie_du_catalogue_rend_une_observation_datee_par_la_source():
         assert o.unite and o.frequence in ('quotidien', 'mensuel', 'annuel',
                                            src.FREQ_EN_VIGUEUR)
         assert o.mode == 'PERIODIQUE', 'une publication n’est jamais « live »'
-        assert o.fraicheur in ('SANS_OBJET', 'A_JOUR', 'RETARD', 'RETARD_FORT'), o.id
+        #  L'observation ne PORTE plus de verdict : il dépend de l'heure de
+        #  LECTURE, pas de celle de la collecte (voir
+        #  `test_le_verdict_de_fraicheur_est_rejuge_a_la_lecture_et_jamais_persiste`).
+        assert not hasattr(o, 'fraicheur') and not hasattr(o, 'retard_jours')
+    for s in src.juger_series([o.to_dict() for o in obs]):
+        assert s['fraicheur'] in ('SANS_OBJET', 'A_JOUR', 'RETARD', 'RETARD_FORT'), s['id']
 
 
 def test_une_serie_en_panne_devient_une_absence_expliquee_jamais_un_zero():
@@ -142,11 +147,18 @@ def test_un_taux_directeur_n_est_jamais_marque_en_retard():
     assert cat['ze_refi'].frequence == cat['ze_depot'].frequence == src.FREQ_EN_VIGUEUR
     #  Date figée : sinon le verdict des séries quotidiennes de la fixture
     #  changerait tout seul en dormant cinq jours.
-    obs = {o.id: o for o in src.collecter(_fetch_fixtures, aujourdhui=_dt.date(2026, 9, 6))}
-    assert obs['ze_refi'].fraicheur == 'SANS_OBJET' and obs['ze_refi'].value is not None
-    assert obs['ze_refi'].retard_jours == 81
-    assert obs['ch_conf_10a'].fraicheur == 'RETARD_FORT', 'retard de la SOURCE, dit'
-    assert [o.id for o in obs.values() if o.fraicheur in ('RETARD', 'RETARD_FORT')] == \
+    obs = {s['id']: s for s in src.juger_series(
+        [o.to_dict() for o in src.collecter(_fetch_fixtures)], _dt.date(2026, 9, 6))}
+    assert obs['ze_refi']['fraicheur'] == 'SANS_OBJET' and obs['ze_refi']['value'] is not None
+    #  Le champ s'appelle `age_jours` et NON `retard_jours` : il vaut 81 sur une
+    #  série dont le verdict est SANS_OBJET (taux directeur EN VIGUEUR). Un écran
+    #  qui lirait « retard_jours » sans lire « fraicheur » afficherait
+    #  « 81 jours de retard » sur le taux courant — le mensonge exact que ce
+    #  module existe pour empêcher.
+    assert obs['ze_refi']['age_jours'] == 81
+    assert 'retard_jours' not in obs['ze_refi'], 'le nom qui mentait est retiré'
+    assert obs['ch_conf_10a']['fraicheur'] == 'RETARD_FORT', 'retard de la SOURCE, dit'
+    assert [s['id'] for s in obs.values() if s['fraicheur'] in ('RETARD', 'RETARD_FORT')] == \
         ['ze_inflation', 'ch_conf_10a']
 
 
@@ -165,8 +177,73 @@ def test_l_instantane_compte_les_series_en_retard_a_cote_des_disponibles(monkeyp
     #  Les deux retards sont ceux de la SOURCE, figés dans la fixture ; les
     #  séries quotidiennes, elles, vieillissent avec l'horloge de la machine.
     assert {'ze_inflation', 'ch_conf_10a'} <= set(en_retard)
-    assert all('fraicheur' in s and 'retard_jours' in s for s in snap['series'])
+    assert all('fraicheur' in s and 'age_jours' in s for s in snap['series'])
     assert next(s for s in snap['series'] if s['id'] == 'ze_refi')['fraicheur'] == 'SANS_OBJET'
+
+
+def test_le_verdict_de_fraicheur_est_rejuge_a_la_lecture_et_jamais_persiste(monkeypatch, tmp_path):
+    """MESURE DU 2026-09-06 — la fraîcheur rassissait en silence.
+
+    `fraicheur`/`retard_jours` étaient calculés UNE fois dans `observer()`,
+    écrits dans la série, persistés par `_sauver()` puis réhydratés tels quels
+    par `charger_cache()`. Relevé dans le `macro_officiel_cache.json` réel de
+    ce jour-là : `ch_saron` figé à `A_JOUR` / 6 j et `us_10a` à `A_JOUR` / 3 j.
+    Rejugées au 2026-11-15 sur le MÊME `observed_at` : `RETARD` 76 j et
+    `RETARD_FORT` 73 j. Sur le chemin de reprise depuis cache (sources
+    injoignables au démarrage), l'API affirmait donc « à jour » sur une donnée
+    qui ne l'était plus.
+
+    Ce banc rejoue ce chemin : un cache PORTEUR d'un verdict périmé est
+    réhydraté, et l'instantané servi doit contredire le cache. Sans le recalcul
+    dans `snapshot()`, il rendrait `A_JOUR`.
+    """
+    import json as _json
+    from vertex.services import macro_officiel as svc
+    monkeypatch.setattr(svc, '_racine', lambda: str(tmp_path))
+    (tmp_path / svc.CACHE).write_text(_json.dumps({
+        'as_of': '2026-01-08T06:00:00Z',
+        'series': [{'id': 'us_10a', 'libelle': 'Trésor US 10 ans', 'frequence': 'quotidien',
+                    'value': 4.77, 'observed_at': '2026-01-05', 'error': None,
+                    'fraicheur': 'A_JOUR', 'retard_jours': 3},
+                   {'id': 'ze_refi', 'libelle': 'BCE — refinancement',
+                    'frequence': src.FREQ_EN_VIGUEUR, 'value': 2.4,
+                    'observed_at': '2026-06-17', 'error': None,
+                    'fraicheur': 'RETARD_FORT', 'retard_jours': 81}],
+        'communiques': []}, ensure_ascii=False), encoding='utf-8')
+    etat_avant = dict(svc._ETAT)
+    svc.charger_cache()
+    try:
+        snap = svc.snapshot()
+        series = {s['id']: s for s in snap['series']}
+        assert snap['etat']['restaure_depuis_cache'] is True
+        #  Le cache DIT « A_JOUR » ; l'observation date du 2026-01-05, soit bien
+        #  au-delà des 5 jours de tolérance quotidienne — et le test ne peut que
+        #  vieillir, donc son verdict ne changera pas avec l'horloge.
+        assert series['us_10a']['fraicheur'] == 'RETARD_FORT'
+        assert series['us_10a']['age_jours'] >= 244
+        #  Symétrique : le cache DIT « RETARD_FORT » sur un taux EN VIGUEUR ; le
+        #  verdict rejugé rétablit SANS_OBJET.
+        assert series['ze_refi']['fraicheur'] == 'SANS_OBJET'
+        assert all('retard_jours' not in s for s in series.values())
+        assert snap['en_retard'] == 1, 'le compte du pied suit le verdict rejugé'
+    finally:
+        svc._ETAT.clear()
+        svc._ETAT.update(etat_avant)
+
+
+def test_le_cache_persiste_ne_contient_aucun_verdict_de_fraicheur(monkeypatch, tmp_path):
+    """Un verdict écrit sur disque redevient périmé sans que personne ne le voie :
+    ce qui est persisté, c'est UNIQUEMENT ce que la source a publié."""
+    import json as _json
+    from vertex.services import macro_officiel as svc
+    monkeypatch.setattr(svc, '_racine', lambda: str(tmp_path))
+    monkeypatch.setattr(svc, '_battre', lambda *a, **k: None)
+    monkeypatch.setattr(svc, '_publier', lambda: None)
+    svc.collecter_une_fois(_fetch_fixtures)
+    ecrit = _json.loads((tmp_path / svc.CACHE).read_text(encoding='utf-8'))
+    for s in ecrit['series']:
+        assert 'fraicheur' not in s and 'retard_jours' not in s and 'age_jours' not in s, s['id']
+        assert s['observed_at'], 'la date de la SOURCE, elle, est persistée' 
 
 
 def test_le_catalogue_est_coherent():

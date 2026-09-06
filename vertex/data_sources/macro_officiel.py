@@ -14,9 +14,11 @@ Aucune valeur n'est inventée : une série qui échoue rend `value=None` avec
 `error`, jamais 0. Les fréquences (quotidien / mensuel / annuel / en vigueur)
 sont déclarées par série : un chiffre mensuel de juillet n'est pas « en
 retard », il est mensuel — et un taux directeur du 17 juin est EN VIGUEUR, pas
-vieux de 81 jours. La PONCTUALITÉ est jugée ici (`juger_fraicheur`, champs
-`fraicheur` et `retard_jours`) : elle est distincte de la disponibilité, et le
-retard d'un fournisseur est dit, jamais deviné à l'écran.
+vieux de 81 jours. La PONCTUALITÉ est jugée ici (`juger_fraicheur` /
+`juger_series`, champs `fraicheur` et `age_jours`) : elle est distincte de la
+disponibilité, le retard d'un fournisseur est dit et jamais deviné à l'écran,
+et le verdict est recalculé À CHAQUE LECTURE — jamais figé dans l'observation
+ni persisté dans le cache, sinon il vieillit en silence.
 
 Ce module ne parle pas au réseau tout seul : `collecter()` reçoit une fonction
 `fetch(url, accept) -> str` injectable (tests avec fixtures réelles capturées
@@ -127,10 +129,10 @@ class Observation:
     note: str = ''
     error: str | None = None
     mode: str = 'PERIODIQUE'     # jamais « live » : ce sont des publications
-    #  Verdict de PONCTUALITÉ, calculé ici (le serveur calcule, l'écran peint) :
-    #  SANS_OBJET | A_JOUR | RETARD | RETARD_FORT | INCONNU.
-    fraicheur: str = 'INCONNU'
-    retard_jours: int | None = None   # âge de l'observation, None si non calculable
+    #  PAS de verdict de fraîcheur ici : une observation enregistre ce que la
+    #  SOURCE a publié, pas ce qu'on en pensait à l'instant de la collecte.
+    #  Le verdict est une fonction de l'heure de LECTURE — il est calculé à la
+    #  sortie par `juger_series`, jamais figé ni persisté (voir sa docstring).
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -166,7 +168,14 @@ def _fin_de_periode(observed_at: str) -> _dt.date | None:
 
 def juger_fraicheur(frequence: str, observed_at: str,
                     aujourdhui: _dt.date | None = None) -> tuple[str, int | None]:
-    """(verdict, âge en jours) — la PONCTUALITÉ d'une observation, calculée.
+    """(verdict, ÂGE en jours) — la PONCTUALITÉ d'une observation, calculée.
+
+    Le second membre est un ÂGE, pas un retard. Le nom `retard_jours` qu'il
+    portait était un piège de lecture mesuré : il valait 81 sur `ze_refi`, dont
+    le verdict est `SANS_OBJET` parce que ce taux directeur est EN VIGUEUR — le
+    premier écran qui aurait lu le champ sans lire `fraicheur` aurait affiché
+    « 81 jours de retard » sur une valeur courante, exactement le mensonge que
+    ce module existe pour empêcher. Le champ servi s'appelle `age_jours`.
 
     ## Le manque, mesuré le 2026-09-06
 
@@ -210,6 +219,41 @@ def juger_fraicheur(frequence: str, observed_at: str,
     if jours <= tol:
         return 'A_JOUR', jours
     return ('RETARD_FORT' if jours > 3 * tol else 'RETARD'), jours
+
+
+def juger_series(series, aujourdhui: _dt.date | None = None) -> list[dict]:
+    """Les séries, chacune AVEC son verdict de ponctualité recalculé MAINTENANT.
+
+    ## Le verdict qui rassissait en silence — mesure du 2026-09-06
+
+    `fraicheur` et `retard_jours` étaient calculés UNE fois dans `observer()`,
+    écrits dans le dict de la série, persistés par `_sauver()` dans
+    `macro_officiel_cache.json`, puis réhydratés tels quels par
+    `charger_cache()`. Mesure sur le cache réellement écrit ce jour-là :
+    `ch_saron` y est figé à `A_JOUR` / 6 j et `us_10a` à `A_JOUR` / 3 j.
+    Rejugées au 2026-11-15 à partir du MÊME `observed_at`, ces deux séries
+    valent `RETARD` 76 j et `RETARD_FORT` 73 j. Tant que la boucle de 6 h
+    tourne, l'écart est négligeable ; sur le chemin de reprise depuis cache
+    (sources injoignables au démarrage), l'API affirmait « à jour » sur une
+    donnée qui ne l'était plus — une fraîcheur qui rassit est le défaut du
+    verdict de fraîcheur au second degré.
+
+    D'où la règle : le verdict n'est ni stocké ni persisté, il est une
+    FONCTION de l'heure de lecture, appliquée au moment de servir. Un
+    `retard_jours` laissé par un cache antérieur est retiré, pas conservé à
+    côté de `age_jours` : deux champs pour une même grandeur, dont l'un ment
+    sur son sens, valent moins qu'un seul.
+    """
+    out = []
+    for s in series or []:
+        if not isinstance(s, dict):
+            continue
+        d = dict(s)
+        d.pop('retard_jours', None)      # cache écrit avant le renommage
+        d['fraicheur'], d['age_jours'] = juger_fraicheur(
+            d.get('frequence') or '', d.get('observed_at') or '', aujourdhui)
+        out.append(d)
+    return out
 
 
 def utc_now_iso() -> str:
@@ -292,14 +336,13 @@ def _derniere_observee(points: list[tuple[str, float | None]]):
 
 # ── Collecte (réseau injecté) ───────────────────────────────────────────────
 
-def observer(serie: SerieOfficielle, fetch: Callable[[str, str], str],
-             aujourdhui: _dt.date | None = None) -> Observation:
+def observer(serie: SerieOfficielle, fetch: Callable[[str, str], str]) -> Observation:
     """Une série → une Observation. Toute erreur devient une donnée (`error`),
     jamais une exception qui casserait les autres séries, jamais un zéro.
 
-    `aujourdhui` n'existe que pour le verdict de fraîcheur : une fixture figée
-    au 2026-09-06 jugée avec la date du jour rendrait un test qui change de
-    résultat en dormant. Défaut : la date du jour, en UTC."""
+    Aucun verdict de ponctualité n'est écrit ici : il dépend de l'heure de
+    LECTURE, pas de celle de la collecte, et le figer ici le faisait persister
+    dans le cache puis réapparaître périmé (voir `juger_series`)."""
     url = url_de(serie)
     obs = Observation(id=serie.id, libelle=serie.libelle, fournisseur=serie.fournisseur,
                       reference=serie.reference, unite=serie.unite, frequence=serie.frequence,
@@ -316,20 +359,14 @@ def observer(serie: SerieOfficielle, fetch: Callable[[str, str], str],
             obs.error = 'aucune observation publiée dans la réponse'
             return obs
         obs.value, obs.observed_at, obs.previous, obs.previous_at = v1, d1, v0, d0
-        #  La ponctualité est CALCULÉE ici, avec l'observation : l'écran ne
-        #  doit pas avoir à déduire un retard d'une date (le helper `ageObs`
-        #  de la carte, écrit puis jamais appelé, en est la preuve).
-        obs.fraicheur, obs.retard_jours = juger_fraicheur(serie.frequence, obs.observed_at,
-                                                          aujourdhui)
     except Exception as exc:  # noqa: BLE001 — la panne est une donnée
         obs.error = '%s: %s' % (type(exc).__name__, str(exc)[:160])
     return obs
 
 
 def collecter(fetch: Callable[[str, str], str],
-              catalogue: tuple[SerieOfficielle, ...] = CATALOGUE,
-              aujourdhui: _dt.date | None = None) -> list[Observation]:
-    return [observer(s, fetch, aujourdhui) for s in catalogue]
+              catalogue: tuple[SerieOfficielle, ...] = CATALOGUE) -> list[Observation]:
+    return [observer(s, fetch) for s in catalogue]
 
 
 # ── Communiqués officiels (circuit PUBLICATIONS, flux RSS publics) ──────────
@@ -361,9 +398,11 @@ def parser_communiques(xml_text: str, source: str, n: int = COMMUNIQUES_PAR_SOUR
     même compte sur la fixture `bns_adhoc.xml`. Ne lire que `pubDate` rendait
     donc `published_at = None` sur **12 communiqués sur 12**, soit 100 % d'un
     fournisseur officiel, alors que la donnée était DÉJÀ en mémoire :
-    `_items_surs` retire le préfixe de namespace (`nom.rsplit(':', 1)[-1]`),
-    si bien que `<dc:date>2026-09-02T10:15:00Z</dc:date>` arrive sous la clé
-    `date` et que `horodatage_source` la lit sans rien inventer.
+    `_items_surs` rend `<dc:date>2026-09-02T10:15:00Z</dc:date>` sous son nom
+    QUALIFIÉ `dc:date` (en plus du nom local), et `horodatage_source` la lit
+    sans rien inventer. Le repli cite ce vocabulaire précis : lire le nom
+    dénamespacé aurait accepté n'importe quel `<foo:date>` — date de révision,
+    date d'événement — comme une date de publication.
 
     Conséquence mesurée de cette perte : le tri de `collecter_communiques`
     (clé `published_at or ''`) reléguait les 12 BNS derrière les 12 BCE — le
@@ -383,11 +422,17 @@ def parser_communiques(xml_text: str, source: str, n: int = COMMUNIQUES_PAR_SOUR
         lien = _np._lien_sur(champs.get('link') or '')
         if not titre or not lien:
             continue
-        #  `pubDate` d'abord (RSS), `date` ensuite (= `<dc:date>` dénamespacé
-        #  par `_items_surs`) : la BNS ne publie que le second.
+        #  `pubDate` d'abord (RSS), `dc:date` ensuite : la BNS ne publie que le
+        #  second. Le repli nomme le vocabulaire DUBLIN CORE, pas un `*:date`
+        #  quelconque — `_items_surs` conserve le nom qualifié à côté du nom
+        #  local, si bien qu'un futur `<foo:date>` (date de révision, date
+        #  d'événement) ne peut plus se faire passer pour une date de
+        #  publication. Mesure du 2026-09-06 : BCE 15 `pubDate` / 0 `dc:date`
+        #  d'item, BNS 0 `pubDate` / 36 `dc:date` — les deux chemins sont
+        #  couverts, aucun flux actuel ne porte un autre `*:date`.
         out.append({'source': source, 'title': titre, 'link': lien,
                     'published_at': (_np.horodatage_source(champs.get('pubDate'))
-                                     or _np.horodatage_source(champs.get('date'))),
+                                     or _np.horodatage_source(champs.get('dc:date'))),
                     'received_at': recu})
     return out
 
@@ -413,4 +458,4 @@ def collecter_communiques(fetch: Callable[[str, str], str]) -> tuple[list[dict],
 __all__ = ['SerieOfficielle', 'Observation', 'CATALOGUE', 'SOURCES', 'url_de',
            'parser_fred', 'parser_bce', 'parser_bns', 'observer', 'collecter',
            'utc_now_iso', 'COMMUNIQUES', 'parser_communiques', 'collecter_communiques',
-           'juger_fraicheur', 'TOLERANCE_J', 'FREQ_EN_VIGUEUR']
+           'juger_fraicheur', 'juger_series', 'TOLERANCE_J', 'FREQ_EN_VIGUEUR']

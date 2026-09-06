@@ -329,3 +329,126 @@ def test_correlations_team_disent_leur_cause(client):
     assert corr.get('available') is False
     assert 'NON_IMPLÉMENTÉ' in corr['reason']
     assert '/api/portfolio/context' in corr['reason']
+
+
+def _scan_forme_production(detail_extra=None, source='stooq'):
+    """Forme RÉELLE que le scan publie : `market` = horloge de séance,
+    dimensions de régime dans `market_ctx`. Les fixtures legacy
+    (`market={'regime':...,'vix':...,'breadth':...}`) ne sont plus servies par
+    aucun producteur — c'est précisément pourquoi elles ne discriminaient rien.
+    """
+    detail = {'score': 78, 'rr': 2.3, 'rs': 70, 'ext_atr': 1.0,
+              'sub': {'fundamental': 72, 'fundamental_is_proxy': False}}
+    detail.update(detail_extra or {})
+    return {
+        'source': source,
+        'detail': {'NVDA': detail},
+        # horloge de séance produite par market_clock.market_status()
+        'market': {'et': '08:54 ET', 'open': False, 'session': 'closed'},
+        # dimensions RÉELLES du régime
+        'market_ctx': {'spy_regime': 'TREND', 'vix': 15.0,
+                       'breadth': {'above200': 68}, 'roro': 'RISK-ON'},
+    }
+
+
+def test_regime_lu_sur_les_dimensions_pas_sur_l_horloge_de_seance():
+    """CONSTAT 7 — test DISCRIMINANT : il échoue si l'ancien mapping revient.
+
+    Les deux premiers gardiens posés pour ce constat NE DISCRIMINAIENT PAS :
+    leur fixture portait `market={'regime':'TREND','vix':15,'breadth':68,
+    'risk':'Risk-On'}`, la forme LEGACY que l'ancien mapping inline lisait
+    parfaitement. Mesuré en remettant l'ancien corps de `_market_regime` :
+    régime TREND_UP, blocking ['SOURCE_DISAGREEMENT','DECISION_PACKET_INCOMPLETE'],
+    aucun UNKNOWN — identique avant et après le correctif ; les deux tests
+    passaient déjà sans lui.
+
+    Ici la fixture est celle que la PRODUCTION sert : `market` est l'horloge de
+    séance ({'et','open','session'}) et les dimensions vivent dans `market_ctx`.
+    Mesuré sur cette entrée :
+      - ancien mapping (`market.spy_trend/breadth/vix`) → 3 entrées None,
+        régime UNKNOWN, confidence 0.0, `new_risk_allowed` False ;
+      - mapping canonique `market_context.regime_inputs` → {'index_trend':'UP',
+        'breadth_pct':68.0,'vix':15.0,'leadership':'CYCLICAL'}, régime TREND_UP,
+        confidence 0.67, `new_risk_allowed` True.
+    Restaurer l'ancien mapping rallume donc REGIME_BLOCKS_NEW_RISK et fait
+    échouer ce test.
+    """
+    app = Flask(__name__)
+    scan_state = _scan_forme_production()
+    app.register_blueprint(strategy_os_api.make_blueprint(scan_state=scan_state))
+    c = app.test_client()
+    regime = c.get('/api/market/regime').get_json()
+    assert regime['regime'] == 'TREND_UP'
+    assert regime['adjustments']['new_risk_allowed'] is True
+    data = c.get('/api/strategy/decision/NVDA').get_json()
+    #  L'autorité du régime est UNIQUE : la décision voit le même régime que la
+    #  route régime, sur le même scan_state, à la même seconde.
+    assert 'REGIME_BLOCKS_NEW_RISK' not in data['blocking_rules']
+    assert not any('UNKNOWN' in line for line in data['audit_trail'])
+
+
+def test_branche_acheter_atteignable_sur_la_forme_reelle_du_scan():
+    """CONSTATS 5 + 7 — la branche haute vit sur la forme de PRODUCTION.
+
+    Le gardien posé au premier tour prouvait la même chose sur la fixture
+    legacy, que l'ancien mapping lisait : mesuré, il rendait déjà ACHETER avec
+    l'ancien corps en place. Ici l'horloge occupe `market` et les dimensions
+    `market_ctx` : avec l'ancien mapping le régime dégrade en UNKNOWN,
+    REGIME_BLOCKS_NEW_RISK s'allume et la décision est plafonnée à ATTENDRE —
+    le test échoue. C'est la seule forme sur laquelle la garde dure du produit
+    a une valeur informative.
+    """
+    app = Flask(__name__)
+    scan_state = _scan_forme_production(
+        detail_extra={'data_quality': {'overall': 'FRESH', 'actionable_allowed': True},
+                      'reconciliation': {'actionable_allowed': True},
+                      'guard': {'blocking_rules': [], 'mandatory_reviews': []}},
+        source='ibkr_live')
+    app.register_blueprint(strategy_os_api.make_blueprint(scan_state=scan_state))
+    data = app.test_client().get('/api/strategy/decision/NVDA').get_json()
+    assert data['blocking_rules'] == []
+    assert data['final_decision'] == 'ACHETER'
+
+
+def test_catalyseur_sans_echeance_ne_dit_pas_proximite_connue():
+    """CONSTAT 41 (reste) — le warning AFFIRMAIT une proximité qu'il ignorait.
+
+    MESURE : `decision_packet.build('ZZ', {'score': 78}, ...)` — aucune date de
+    résultats — rendait
+    {'score': None, 'earnings_dte': None, 'derived': True,
+     'warning': 'proximité de résultats CONNUE mais notation … non calculée'}.
+    Deux affirmations fausses au même endroit : rien n'était connu, rien n'avait
+    été dérivé. Une absence habillée en proximité connue est une valeur
+    SUPPOSÉE — interdite au même titre qu'un chiffre inventé.
+    """
+    from vertex.strategy import decision_packet as _dp
+    sans = _dp.build('ZZ', {'score': 78}, {'source': 'stooq'})['catalysts']
+    assert sans['earnings_dte'] is None
+    assert sans['derived'] is False, 'rien n’a été dérivé : le drapeau doit le dire'
+    assert 'proximité de résultats connue' not in sans['warning']
+    assert sans['warning'].startswith('aucune échéance')
+    # Avec une échéance RÉELLE, la description reste et porte le chiffre.
+    avec = _dp.build('ZZ', {'score': 78, 'earnings_dte': -400},
+                     {'source': 'stooq'})['catalysts']
+    assert avec['earnings_dte'] == -400 and avec['derived'] is True
+    assert 'J-400' in avec['warning'] and avec['score'] is None
+    # Une « échéance » non numérique n'est pas une échéance.
+    faux = _dp.build('ZZ', {'score': 78, 'earnings_dte': 'bientôt'},
+                     {'source': 'stooq'})['catalysts']
+    assert faux['earnings_dte'] is None and faux['derived'] is False
+
+
+def test_lignage_du_fondamental_absent_n_est_pas_une_mesure_directe():
+    """CONSTAT 5 (nuance) — `is_proxy: False` était servi par un producteur MUET.
+
+    MESURE : `bool(sub.get('fundamental_is_proxy'))` rendait `False` — la
+    signature d'une note comptable DIRECTE — pour un `sub` qui ne dit rien du
+    lignage, exactement comme pour un producteur qui l'affirme. L'invariant 6
+    veut que le lignage voyage avec la valeur ; une ignorance est None.
+    """
+    from vertex.strategy import decision_packet as _dp
+    muet = _dp.read_fundamental({'sub': {'fundamental': 72}})
+    assert muet == {'score': 72.0, 'is_proxy': None}
+    dit = _dp.read_fundamental({'sub': {'fundamental': 72,
+                                        'fundamental_is_proxy': True}})
+    assert dit == {'score': 72.0, 'is_proxy': True}

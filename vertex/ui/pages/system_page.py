@@ -1339,13 +1339,23 @@ async function loadAutomations(){
            suggère l'imminence ; SILENCIEUX ne pouvait pas prendre le relais
            (il exige un `last_run`). Une boucle morte au berceau était donc
            indiscernable d'un démarrage récent. Ambre : prudence, pas erreur. */
+        /* EN_ATTENTE_ENTREE : la BOUCLE elle-même a signalé au registre qu'elle
+           tourne et que son entrée manque (le premier scan). Sans cet état, les
+           quatre boucles gardées par `if scan_state.get('rows')…` tombaient sur
+           « jamais démarré » — MESURÉ : 241 s d'uptime pour OPTIONS_BOARD_REFRESH
+           (2 × 120 s) et 601 s pour WEEKLY_REVIEW (2 × 300 s) — alors qu'elles
+           attendaient légitimement. Un faux diagnostic est pire que le silence
+           qu'il remplace. Le signal périme en 60 s : une boucle morte en
+           attendant retombe sur « jamais démarré ». */
         const ETATS={NON_IMPLEMENTE:['frozen','non implémenté'],EN_ATTENTE:['frozen','en attente'],
+                     EN_ATTENTE_ENTREE:['frozen','attend son entrée'],
                      ACTIF:['live','OK'],ERREUR:['offline','erreur'],
                      SILENCIEUX:['stale','silencieux'],
                      JAMAIS_DEMARRE:['stale','jamais démarré']};
         const st=ETATS[j.etat]||(j.last_run===null?['frozen','en attente']:(j.last_ok?['live','OK']:['offline','erreur']));
+        const info=j.attente_de?('attend '+j.attente_de):(j.last_error||'');
         return `<tr><td><b>${esc(j.name)}</b><br><span class="vx-meta">${esc(j.description||'')}</span></td>
-        <td><span class="vx-badge vx-badge-status" data-status="${st[0]}" title="${esc(j.last_error||'')}">${st[1]}</span></td>
+        <td><span class="vx-badge vx-badge-status" data-status="${st[0]}" title="${esc(info)}">${st[1]}</span></td>
         <td class="vx-num">${j.runs||0}</td>
         <td class="vx-mono vx-meta">${j.age_s!==null&&j.age_s!==undefined?VX.fmt.ago(Date.now()-j.age_s*1000):'—'}</td>
         <td class="vx-mono vx-meta">${j.etat==='NON_IMPLEMENTE'?'—':
@@ -1358,9 +1368,11 @@ async function loadAutomations(){
       <div class="vx-card-footer">${VX.updateIndicator(Date.now(),'/api/system/automations','live')}
       · « non implémenté » = déclaré au registre, aucun exécutant dans le code — ce n'est pas une panne.
       « en attente » = implémenté, pas encore passé depuis le démarrage.
-      « jamais démarré » = implémenté, mais aucun passage après 2× sa cadence : boucle non démarrée
-      dans cette configuration (ex. IBKR absent) ou arrêtée avant son premier passage —
-      voir <a href="/system?view=connections">Connexions</a>.</div>`
+      « attend son entrée » = la boucle tourne et l'a signalé, mais sa donnée d'entrée
+      (le premier scan) n'est pas encore là : elle battra dès qu'elle l'aura.
+      « jamais démarré » = implémenté, aucun passage après 2× sa cadence ET aucun signal de vie :
+      boucle non démarrée dans cette configuration (ex. IBKR absent) ou arrêtée avant son premier
+      passage — voir <a href="/system?view=connections">Connexions</a>.</div>`
       :VX.states.empty('Registre de jobs vide.');
   }catch(e){($('vx-auto-jobs')||{}).innerHTML=VX.states.error('Registre indisponible : '+esc(e.message));}
   try{
@@ -1438,8 +1450,16 @@ async function loadAlerts(){
         5 sources saines (scan, market, options, fundamentals, yfinance_budget)
         etaient affichees en panne avec le code brut « AVAILABLE », et l'etat
         vide « Aucune panne rapportee » etait inatteignable des qu'un scan
-        aboutissait. Une vraie panne se serait noyee parmi cinq fausses.  */
-    const SAIN={AVAILABLE:1,OK:1,LIVE:1};
+        aboutissait. Une vraie panne se serait noyee parmi cinq fausses.
+
+        SAIN NE GARDE QUE DES ETATS REELLEMENT EMIS. Le premier correctif a
+        ajoute AVAILABLE en laissant OK et LIVE : deux cles sur trois que le
+        serveur n'ecrit nulle part (mesure ci-dessus, revalidee : etats emis =
+        AVAILABLE, CACHED, DEGRADED, NOT_COLLECTED, UNAVAILABLE, UNKNOWN). Le
+        meme vocabulaire mort, du cote rassurant cette fois. Une liste de
+        DECISION se derive de ce que le serveur dit ; seule LIB, qui ne fait
+        que traduire, peut anticiper sans risque.  */
+    const SAIN={AVAILABLE:1};
     const LIB={UNKNOWN:'état non rapporté par le serveur',
                STALE:'données périmées',DEGRADED:'source dégradée',
                PARTIAL:'couverture partielle',OFFLINE:'source hors ligne',

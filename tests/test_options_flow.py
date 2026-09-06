@@ -53,3 +53,33 @@ def test_empty_is_honest():
 def test_bool_rejected():
     d = flow.analyze([{'type': 'CALL', 'strike': 450, 'vol': True, 'cost': 200}])
     assert d['empty'] is True
+
+
+def test_le_flux_ne_fabrique_aucune_activite_depuis_un_volume_non_observe():
+    """L'ordre des alias de volume a changé quand `_vol` a délégué à
+    `board_fields` (`vol` PUIS `volume` → `volume` PUIS `vol`). Aucun
+    producteur n'émet les deux clés, donc rien ne bouge en production ; mais
+    l'ordre décidait quand même dès qu'un contrat en portait deux, parce que
+    le témoin d'imputation n'était consulté que sur la branche de repli.
+
+    Mesure du 2026-09-06 sur un contrat déclaré SANS volume observé
+    (`liquidity_coverage.volume_present: false`) mais portant `volume: 675` :
+    le flux publiait une ligne « premium négocié 418 500 $ » calculée sur un
+    volume qui n'a jamais été observé. Le module promet pourtant « contrat sans
+    volume [...] → ignoré ». Il l'est désormais, quel que soit l'alias."""
+    non_observe = {'type': 'CALL', 'strike': 450, 'volume': 675, 'vol': 0,
+                   'cost': 620, 'exp': '2026-08-21', 'dte': 30, 'oi': 4615,
+                   'liquidity_coverage': {'quoted_bid_ask': True,
+                                          'volume_present': False}}
+    d = flow.analyze([non_observe], symbol='NVDA')
+    assert d['empty'] is True
+    assert d['contracts'] == []
+    assert 'volume' in d['reason']
+    #  Le même contrat AVEC volume observé reste analysé : on ferme une
+    #  fabrication, on ne rend pas le module aveugle.
+    observe = dict(non_observe)
+    observe['liquidity_coverage'] = {'quoted_bid_ask': True, 'volume_present': True}
+    d2 = flow.analyze([observe], symbol='NVDA')
+    assert d2['empty'] is False
+    assert d2['contracts'][0]['vol'] == 675
+    assert d2['contracts'][0]['premium'] == 418500      # 675 × 620
