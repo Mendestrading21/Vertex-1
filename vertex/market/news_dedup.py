@@ -24,6 +24,50 @@ def _key(title: str) -> str:
 CLE_ABSENTE = 'CLE_ABSENTE'
 
 
+def instant(ev: dict) -> str:
+    """Clé de RÉCENCE comparable, ou '' quand la date est illisible.
+
+    ## Le défaut, mesuré le 2026-09-06
+
+    Le départage des doublons comparait `ev['time']` en CHAÎNE BRUTE. Or ce
+    champ arrive sous au moins trois formes selon la branche qui l'a produit :
+    `'2026-09-05 08:00:00+00:00'` (courtier), `'2026-09-05T07:00:00Z'` (ISO) et
+    `'Sat, 06 Sep 2026 07:00:00 GMT'` (RSS, RFC 2822). Une comparaison
+    lexicographique classe donc par FORME avant de classer par date :
+
+    - le `T` (0x54) l'emporte sur l'espace (0x20) dès le 11ᵉ caractère, donc à
+      date égale un item ISO gagnait toujours, même plus ancien — mesuré :
+      IBKR 08:00 perdait contre Reuters 07:00 ;
+    - un `pubDate` RFC 2822 commence par une lettre et dominait TOUTE date ISO,
+      quelle qu'elle soit.
+
+    L'événement fusionné héritait alors de la source, de la date, du lien et du
+    sentiment du plus ANCIEN. Aucun chiffre inventé, mais une sélection de
+    récence fausse là où elle prétendait être juste.
+
+    On compare donc un instant NORMALISÉ : `published_at` quand le producteur
+    l'a déjà posé, sinon `time` passé par le normaliseur canonique. Une date
+    illisible rend '' — elle ne gagne jamais contre une date lisible, et deux
+    illisibles laissent le premier arrivé en place.
+
+    Limite ASSUMÉE : le normaliseur conserve le fuseau DÉCLARÉ et n'en invente
+    pas. Une date sans fuseau et une date en UTC restent donc incomparables au
+    sens strict ; leur ordre relatif dépend du suffixe. On ne peut pas faire
+    mieux sans supposer un fuseau, ce que la doctrine interdit.
+    """
+    dejà = str(ev.get('published_at') or '').strip()
+    if dejà:
+        return dejà
+    brut = ev.get('time')
+    if not brut:
+        return ''
+    try:
+        from vertex.services.news_plus import horodatage_source
+    except Exception:                                     # noqa: BLE001
+        return str(brut)
+    return horodatage_source(brut) or ''
+
+
 def deduplicate(events: list[dict]) -> list[dict]:
     """Fusionne les doublons. **Une cle absente n'est pas un evenement absent.**
 
@@ -66,9 +110,9 @@ def deduplicate(events: list[dict]) -> list[dict]:
             src = ev.get('source')
             if src and src != cur.get('source') and src not in cur['also_from']:
                 cur['also_from'].append(src)
-            if (ev.get('time') or '') > (cur.get('time') or ''):
+            if instant(ev) > instant(cur):
                 cur.update({k2: v for k2, v in ev.items() if v})
     return list(by_key.values()) + sans_cle
 
 
-__all__ = ['deduplicate', 'CLE_ABSENTE']
+__all__ = ['deduplicate', 'instant', 'CLE_ABSENTE']

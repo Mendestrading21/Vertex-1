@@ -24,6 +24,7 @@ DÉJÀ produit par le moteur (Black-Scholes / IBKR) — ce module ne recalcule a
 from __future__ import annotations
 
 import math
+from vertex.options import board_fields as _bf
 
 CONTRACT_MULTIPLIER = 100          # 1 contrat = 100 actions (equity options US)
 _R = 0.045                         # taux sans risque (même valeur que constants.R)
@@ -132,6 +133,7 @@ def compute(contracts, *, spot=None, symbol=None):
 
     per_strike = {}          # strike -> {'call': gex, 'put': gex, 'vanna': $|None}
     used = 0
+    sans_oi = 0              # contrats écartés faute d'intérêt ouvert REPORTÉ
     vanna_any = False
     charm_any = False
     for c in contracts:
@@ -139,16 +141,29 @@ def compute(contracts, *, spot=None, symbol=None):
         if k is None:
             continue
         is_call = str(c.get('type', '')).upper() != 'PUT'
-        gx = _contract_gex(c.get('gamma'), c.get('oi'), sp, is_call)
+        #  L'INTÉRÊT OUVERT EST LE MULTIPLICATEUR DE TOUTE L'EXPOSITION.
+        #  Mesuré le 2026-09-06 : `oi` brut porte le zéro imputé par
+        #  `legacy_engine._i` quand le courtier ne reporte rien. Un contrat non
+        #  reporté contribuait donc 0 $ de gamma — arithmétiquement identique à
+        #  un contrat sans position ouverte — et le total s'annonçait calculé
+        #  sur `contracts_used` lignes sans dire que certaines n'avaient aucun
+        #  intérêt ouvert MESURÉ. Les contrats sans OI reporté sont désormais
+        #  écartés du calcul et COMPTÉS à part : la couverture voyage avec le
+        #  chiffre (invariant 6).
+        oi = _bf.open_interest(c)
+        if oi is None:
+            sans_oi += 1
+            continue
+        gx = _contract_gex(c.get('gamma'), oi, sp, is_call)
         if gx is None:
             continue
         slot = per_strike.setdefault(k, {'call': 0.0, 'put': 0.0, 'vanna': 0.0, 'charm': 0.0})
         slot['call' if is_call else 'put'] += gx
-        vn = _contract_vanna(k, sp, c.get('iv'), c.get('dte'), c.get('oi'), is_call)
+        vn = _contract_vanna(k, sp, c.get('iv'), c.get('dte'), oi, is_call)
         if vn is not None:
             slot['vanna'] += vn
             vanna_any = True
-        ch = _contract_charm(k, sp, c.get('iv'), c.get('dte'), c.get('oi'), is_call)
+        ch = _contract_charm(k, sp, c.get('iv'), c.get('dte'), oi, is_call)
         if ch is not None:
             slot['charm'] += ch
             charm_any = True
@@ -157,7 +172,8 @@ def compute(contracts, *, spot=None, symbol=None):
     if not per_strike or not sp:
         return {
             'symbol': (symbol or None), 'spot': sp, 'empty': True,
-            'contracts_used': used, 'strikes': [],
+            'contracts_used': used, 'contracts_sans_oi_reporte': sans_oi,
+            'strikes': [],
             'net_gex_total': None, 'call_gex_total': None, 'put_gex_total': None,
             'net_vanna_total': None, 'net_charm_total': None,
             'max_pain': None, 'iv_skew_pts': None,
@@ -210,7 +226,8 @@ def compute(contracts, *, spot=None, symbol=None):
 
     return {
         'symbol': (symbol or None), 'spot': sp, 'empty': False,
-        'contracts_used': used, 'strikes': strikes,
+        'contracts_used': used, 'contracts_sans_oi_reporte': sans_oi,
+        'strikes': strikes,
         'net_gex_total': net_total, 'call_gex_total': call_total, 'put_gex_total': put_total,
         'zero_gamma': zero_gamma, 'call_wall': call_wall, 'put_wall': put_wall,
         'gex_above_spot': above, 'gex_below_spot': below,
@@ -237,7 +254,12 @@ def max_pain(contracts):
     for c in (contracts or []):
         if not isinstance(c, dict):
             continue
-        k, o = _num(c.get('strike')), _num(c.get('oi'))
+        #  Accesseur honnête plutôt que champ brut : `_i(None) -> 0`. Ici le
+        #  zéro imputé était déjà écarté par la garde suivante, mais lire le
+        #  champ brut laisse croire que la garde protège d'un zéro RÉEL —
+        #  elle protégeait surtout d'une absence. Un seul accesseur pour tous
+        #  les lecteurs du dépôt, sinon le prochain oubli est invisible.
+        k, o = _num(c.get('strike')), _bf.open_interest(c)
         if k is None or o is None or o <= 0:
             continue
         rows.append((k, o, str(c.get('type', '')).upper() != 'PUT'))

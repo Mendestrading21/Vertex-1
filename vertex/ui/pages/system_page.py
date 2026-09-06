@@ -169,6 +169,41 @@ _VIEW_CONTENT = {
     <span class="vx-dim" style="font-size:12px">configur&eacute; &ne; connect&eacute; &middot; jamais LIVE sans preuve</span></div>
   <div id="vx-conn-summary-body">%%LOADING%%</div>
 </section>
+<style id="vx-sys-kpis-css">
+/*  LA BANDE DE CONFIANCE ANNONCE QUATRE TUILES ET N'EN DIMENSIONNAIT AUCUNE.
+
+    Mesure (Chromium, instance de mesure, 6 sept. 2026, service worker
+    neutralise pour lire la feuille REELLEMENT servie) : `.vx-kpi-strip` est
+    une grille de DOUZE colonnes (`vertex-2-0.css` §21) et ses tuiles doivent
+    donc porter une classe de portee. Celles-ci, produites par `_kp()`, n'en
+    portaient aucune : chacune occupait UNE colonne sur douze.
+
+        largeur   tuile   elements en debordement horizontal
+        1920 px    68 px   11
+        1600 px    52 px   14
+        1440 px    44 px   16
+        1280 px    37 px   16
+
+    « 8/8 », « operationnels », « aucun ordre » sortaient de leur boite : les
+    quatre indicateurs de confiance de la page de verite etaient illisibles
+    sur toute la plage bureau. En dessous de 1025 px la coque reduit deja la
+    grille et le defaut disparaissait — il ne se voyait qu'au grand ecran.
+
+    La bande sait combien de tuiles elle porte : `data-max-kpis="4"`. On lui
+    donne QUATRE colonnes, deux dans la bande 1025-1279 px ou la colonne
+    hote est trop etroite pour quatre, et deux en mobile — la ou la feuille
+    partagee les mettait deja. La regle est scopee a cet identifiant : aucune
+    autre bande du produit ne bouge. La cause commune (des tuiles sans portee
+    dans une grille a douze colonnes) reste a traiter chez son proprietaire,
+    la feuille partagee.  */
+#vx-content #vx-sys-kpis{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (min-width:1025px) and (max-width:1279px){
+  #vx-content #vx-sys-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:720px){
+  #vx-content #vx-sys-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+</style>
 <div class="vx-hero-grid vx-mt4">
   <div class="vx-kpi-strip" id="vx-sys-kpis" data-max-kpis="4" aria-label="Quatre indicateurs de confiance"><div class="vx-skeleton" style="height:70px"></div></div>
   <aside class="vx-insight-rail" aria-label="Santé du système">
@@ -460,7 +495,7 @@ async function loadBrain(){
   let head=kv('&Eacute;tat',statusBadge(tn[0],status)+' <span class="vx-dim" style="font-size:12px">'+esc((st&&st.note)||'')+'</span>')
     +kv('Mod&egrave;le',esc((st&&st.model)||'—'))
     +kv('Derni&egrave;re analyse',(snap&&snap.as_of)?VX.fmt.ago(Date.parse(snap.as_of)):'&mdash;')
-    +kv('Cotations trouv&eacute;es',VX.fmt.nd(found)+' / '+VX.fmt.nd((st&&st.symbols)||0)+' <span class="vx-dim" style="font-size:12px">(diff&eacute;r&eacute;es, sourc&eacute;es)</span>');
+    +kv('Cotations trouv&eacute;es (recherche web)',VX.fmt.nd(found)+' / '+VX.fmt.nd((st&&st.symbols)||0)+' <span class="vx-dim" style="font-size:12px">(non canoniques &mdash; le prix du scan fait foi, &eacute;cart servi)</span>');
   const syms=Object.keys(quotes).filter(s=>quotes[s]&&quotes[s].value!=null).slice(0,12);
   /* Plus forts mouvements du jour (change_pct réel déjà servi) en barres signées — au-dessus
      du tableau texte. Émeraude/corail par signe (hex, Chart.js ne résout pas var(--x)). */
@@ -469,13 +504,15 @@ async function loadBrain(){
   let table='';
   if(syms.length){
     table='<div class="vx-divider"></div><div style="overflow-x:auto"><table class="vx-table">'
-      +'<thead><tr><th>Titre</th><th class="vx-num">Cours (diff&eacute;r&eacute;)</th><th>Provenance</th><th>Actualit&eacute;</th></tr></thead><tbody>'
+      +'<thead><tr><th>Titre</th><th class="vx-num">Prix web (Claude)</th><th class="vx-num">Prix du scan (canonique)</th><th class="vx-num">&Eacute;cart</th><th>Provenance</th><th>Actualit&eacute;</th></tr></thead><tbody>'
       +syms.map(s=>{
         const q=quotes[s];const n=news[s]&&news[s].value&&news[s].value[0];
         const chg=q.change_pct!=null?(' <span class="'+(q.change_pct>=0?'vx-pos':'vx-neg')+'">'+(q.change_pct>=0?'+':'')+VX.fmt.num(q.change_pct,2)+'%</span>'):'';
         const impactCls=n?({HAUSSIER:'vx-pos',BAISSIER:'vx-neg',NEUTRE:'vx-dim'}[n.impact]||'vx-dim'):'';
         return '<tr><td><b>'+esc(s)+'</b></td>'
           +'<td class="vx-num vx-mono">'+VX.fmt.num(q.value,2)+' '+esc(q.currency||'')+chg+'</td>'
+          +'<td class="vx-num vx-mono">'+(q.scan_price!=null?VX.fmt.num(q.scan_price,2):'<span class="vx-dim">hors scan</span>')+'</td>'
+          +'<td class="vx-num vx-mono '+(q.ecart_pct==null?'vx-dim':Math.abs(q.ecart_pct)>1?'vx-neg':'vx-pos')+'">'+(q.ecart_pct!=null?((q.ecart_pct>=0?'+':'')+VX.fmt.num(q.ecart_pct,2)+' %'):'n/d')+'</td>'
           +'<td><span class="vx-badge" style="color:var(--vx-warning,#D9BE3C);border:1px solid var(--vx-warning,#D9BE3C);font-size:11px">'+esc(q.source_label||'via Claude · web')+'</span>'+brainCitations(q.citations)+'</td>'
           +'<td class="'+impactCls+'" style="font-size:12px">'+(n?esc(n.impact)+' — '+esc((n.headline||'').slice(0,64)):'<span class="vx-dim">—</span>')+'</td></tr>';
       }).join('')+'</tbody></table></div>';
@@ -487,7 +524,7 @@ async function loadBrain(){
     table='<div class="vx-empty vx-mt2">Aucune cotation web pour l&#8217;instant. « Mettre &agrave; jour avec Claude » pour lancer une recherche.</div>';
   }
   body.innerHTML=head+(movers.length?'<div id="vx-brain-movers" class="vx-mt3"></div>':'')+table
-    +'<div class="vx-card-footer">'+VX.updateIndicator((snap&&snap.as_of)?Date.parse(snap.as_of):Date.now(),'/api/ai/enrichment',status==='OK'?'delayed':'fallback')
+    +'<div class="vx-card-footer">'+VX.updateIndicator((snap&&snap.as_of)?Date.parse(snap.as_of):null,'/api/ai/enrichment',status==='OK'?'delayed':'fallback')
     +' · rendements/prix 100% diff&eacute;r&eacute;s &mdash; jamais un ordre</div>';
   if(window.VXCharts&&VXCharts.barCard&&movers.length){
     VXCharts.barCard('vx-brain-movers',{title:'Plus forts mouvements du jour',unit:'%',
@@ -495,7 +532,7 @@ async function loadBrain(){
       labels:movers,values:movers.map(s=>quotes[s].change_pct),
       colors:movers.map(s=>quotes[s].change_pct>=0?VXCharts.colors.positive:VXCharts.colors.negative),
       horizontal:true,yFmt:(v)=>v+'%',source:'via Claude · web',
-      timestamp:(snap&&snap.as_of)?Date.parse(snap.as_of):Date.now(),mode:'delayed'});
+      timestamp:(snap&&snap.as_of)?Date.parse(snap.as_of):null,mode:'delayed'});
   }
 }
 async function refreshBrain(){
@@ -656,7 +693,7 @@ async function loadConnections(){
       +kv('Donn&eacute;es march&eacute;',esc((st.data_sources||{}).market_data||'—'))
       +kv('Mode global',esc(st.mode||'—'))
       +kv('Ex&eacute;cution d&#8217;ordres','<b class="vx-neg">'+esc(st.order_execution||'disabled-by-design')+'</b>')
-      +`<div class="vx-card-footer">${VX.updateIndicator(st.ts||Date.now(),'/api/system-status',proven?(ib==='connected-live'?'live':'delayed'):'fallback')}</div>`;
+      +`<div class="vx-card-footer">${VX.updateIndicator(st.ts||null,'/api/system-status',proven?(ib==='connected-live'?'live':'delayed'):'fallback')}</div>`;
   }else{
     ($('vx-conn-ibkr')||{}).innerHTML=VX.states.error('&Eacute;tat syst&egrave;me indisponible');
     ($('vx-conn-ibkr-badge')||{}).innerHTML=statusBadge('offline','inconnu');
@@ -770,7 +807,7 @@ async function loadConnections(){
       +diagItem(null,'Abonnement Reuters (fondamentaux)','Coche « Reuters Worldwide Fundamentals » dans IBKR Market Data → lève l’erreur 10358 et remplace le repli yfinance par des fondamentaux temps réel.')
       +diagItem(null,'Abonnement Nasdaq-100 (NDX)','Sans cet abonnement, le Nasdaq reste en différé (affiché honnêtement, jamais mélangé). Abonne-toi pour le temps réel homogène.')
       +`<div class="vx-meta vx-mt2">Hors séance, les cotations IBKR passent en différé/frozen — c’est normal, pas une panne.</div></div>`
-      +`<div class="vx-card-footer">${VX.updateIndicator(live.generated?live.generated*1000:Date.now(),'/api/live/status',liveOn?'live':'delayed')}
+      +`<div class="vx-card-footer">${VX.updateIndicator(live.generated?live.generated*1000:null,'/api/live/status',liveOn?'live':'delayed')}
         <a class="vx-btn vx-btn-sm vx-btn-ghost vx-right" href="/system?view=data">D&eacute;tail par domaine →</a></div>`;
   }else{
     ($('vx-conn-sync')||{}).innerHTML=VX.states.error('Live Engine injoignable');
@@ -779,14 +816,84 @@ async function loadConnections(){
 
   /* Stockage & santé */
   if(hz){
-    const ok=hz.ok!==false&&(hz.status==='ok'||hz.ok===true||hz.status===undefined);
-    ($('vx-conn-store-badge')||{}).innerHTML=statusBadge(ok?'live':'offline',ok?'sain':'dégradé');
+    /*  « OK » PAR DEFAUT SUR LA PAGE DE VERITE.
+
+        La ligne testait :
+
+            hz.ok!==false && (hz.status==='ok' || hz.ok===true
+                              || hz.status===undefined)
+
+        Le dernier terme declare SAIN un corps qui ne dit RIEN de sa sante.
+        Mesure (Chromium, `/healthz` intercepte sur l'instance de mesure,
+        6 sept. 2026, service worker neutralise) :
+
+            corps servi              badge     ligne « Sante serveur »
+            {}                       sain      OK          <- faux
+            {"build":"X"}            sain      OK          <- faux
+            {"status":"degraded"}    degrade   degrade     <- juste
+            {"ok":false}             degrade   degrade     <- juste
+
+        Le defaut n'est donc pas la panne : c'est le SILENCE. Un serveur qui
+        ne se prononce pas etait compte comme un serveur qui va bien, sur
+        l'ecran meme ou l'utilisateur vient verifier que le reste ne ment pas.
+        L'invariant separe absence, zero et erreur ; il les separe ici aussi.
+
+        Trois etats, tous DERIVES de ce que le corps dit :
+          sain      il l'affirme (`status:'ok'`, ou `ok:true` sans `status`) ;
+          degrade   il l'affirme (`ok:false`, ou un `status` autre que 'ok') ;
+          non dit   il n'affirme rien — Vertex ne conclut pas a sa place.
+        `ok:false` prime sur `status` : un corps qui se contredit est traite
+        par son affirmation la plus defavorable, jamais par la plus flatteuse.
+
+        DEUX BORDS MESURES APRES COUP (Chromium, /healthz intercepte, 6 sept.
+        2026), ou ce partage disait encore quelque chose de faux :
+
+            corps servi     rendu precedent
+            {"status":""}   « degrade — code serveur :  »   <- verdict sans preuve
+            {"ok":0}        « ne porte ni status ni ok »    <- il porte `ok`
+
+        Un `status` vide n'AFFIRME rien : le compter comme une degradation est
+        l'erreur symetrique de celle qu'on corrige ici, et la ligne affichait
+        un « code serveur » vide — une accusation sans piece. Il rejoint le
+        silence. Et l'explication du silence ne NIE plus une cle presente : elle
+        montre ce que le corps portait vraiment.  */
+    const _st=(hz.status===undefined||hz.status===null)?'':String(hz.status).trim();
+    const _sante=(hz.ok===false)?'degrade'
+      :(_st?(_st.toLowerCase()==='ok'?'sain':'degrade')
+           :(hz.ok===true?'sain':'inconnu'));
+    /*  Ce que le corps portait REELLEMENT parmi les deux cles de verdict. */
+    const _vues=['status','ok'].filter(function(k){
+      return Object.prototype.hasOwnProperty.call(hz,k);});
+    const _detail=_vues.map(function(k){
+      return k+'='+JSON.stringify(hz[k]);}).join(', ');
+    const _b={sain:['live','sain'],degrade:['offline','dégradé'],
+              inconnu:['frozen','état non rapporté']}[_sante];
+    ($('vx-conn-store-badge')||{}).innerHTML=statusBadge(_b[0],_b[1]);
+    const _ligne={
+      sain:'<span class="vx-pos">OK</span> <span class="vx-meta">&mdash; rapport&eacute; par /healthz</span>',
+      /*  Le code montre l'affirmation QUI A DECIDE, pas la premiere trouvee :
+          sur un corps contradictoire (`status:'ok'` + `ok:false`) afficher
+          « code serveur : ok » a cote de « degrade » donnait un badge et une
+          preuve qui se contredisent a l'ecran. */
+      degrade:'<span class="vx-neg">d&eacute;grad&eacute;</span> <span class="vx-meta">&mdash; code serveur&nbsp;: '
+        +esc(hz.ok===false?'ok=false':_st)+'</span>',
+      inconnu:'<span class="vx-muted">non rapport&eacute;e</span>'}[_sante];
     ($('vx-conn-store')||{}).innerHTML=
-      kv('Sant&eacute; serveur',ok?'<span class="vx-pos">OK</span>':'<span class="vx-neg">d&eacute;grad&eacute;</span>')
+      kv('Sant&eacute; serveur',_ligne)
+      +(_sante==='inconnu'
+        ?'<div class="vx-help vx-mt1 vx-mb1">/healthz a r&eacute;pondu, mais '
+         +(_vues.length
+           ?'son corps porte <span class="vx-mono">'+esc(_detail)
+            +'</span>&nbsp;— aucun verdict lisible'
+           :'son corps ne porte ni <span class="vx-mono">status</span> ni '
+            +'<span class="vx-mono">ok</span>')
+         +'&nbsp;: l&#8217;&eacute;tat du serveur est <b>inconnu</b>, pas bon. Aucun verdict n&#8217;est '
+         +'d&eacute;duit d&#8217;un silence.</div>':'')
       +(st?kv('Build',esc(st.build||'—')):'')
       +kv('Donn&eacute;es perso','localStorage navigateur &harr; blob desk_data.json (last-writer-wins)')
       +kv('Sauvegardes','backup quotidien desk_backup_* c&ocirc;t&eacute; serveur')
-      +`<div class="vx-card-footer">${VX.updateIndicator(Date.now(),'/healthz',ok?'live':'error')}</div>`;
+      +`<div class="vx-card-footer">${VX.updateIndicator(Date.now(),'/healthz',
+        _sante==='sain'?'live':(_sante==='degrade'?'error':'fallback'))}</div>`;
   }else{
     ($('vx-conn-store')||{}).innerHTML=VX.states.error('/healthz injoignable');
     ($('vx-conn-store-badge')||{}).innerHTML=statusBadge('offline','hors ligne');
@@ -809,7 +916,7 @@ async function loadConnections(){
       }).join('')+'</div>'
       +((st.warnings||[]).length?`<div class="vx-stale-banner vx-mt3">⏳ ${st.warnings.map(esc).join(' · ')}</div>`:'')
       +`<div class="vx-mt3"><button class="vx-btn vx-btn-sm vx-btn-ghost" id="vx-tech-endpoints">Détails techniques (endpoints) →</button></div>`;
-    ($('vx-conn-meta')||{}).innerHTML=VX.updateIndicator(st.ts||Date.now(),'/api/system-status','delayed');
+    ($('vx-conn-meta')||{}).innerHTML=VX.updateIndicator(st.ts||null,'/api/system-status','delayed');
     $('vx-tech-endpoints')?.addEventListener('click',()=>{
       VX.shell.openDrawer('Endpoints techniques',
         [['GET /healthz','santé serveur'],['GET /api/system-status','état institutionnel complet'],
@@ -893,7 +1000,7 @@ async function loadData(){
         question:'Les donn&eacute;es sont-elles utilisables pour d&eacute;cider ?',
         conclusion:'Dominante : '+dominant+' ('+byQ[dominant]+' / '+dq.total+') · source '+(dq.scan_source||'n/d'),
         labels,values,colors:labels.map(k=>colByQ[k]||colors.muted),height:200,
-        source:'scan '+(dq.scan_source||'n/d'),timestamp:(scan&&scan.last_scan_ts)||Date.now(),
+        source:'scan '+(dq.scan_source||'n/d'),timestamp:(scan&&scan.last_scan_ts)||null,
         mode:dq.scan_source==='demo'?'fallback':'delayed',
         limits:dq.note||'',
         explain:{shows:'La r&eacute;partition des titres scann&eacute;s par niveau de qualit&eacute; de donn&eacute;es.',
@@ -982,7 +1089,7 @@ async function loadData(){
           <td class="vx-dim" style="font-size:12px">${esc(d.detail||'—')}</td></tr>`;
       }).join('')+'</tbody></table></div>';
     ($('vx-data-fresh-meta')||{}).innerHTML=VX.updateIndicator(
-      live.generated?live.generated*1000:Date.now(),'Live Engine · mode '+(live.mode||'n/d'),'delayed');
+      live.generated?live.generated*1000:null,'Live Engine · mode '+(live.mode||'n/d'),'delayed');
   }else{
     ($('vx-data-fresh')||{}).innerHTML=VX.states.empty('Aucun domaine suivi par le Live Engine pour l&#8217;instant.');
   }
@@ -1329,12 +1436,31 @@ async function loadAutomations(){
            cadence — la boucle est morte ou coincée. Avant, un job mort
            restait « OK » pour toujours. Ambre : prudence, pas erreur —
            le dernier passage avait réussi. */
+        /* JAMAIS_DEMARRE : implémenté et cadencé, mais AUCUN passage depuis la
+           naissance du processus alors que 2× sa cadence est écoulée. Mesuré
+           sur l'instance sans TWS : MARKET_RADAR_REFRESH (240 s) affichait
+           « en attente / 0 » après 16 min d'uptime — 4× sa cadence — parce que
+           son thread n'est créé que sous `if IBKR_ENABLED:`. « En attente »
+           suggère l'imminence ; SILENCIEUX ne pouvait pas prendre le relais
+           (il exige un `last_run`). Une boucle morte au berceau était donc
+           indiscernable d'un démarrage récent. Ambre : prudence, pas erreur. */
+        /* EN_ATTENTE_ENTREE : la BOUCLE elle-même a signalé au registre qu'elle
+           tourne et que son entrée manque (le premier scan). Sans cet état, les
+           quatre boucles gardées par `if scan_state.get('rows')…` tombaient sur
+           « jamais démarré » — MESURÉ : 241 s d'uptime pour OPTIONS_BOARD_REFRESH
+           (2 × 120 s) et 601 s pour WEEKLY_REVIEW (2 × 300 s) — alors qu'elles
+           attendaient légitimement. Un faux diagnostic est pire que le silence
+           qu'il remplace. Le signal périme en 60 s : une boucle morte en
+           attendant retombe sur « jamais démarré ». */
         const ETATS={NON_IMPLEMENTE:['frozen','non implémenté'],EN_ATTENTE:['frozen','en attente'],
+                     EN_ATTENTE_ENTREE:['frozen','attend son entrée'],
                      ACTIF:['live','OK'],ERREUR:['offline','erreur'],
-                     SILENCIEUX:['stale','silencieux']};
+                     SILENCIEUX:['stale','silencieux'],
+                     JAMAIS_DEMARRE:['stale','jamais démarré']};
         const st=ETATS[j.etat]||(j.last_run===null?['frozen','en attente']:(j.last_ok?['live','OK']:['offline','erreur']));
+        const info=j.attente_de?('attend '+j.attente_de):(j.last_error||'');
         return `<tr><td><b>${esc(j.name)}</b><br><span class="vx-meta">${esc(j.description||'')}</span></td>
-        <td><span class="vx-badge vx-badge-status" data-status="${st[0]}" title="${esc(j.last_error||'')}">${st[1]}</span></td>
+        <td><span class="vx-badge vx-badge-status" data-status="${st[0]}" title="${esc(info)}">${st[1]}</span></td>
         <td class="vx-num">${j.runs||0}</td>
         <td class="vx-mono vx-meta">${j.age_s!==null&&j.age_s!==undefined?VX.fmt.ago(Date.now()-j.age_s*1000):'—'}</td>
         <td class="vx-mono vx-meta">${j.etat==='NON_IMPLEMENTE'?'—':
@@ -1346,7 +1472,12 @@ async function loadAutomations(){
       </tbody></table></div>
       <div class="vx-card-footer">${VX.updateIndicator(Date.now(),'/api/system/automations','live')}
       · « non implémenté » = déclaré au registre, aucun exécutant dans le code — ce n'est pas une panne.
-      « en attente » = implémenté, pas encore passé depuis le démarrage.</div>`
+      « en attente » = implémenté, pas encore passé depuis le démarrage.
+      « attend son entrée » = la boucle tourne et l'a signalé, mais sa donnée d'entrée
+      (le premier scan) n'est pas encore là : elle battra dès qu'elle l'aura.
+      « jamais démarré » = implémenté, aucun passage après 2× sa cadence ET aucun signal de vie :
+      boucle non démarrée dans cette configuration (ex. IBKR absent) ou arrêtée avant son premier
+      passage — voir <a href="/system?view=connections">Connexions</a>.</div>`
       :VX.states.empty('Registre de jobs vide.');
   }catch(e){($('vx-auto-jobs')||{}).innerHTML=VX.states.error('Registre indisponible : '+esc(e.message));}
   try{
@@ -1415,11 +1546,36 @@ async function loadAlerts(){
     const v=String(sh[nom]||'');
     /*  `UNKNOWN`, `STALE`… sont des codes moteur : ils ne s'affichent jamais
         bruts. Un etat inconnu n'est pas non plus une panne — il empeche de
-        decider, ce que la carte dit, mais le mot doit etre juste.  */
+        decider, ce que la carte dit, mais le mot doit etre juste.
+
+        MESURE (6 sept. 2026, /healthz des deux instances) : le serveur emet
+        AVAILABLE / CACHED / DEGRADED / NOT_COLLECTED / UNAVAILABLE / UNKNOWN
+        (`_PUBLIC_SOURCE_STATES`, analysis_api.py) et n'emet JAMAIS 'OK' ni
+        'LIVE'. La liste blanche {OK,LIVE} etait donc du code mort : les
+        5 sources saines (scan, market, options, fundamentals, yfinance_budget)
+        etaient affichees en panne avec le code brut « AVAILABLE », et l'etat
+        vide « Aucune panne rapportee » etait inatteignable des qu'un scan
+        aboutissait. Une vraie panne se serait noyee parmi cinq fausses.
+
+        SAIN NE GARDE QUE DES ETATS REELLEMENT EMIS. Le premier correctif a
+        ajoute AVAILABLE en laissant OK et LIVE : deux cles sur trois que le
+        serveur n'ecrit nulle part (mesure ci-dessus, revalidee : etats emis =
+        AVAILABLE, CACHED, DEGRADED, NOT_COLLECTED, UNAVAILABLE, UNKNOWN). Le
+        meme vocabulaire mort, du cote rassurant cette fois. Une liste de
+        DECISION se derive de ce que le serveur dit ; seule LIB, qui ne fait
+        que traduire, peut anticiper sans risque.  */
+    const SAIN={AVAILABLE:1};
     const LIB={UNKNOWN:'état non rapporté par le serveur',
                STALE:'données périmées',DEGRADED:'source dégradée',
-               PARTIAL:'couverture partielle',OFFLINE:'source hors ligne'};
-    if(v&&v!=='OK'&&v!=='LIVE')pannes.push(['Source '+nom,LIB[v]||v,v==='UNKNOWN'?'missing':'caution']);
+               PARTIAL:'couverture partielle',OFFLINE:'source hors ligne',
+               UNAVAILABLE:'source indisponible',
+               NOT_COLLECTED:'non collectée lors de ce scan',
+               CACHED:'servie depuis le cache local'};
+    /*  Absence et degradation restent DISTINCTES (invariant 5) : un etat non
+        rapporte ou non collecte est un trou ('missing'), pas une source qui
+        se degrade ('caution').  */
+    if(v&&!SAIN[v])pannes.push(['Source '+nom,LIB[v]||v,
+      (v==='UNKNOWN'||v==='NOT_COLLECTED')?'missing':'caution']);
   });
   enEchec.forEach(j=>pannes.push(['Tache '+j.name,String(j.last_error),'negative']));
   ($('vx-alerts-pannes')||{}).innerHTML=pannes.length

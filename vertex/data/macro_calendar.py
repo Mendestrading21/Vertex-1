@@ -75,6 +75,15 @@ _APPROX_PAR_SOURCE = {
     SOURCE_REGLE: True,
 }
 
+#: Niveau de confirmation SERVI avec chaque événement, dérivé de la source
+#: comme `approx` : l'écran ne décide jamais « Confirmé » de lui-même. Le
+#: texte commence par « confirmée » ou « non confirmée » : c'est le contrat
+#: que lit le calendrier (calendar.js, `badgeConfirmation`).
+_CONFIRMATION_PAR_SOURCE = {
+    SOURCE_FED: 'confirmée — calendrier officiel publié par la Fed',
+    SOURCE_REGLE: 'non confirmée — règle de calendrier, date non publiée',
+}
+
 
 def _premier_vendredi(annee, mois):
     d = date(annee, mois, 1)
@@ -173,5 +182,6 @@ def _evenement(d, kind, label, importance, source, note):
         'source': source,
         #  Derive, jamais recopie : voir `_APPROX_PAR_SOURCE`.
         'approx': _APPROX_PAR_SOURCE[source],
+        'confirmation': _CONFIRMATION_PAR_SOURCE[source],
         'note': note,
     }

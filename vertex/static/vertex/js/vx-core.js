@@ -66,9 +66,88 @@
       if (d.toDateString() === yest.toDateString()) return 'Hier à ' + d.toLocaleTimeString('fr-FR', opts);
       return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
     },
+    /* `new Date(null)` coerce à l'époque 0 : sans le garde ci-dessous,
+       `isoFull(null)` rendait « 01/01/1970 01:00:00 » — un horodatage
+       INVENTÉ là où rien n'a été servi. Mesure du 06/09/2026 sur le fichier
+       servi : isoFull(null) → '01/01/1970 01:00:00' ; isoFull(undefined) →
+       '' ; isoFull('') → ''. Seul `null` passait, et c'est précisément la
+       valeur que produit l'idiome du dépôt `updateIndicator(x || null, …)`
+       (25 sites dans vertex/), donc le 1er janvier 1970 était peint en
+       info-bulle exactement dans le cas où AUCUN horodatage n'existait.
+       Une absence rend '' comme un horodatage illisible : c'est l'appelant
+       qui choisit son libellé d'absence (même règle qu'`instantSource`). */
     isoFull(ts) {
+      if (ts == null || ts === '') return '';
       const d = (ts instanceof Date) ? ts : new Date(typeof ts === 'number' && ts < 1e12 ? ts * 1000 : ts);
       return isNaN(d) ? '' : d.toLocaleString('fr-FR');
+    },
+    /* ── Horodatage de PUBLICATION servi par une source ────────────────────
+       Mesure du 06/09/2026 : `/news-feed` sert `published_at` en UTC
+       (yfinance : '2026-09-06T13:05:00Z') et `/api/macro/officiel` pose le
+       `Z` volontairement (verrouillé par tests/test_communiques_officiels.py).
+       Les deux pages coupaient la chaîne (regex `(\d{2}:\d{2})` côté Briefing,
+       `.slice(0,16)` côté Marchés) : le fuseau était DÉTRUIT et la date PERDUE.
+       Résultat mesuré : une dépêche de 12 min affichée « 13:05 » face à une
+       horloge lecteur à 15:17 — lue vieille de 2 h 12, au milieu de tampons
+       relatifs (« Il y a 23 min ») ; à New York (UTC−4) la même ligne annonce
+       une publication ~3 h 48 dans le FUTUR de l'horloge du lecteur.
+       Règles (invariant 6 : une valeur critique garde son unité — le fuseau
+       EST l'unité d'un horodatage) :
+         · fuseau déclaré (`Z` ou `±HH:MM`) → instant converti dans le fuseau
+           du LECTEUR, grammaire de la page (`ago`) ou date complète ;
+         · fuseau absent → date ET heure complètes, telles que servies, avec la
+           marque « fuseau n/d » : on n'invente pas un fuseau (même règle que
+           `news_plus.horodatage_source`), mais on ne laisse plus l'heure se
+           faire passer pour locale ;
+         · absent/illisible → '' : l'appelant choisit son libellé d'absence. */
+    _hasTz(s) { return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(String(s || '').trim()); },
+    instantSource(iso, opts) {
+      const s = String(iso === null || iso === undefined ? '' : iso).trim();
+      if (!s) return '';
+      const style = (opts && opts.style) || 'date';
+      if (VX.fmt._hasTz(s)) {
+        const d = new Date(s);
+        if (isNaN(d)) return s;                       // illisible : jamais réécrit
+        return style === 'ago' ? VX.fmt.ago(d)
+          : d.toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      }
+      const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}:\d{2}))?/.exec(s);
+      if (!m) return s + ' (fuseau n/d)';
+      return m[3] + '/' + m[2] + '/' + m[1] + (m[4] ? ' ' + m[4] : '') + ' (fuseau n/d)';
+    },
+    /* Phrase d'info-bulle qui accompagne `instantSource` : dit la chaîne
+       BRUTE de la source et si l'heure a été convertie. Sans elle, « (fuseau
+       n/d) » serait un sigle de plus ; avec elle, le lecteur sait pourquoi.
+       La note ne met en cause PERSONNE : « fuseau non déclaré par la source »
+       affirmait une chose non mesurée, et fausse au moins une fois — yfinance
+       déclare bien son 'Z' sur published_at, et c'est Vertex qui le tronque en
+       amont (mesure du 06/09/2026 : 45 items sur 45 arrivent ici sans fuseau,
+       alors que la source en portait un). La phrase constate ce qu'on TIENT :
+       l'horodatage servi n'en contient pas. */
+    instantSourceNote(iso) {
+      const s = String(iso === null || iso === undefined ? '' : iso).trim();
+      if (!s) return 'Aucun horodatage de publication servi par la source.';
+      return VX.fmt._hasTz(s)
+        ? 'Publié ' + s + ' — converti dans votre fuseau'
+        : 'Publié ' + s + ' — aucun fuseau dans l’horodatage servi : heure NON convertie';
+    },
+  };
+
+  /* ── Provenance d'une cotation de position (§ marque visible) ─────────
+     TROIS écritures du même fait coexistent dans la charge de /api/pos-quotes,
+     et une page qui n'en lit qu'une annonce du temps réel sur un prix de scan :
+       · repli OPTION (routes/desk.py `_scan_fallback_quote`) → `delayed: true` ;
+       · repli ACTION (cotation_unifiee.en_charge_client) → PAS de `delayed`,
+         mais `mode: 'DELAYED'` et `fallback_used: true` ;
+       · cotation courtier (terminal.posq) → aucun des trois champs.
+     Mesure du 06/09/2026 : le seul test `q.delayed` laissait une action
+     valorisée au prix de scan s'afficher sans la moindre marque de différé, sur
+     les deux pages qui cotent des positions. La règle vit ici, une seule fois :
+     dupliquée, elle avait déjà divergé entre le Briefing et le Portefeuille. */
+  VX.quotes = {
+    differee(q) {
+      if (!q || typeof q !== 'object') return false;
+      return q.delayed === true || q.fallback_used === true || q.mode === 'DELAYED';
     },
   };
 
@@ -83,9 +162,13 @@
     const modeLabel = { live: 'Live', delayed: 'Différé', fallback: 'Secours', error: 'Erreur' }[mode] || '';
     const ms = VX.freshness._ms(ts);
     const suite = source ? ' · ' + source + (modeLabel ? ' ' + modeLabel : '') : '';
+    /*  L'info-bulle date le chiffre : sans horodatage servi, il n'y a rien à
+        dater et l'attribut disparaît plutôt que de porter une chaîne vide ou
+        — avant le garde d'`isoFull` — l'époque Unix. */
+    const iso = VX.fmt.isoFull(ts);
     return `<span class="vx-update" data-mode="${mode || 'fallback'}"` +
       (ms == null ? '' : ` data-ts="${ms}"`) +
-      ` title="${VX.fmt.isoFull(ts)}">` +
+      (iso ? ` title="${iso}"` : '') + `>` +
       /*  `VX.fmt.ago(null)` rend « — ». Pose dans un pied de carte, ce tiret
           se lit comme un age, alors qu'il dit l'ABSENCE d'age : trois pages
           affichaient « ● — · Moteur … » sans qu'on puisse savoir si la donnee
@@ -457,6 +540,26 @@
       this._tasks.forEach((t) => { if (t.persistent) { keep.push(t); } else { clearInterval(t.id); } });
       this._tasks = keep;
     },
+    /* Rejoue les tâches de la page (sans toast, sans vider tout le cache) :
+       appelé par live-updates.js quand le serveur annonce une donnée neuve.
+
+       `labels` (optionnel, tableau) : ne rejouer QUE les tâches ainsi nommées.
+       Sans ce filtre, un canal purement TÉLÉMÉTRIQUE faisait rejouer toutes les
+       tâches de la page ouverte : un battement `jobs` — dont la seule cible de
+       cache est `/api/system` — déclenchait sur Marchés, Portefeuille ou
+       Aujourd'hui l'intégralité de leurs fetch, alors qu'aucun de leurs
+       chiffres ne dépend de l'état d'une boucle de fond. C'est l'amplification
+       inter-pages du constat 23. Un tableau vide ne rejoue rien ; l'absence
+       d'argument garde le comportement historique (rejeu complet). */
+    async runTasks(labels) {
+      if (document.hidden) return false;
+      const filtre = Array.isArray(labels) ? labels : null;
+      const tasks = filtre
+        ? this._tasks.filter((t) => filtre.indexOf(t.label) >= 0)
+        : this._tasks;
+      await Promise.allSettled(tasks.map((t) => { try { return t.fn(); } catch (e) { return null; } }));
+      return true;
+    },
     async runAll(btn) {
       if (btn) { btn.dataset.state = 'refreshing'; btn.disabled = true; }
       VX.fetch.invalidate();      // vide cache mémoire + persistance (rafraîchissement explicite)
@@ -709,6 +812,20 @@
       fichier de live en entier, comme je l'avais fait d'abord, jetait toute
       cette couche de continuite ; `tests/test_continuity_data.py` l'a dit.  */
   VX.tile = {
+    /* Micro-barre inline (Qualité, PoP…) : le CHIFFRE porte le sens, la barre
+       n'est qu'un repère visuel (aria-hidden). Une définition partagée au lieu
+       des deux blocs inline identiques d'options-intel.js et options-symbol.js.
+       o = {v (0-100), unit, tone ('pos'|'warn'|'neg'|'opt'|''), dec} ; v absent → « — ». */
+    microbar: function (o) {
+      o = o || {};
+      var v = (o.v == null || isNaN(o.v)) ? null : Number(o.v);
+      if (v == null) return '<span class="vx2-absent">—</span>';
+      var w = Math.max(3, Math.min(100, Math.abs(v)));
+      var txt = VX.fmt.num(v, o.dec == null ? 0 : o.dec) + (o.unit ? VX.esc(o.unit) : '');
+      return '<span class="vx-microbar" data-tone="' + _toneAttr(o.tone) + '">'
+        + '<i aria-hidden="true"><b style="width:' + w + '%"></b></i>'
+        + '<span>' + txt + '</span></span>';
+    },
     /* Métrique riche : label (+ title) + valeur (+ unité) (+ chip de comparaison)
        (+ mini-barre 0-100 avec repère médian optionnel). Les options additives
        cmp / mid / kTitle sont OFF par défaut → rétrocompatible. */
@@ -722,9 +839,13 @@
       var bar = (o.bar != null && !absent)
         ? '<div class="vx-metric-bar"><i style="width:' + Math.max(3, Math.min(100, o.bar)) + '%"></i>' + mid + '</div>' : '';
       var kt = o.kTitle ? ' title="' + VX.esc(o.kTitle) + '"' : '';
+      /* `meta` (additif, OFF par défaut) : une ligne de contexte sous la valeur
+         — population, dispersion, bande moteur — pour que le chiffre ne soit
+         jamais nu. Texte échappé : jamais de HTML injecté par un appelant. */
+      var meta = o.meta ? '<span class="vx-metric-meta">' + VX.esc(o.meta) + '</span>' : '';
       return '<div class="vx-metric" data-tone="' + (absent ? '' : _toneAttr(o.tone)) + '">'
         + '<span class="vx-metric-k"' + kt + '>' + VX.esc(o.k) + '</span>'
-        + '<span class="vx-metric-v">' + v + u + '</span>' + cmp + bar + '</div>';
+        + '<span class="vx-metric-v">' + v + u + '</span>' + cmp + bar + meta + '</div>';
     },
     /* Stat à halo : label + valeur (+ sous-légende) (+ extra, ex. sparkline SVG).
        Option additive `vfs` (taille de valeur, px) OFF par défaut → rétrocompatible. */

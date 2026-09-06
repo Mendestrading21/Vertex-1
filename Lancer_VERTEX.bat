@@ -22,7 +22,9 @@ if not exist ".venv" (
   call ".venv\Scripts\python.exe" -m pip install --quiet -r requirements.txt || (echo [X] Echec dependances. & pause & exit /b 1)
 )
 
-echo VERTEX demarre sur http://localhost:5002
-start "" cmd /c "timeout /t 5 >nul & start http://localhost:5002"
+echo VERTEX demarre sur http://127.0.0.1:5002
+REM  IPv4 explicite : `localhost` peut resoudre en ::1, que le serveur
+REM  (IPv4) n ecoute pas — page blanche ou coque perimee du cache.
+start "" cmd /c "timeout /t 5 >nul & start http://127.0.0.1:5002"
 ".venv\Scripts\python.exe" -m vertex
 pause

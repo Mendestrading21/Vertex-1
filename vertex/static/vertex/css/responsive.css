@@ -16,8 +16,13 @@
   .vx-app .vx-sidebar-status .vx-status-label{display:none}
   /* Les couples asymétriques 4/8, 5/7 et 3/9 passent en pile : chaque panneau
      conserve une largeur de lecture utile sur tablette. */
-  .vx-col-3,.vx-col-4,.vx-col-5,.vx-col-7,.vx-col-8,.vx-col-9{grid-column:span 12}
-  .vx-col-6{grid-column:span 6}
+  /* L'alias `.vx-span-*` suit les MÊMES paliers que `.vx-col-*` : sans lui,
+     `vx-span-4` gardait 4/12 (mesuré 331 px à 1024, 122 px à 390) là où
+     `vx-col-4` prenait la largeur entière — voir le commentaire de la grille
+     dans layout.css. */
+  .vx-col-3,.vx-col-4,.vx-col-5,.vx-col-7,.vx-col-8,.vx-col-9,
+  .vx-span-3,.vx-span-4,.vx-span-5,.vx-span-7,.vx-span-8,.vx-span-9{grid-column:span 12}
+  .vx-col-6,.vx-span-6{grid-column:span 6}
   .vx-session{display:none}
   .vx-hero-grid,.vx-hero-grid--wide{grid-template-columns:minmax(0,1fr)}
   .vx-insight-rail{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -27,7 +32,9 @@
   .vx-grid{gap:var(--vx-s3)}
   .vx-strip-item{grid-column:span 4}
   .vx-col-1,.vx-col-2,.vx-col-3,.vx-col-4,.vx-col-5,.vx-col-6,
-  .vx-col-7,.vx-col-8,.vx-col-9,.vx-col-10,.vx-col-11,.vx-col-12{
+  .vx-col-7,.vx-col-8,.vx-col-9,.vx-col-10,.vx-col-11,.vx-col-12,
+  .vx-span-1,.vx-span-2,.vx-span-3,.vx-span-4,.vx-span-5,.vx-span-6,
+  .vx-span-7,.vx-span-8,.vx-span-9,.vx-span-10,.vx-span-11,.vx-span-12{
     grid-column:span 12}
   /* Les onglets restent scrollables et signalent visuellement le contenu
      hors écran sans ajouter une barre lourde. */
@@ -85,7 +92,8 @@
   .vx-content{padding:var(--vx-s3) var(--vx-s3)
     calc(var(--vx-mobile-bar-h) + var(--vx-s10) + env(safe-area-inset-bottom))}
   .vx-col-2,.vx-col-3,.vx-col-4,.vx-col-5,.vx-col-6,.vx-col-7,.vx-col-8,
-  .vx-col-9{grid-column:span 12}
+  .vx-col-9,.vx-span-2,.vx-span-3,.vx-span-4,.vx-span-5,.vx-span-6,
+  .vx-span-7,.vx-span-8,.vx-span-9{grid-column:span 12}
   .vx-strip-item{grid-column:span 6}
   .vx-strip-item .vx-kpi-value{font-size:17px!important}
   .vx-topbar-search{max-width:none}

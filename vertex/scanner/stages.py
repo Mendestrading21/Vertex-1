@@ -1,11 +1,46 @@
 """vertex.scanner.stages — évaluateurs d'étages du scanner institutionnel (§22).
 
+## ⚠ CE MODULE N'EST BRANCHÉ SUR AUCUN CHEMIN DE PRODUCTION — NON_IMPLÉMENTÉ
+
+Mesuré le 2026-09-06, balayage des imports du dépôt : `STAGE_ORDER` et les huit
+évaluateurs ne sont référencés QUE par `tests/test_scanner_institutional.py`.
+Le paquet `vertex.scanner` n'est importé qu'à travers `daily` et `weekly`
+(`terminal.py:42`, `app/routes/weekly_api.py:29`) ; aucun appelant n'exécute ces
+étages. Le scanner réel ne note donc PAS les candidats de cette façon.
+
+Il faut le dire ici, en tête, parce qu'un test vert et un commentaire
+« ordre OBLIGATOIRE des étages — testé » donnent exactement l'impression
+inverse : celle d'une capacité vivante. Une capacité sans exécuteur réel
+s'appelle NON_IMPLÉMENTÉ (invariant 8), elle ne se déguise pas en automatisation
+en attente.
+
+Le vocabulaire d'entrée le confirme : un balayage des lectures et des écritures
+montre que `has_catalyst`, `crowding_extreme`, `improves_quality`,
+`adds_correlation` et `quality_flags` ne sont écrits NULLE PART dans le dépôt.
+Aucun producteur ne remplit les blocs que ces étages attendent.
+
+Le module n'est pas supprimé : il porte un contrat de notation cohérent et une
+suite de tests, et la doctrine interdit de supprimer sans preuve d'absence de
+consommateur, de migration et de rollback. Il est CONSERVÉ et ÉTIQUETÉ, en
+attendant qu'un producteur existe ou qu'une décision humaine tranche.
+
+## Contrat des étages, si un jour ils sont branchés
+
 Chaque étage reçoit le paquet candidat (dict) et rend :
   {'passed': bool, 'score': 0..100 | None, 'reasons': [...], 'missing': [...]}
 Une donnée absente ne fabrique JAMAIS un score : elle apparaît dans `missing`
 et l'étage passe en mode dégradé documenté (score None) ou refuse.
 """
+
 from __future__ import annotations
+#: État réel de la capacité, lisible par un programme autant que par un humain.
+ETAT = 'NON_IMPLÉMENTÉ'
+#: Ce qui manque pour l'activer, mesuré et non supposé.
+MANQUE = (
+    'aucun appelant de production n’exécute STAGE_ORDER',
+    'aucun producteur n’écrit has_catalyst, crowding_extreme, improves_quality, '
+    'adds_correlation ni quality_flags',
+)
 
 
 def _res(passed, score=None, reasons=None, missing=None):

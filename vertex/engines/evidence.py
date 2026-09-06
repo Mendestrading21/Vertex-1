@@ -27,6 +27,30 @@ def _num(x, d=0.0):
         return d
 
 
+def rr_mesure(d):
+    """R:R MESURÉ du plan (``plan['rr_res']``) ou None — LECTEUR CANONIQUE.
+
+    Une seule autorité pour « quel est le rapport gain/risque de ce plan ? » :
+    `evidence.risk_analyst` et `decision_stack` (règle 5 + points de bascule)
+    lisaient la même clé avec deux conversions différentes, toutes deux fondées
+    sur un défaut 0.0 qui rendait l'absence indiscernable d'un zéro mesuré.
+    `evidence` est la couche basse (`decision_stack` l'importe déjà) : le
+    lecteur vit donc ici et le moteur de décision le réutilise.
+
+    Un 0.0 MESURÉ traverse (c'est le pire cas de ``analysis.py:252``, pas une
+    absence) ; une clé absente, une chaîne, un booléen, NaN ou l'infini rendent
+    None, et chaque appelant NOMME alors l'inconnue.
+    """
+    v = (d.get('plan') or {}).get('rr_res') if isinstance(d, dict) else None
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and f not in (float('inf'), float('-inf')) else None
+
+
 def market_analyst(market):
     if not market:
         return []
@@ -105,10 +129,28 @@ def options_analyst(option):
 
 def risk_analyst(d, portfolio):
     out = []
-    rr = _num((d.get('plan') or {}).get('rr_res'))
-    if rr and rr >= 2:
+    #  `_num(..., 0.0)` puis `if rr and …` : un R:R MESURÉ à 0.0 tombait entre
+    #  les deux branches et l'analyste risque restait MUET. Mesuré sur
+    #  `risk_analyst({'plan': {'rr_res': X}}, None)` :
+    #      rr_res 0.1 -> 1 preuve NEGATIVE force 65
+    #      rr_res 0.0 -> 0 preuve      (le pire R:R possible, aucune preuve)
+    #      rr_res absent -> 0 preuve   (indiscernable du zéro mesuré)
+    #  Le silence remontait tel quel dans `_committee` (`lean = pos/(pos+neg)`)
+    #  : la preuve négative la plus forte du domaine Risque disparaissait, donc
+    #  l'accord et la confiance du comité MONTAIENT au pire cas. Le zéro mesuré
+    #  est désormais une preuve négative comme les autres, et l'absence est une
+    #  INCONNUE nommée — jamais un silence qui se lit « rien à signaler ».
+    rr = rr_mesure(d)
+    if rr is None:
+        #  Un PLAN existe mais sans ratio mesuré : l'inconnue est nommée dans le
+        #  canal prévu (`gather()['unknown']`, « ce que nous ne savons pas »).
+        #  Sans plan du tout, l'analyste reste muet comme tous les autres — un
+        #  détail vide ne fabrique aucune preuve (test_evidence_edges).
+        if (d or {}).get('plan'):
+            out.append(_ev(UNKNOWN, 'Risque/récompense non mesuré au plan', 50, 'Risque'))
+    elif rr >= 2:
         out.append(_ev(POSITIVE, f'Risque/récompense favorable ({rr:.1f}:1)', 60, 'Risque'))
-    elif rr and rr < 2:
+    else:
         # Sous le minimum stratégie (2:1) : preuve négative — jamais de zone
         # 1,5–2,0 « acceptable » qui contredirait le hard gate.
         out.append(_ev(NEGATIVE, f'Risque/récompense sous le minimum 2:1 ({rr:.1f}:1)', 65, 'Risque'))
@@ -229,4 +271,5 @@ def gather(detail, *, market=None, option=None, portfolio=None, data_quality=Non
     return buckets
 
 
-__all__ = ['gather', 'POSITIVE', 'NEGATIVE', 'NEUTRAL', 'UNKNOWN', 'CONTRADICTORY']
+__all__ = ['gather', 'rr_mesure',
+           'POSITIVE', 'NEGATIVE', 'NEUTRAL', 'UNKNOWN', 'CONTRADICTORY']

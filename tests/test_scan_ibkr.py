@@ -106,7 +106,11 @@ def test_la_provenance_du_scan_nomme_chaque_contributeur():
         'yfinance a servi 18 titres masquerait le repli')
 
 
-@pytest.mark.parametrize('champ', ['ibkr', 'yfinance', 'stooq', 'univers'])
+#  'univers' -> 'symboles_demandes' : le compte des symboles DEMANDÉS à la
+#  file (533) n'est ni `universe_n` (517) ni `scanned_n` (513) — le nom
+#  invitait à comparer trois dénominateurs différents.
+@pytest.mark.parametrize('champ', ['ibkr', 'yfinance', 'stooq',
+                                   'symboles_demandes'])
 def test_le_detail_de_provenance_compte_les_trois_sources(champ):
     import terminal
     src = open(terminal.__file__, encoding='utf-8').read()

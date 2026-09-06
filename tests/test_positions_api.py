@@ -74,21 +74,60 @@ def test_state_desk_corrompu_pas_de_crash(client):
     assert r.get_json()['positions'] == []          # illisible → vide honnête
 
 
-# ── /report et /reconcile : IBKR hors ligne ne clôture JAMAIS ────────────────
+# ── /report et /reconcile : le courtier n'est JAMAIS lu ──────────────────────
 
-def test_report_ibkr_hors_ligne_conserve_les_locales(client):
+def test_report_courtier_jamais_lu_conserve_les_locales(client):
+    """MESURE (client de test, clés servies avant correctif) : le rapport
+    portait `ibkr_online: False`, `missing_positions: 0` et
+    `closed_positions_detected: 0`. Le zéro d'une détection QUI N'A PAS EU LIEU
+    se lit « vérifié, rien ne manque » ; seul `null` dit « jamais comparé »
+    (invariant 5 : absence et zéro restent distincts)."""
     _one_stock()
     r = client.get('/api/positions/report').get_json()
-    assert r['ibkr_online'] is False
-    assert r['positions_detected'] == 1
-    assert r['closed_positions_detected'] == 0
+    assert r['positions_detected'] == 1              # les DÉCLARÉES, elles, sont lues
+    assert r['closed_positions_detected'] is None
+    assert r['missing_positions'] is None
     assert 'aucune clôture automatique' in r['note']
 
 
-def test_reconcile_hors_ligne_zero_reparation(client):
+def test_la_cause_servie_est_la_frontiere_et_non_une_panne_reseau(client):
+    """MESURE (processus rejouant la configuration live : socket connectée,
+    ticks temps réel frais) : `ibkr_connected=True`, `ibkr_live=True` sur
+    /healthz, et EN MÊME TEMPS « IBKR hors ligne » servi par ces deux routes.
+
+    Le littéral `ibkr_online=False` n'est pas un état de session mesuré, c'est
+    la frontière produit (IBKR = données de marché uniquement). Servir une
+    absence VOLONTAIRE sous la cause d'une PANNE réseau confond deux choses que
+    l'invariant 5 exige de garder distinctes, et « aucune clôture automatique »
+    seul laissait entendre qu'une reprise viendrait au retour d'IBKR — que
+    l'invariant 3 interdit définitivement.
+    """
+    _one_stock()
+    for route in ('/api/positions/report', '/api/positions/reconcile'):
+        r = client.get(route).get_json()
+        assert r['broker_positions_read'] is False, route
+        assert r['boundary'] == 'MARKET_DATA_ONLY', route
+        assert 'jamais lues' in r['note'], route
+        assert 'hors ligne' not in r['note'], (
+            '%s affirme une panne de session alors que la session peut être '
+            'vivante : la cause servie est inventée' % route)
+        #  LE CHAMP AUSSI, PAS SEULEMENT LA PHRASE. Renommer la note laissait
+        #  `ibkr_online: false` servi par les deux routes — le même processus
+        #  continuait donc d'annoncer `ibkr_connected=True ibkr_live=True` sur
+        #  /healthz et une session morte ici. Un champ n'est pas moins faux
+        #  qu'une phrase ; il n'a aucun consommateur hors bancs.
+        assert 'ibkr_online' not in r, (
+            '%s sert de nouveau un état de session IBKR que rien ne mesure : '
+            'la contradiction avec /healthz revient' % route)
+
+
+def test_reconcile_courtier_jamais_lu_zero_reparation(client):
+    #  `issues`/`repairs_required` restent des chiffres MESURÉS : ils portent
+    #  sur les positions déclarées, réellement examinées. Seul l'état de
+    #  session courtier, jamais mesuré, cesse d'être servi.
     _one_stock()
     r = client.get('/api/positions/reconcile').get_json()
-    assert r['ibkr_online'] is False
+    assert 'ibkr_online' not in r
     assert r['issues'] == [] and r['repairs_required'] == 0
 
 

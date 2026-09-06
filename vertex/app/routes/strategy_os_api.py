@@ -49,14 +49,26 @@ def build_executive_decision(sym: str, scan_state: dict):
     #  qualite, le rapprochement et les gardes des donnees REELLES, et pose
     #  `DECISION_PACKET_INCOMPLETE` quand une preuve manque.
     packet = _decision_packet.build(sym, detail, scan_state)
-    try:
-        market = scan_state.get('market') or {}
-        inputs = {'index_trend': {'TREND': 'UP', 'CHOP': 'FLAT'}.get(market.get('regime'),
-                                                                     market.get('spy_trend')),
-                  'breadth_pct': market.get('breadth'), 'vix': market.get('vix')}
-        packet['market_regime'] = classify_regime(inputs)
-    except Exception:
-        packet['market_regime'] = {}
+    #  Lot C — ce bloc ECRASAIT le regime du packet avec un mapping inline lisant
+    #  `scan_state['market'].{regime,spy_trend,breadth,vix}`. Or cette cle est
+    #  l'HORLOGE de seance (market_status) : clés réelles ['et','open','session'].
+    #  Les trois entrees arrivaient donc None -> regime UNKNOWN, confidence 0.0,
+    #  dimensions [] -> `REGIME_BLOCKS_NEW_RISK` allume sur 15/15 des titres du
+    #  scan, avec l'audit « regime UNKNOWN — nouveau risque bloque ». Au meme
+    #  instant, /api/market/regime — defini dans CE fichier, sur CE meme
+    #  scan_state — rendait CHOP, confidence 0.6, 4 dimensions et
+    #  new_risk_allowed True. Deux autorites contradictoires pour une capacite,
+    #  et la garde dure la plus visible du produit neutralisee en se faisant
+    #  passer pour active. Le proprietaire canonique du mapping scan -> moteur
+    #  est `market_context.regime_inputs`, deja importe en tete de fichier et
+    #  deja consomme par /api/market/regime : `decision_packet.build` l'appelle
+    #  desormais, ce bloc n'a plus lieu d'etre. Un ecrasement en moins = un
+    #  proprietaire unique du regime, comme l'exige CLAUDE.md.
+    #
+    #  L'ancien `except` posait `{}`, falsy : executive_engine.py:92 teste
+    #  `if regime_ctx and ...`, donc un classifieur en PANNE ouvrait le risque
+    #  neuf au lieu de le fermer. `decision_packet._market_regime` rend un
+    #  UNKNOWN fail-closed a la place.
     resp = _executive.decide(packet, _constitution.load_profile())
     # Fraîcheur RÉELLE du scan (jamais l'heure du navigateur) — le verdict dérive de
     # scan_state['detail'], aussi vieux que le dernier scan.
@@ -85,10 +97,15 @@ def make_blueprint(scan_state: dict) -> Blueprint:
         if packet is None:
             # 200 + available:false : état applicatif honnête (pas une erreur
             # transport) — un 404 pollue la console navigateur à chaque fiche.
+            # Aucun verdict n'est FABRIQUÉ hors scan : `final_decision` est
+            # null et l'état `NON_EVALUE` dit pourquoi. Un « ATTENDRE » ici
+            # se lisait comme une conclusion du moteur alors qu'il n'avait
+            # rien calculé.
             return jsonify({'available': False,
+                            'etat': 'NON_EVALUE',
                             'error': f'{sym.upper()} absent du scan courant',
-                            'final_decision': 'ATTENDRE',
-                            'reason': 'aucune donnée — impossible de décider'}), 200
+                            'final_decision': None,
+                            'reason': 'titre hors scan courant — aucun verdict calculé'}), 200
         #  `build_executive_decision` ci-dessus construit DEJA le packet,
         #  appelle le moteur et pose `as_of`. Le corps qui suivait refaisait
         #  tout une seconde fois — et sur `detail`, un nom qui n'existe pas
@@ -103,7 +120,13 @@ def make_blueprint(scan_state: dict) -> Blueprint:
     def market_regime():
         # La clé `market` du scan est l'horloge (market_status), pas les données —
         # le mapping canonique scan → moteur vit dans market_context.regime_inputs.
-        return jsonify(classify_regime(regime_inputs(scan_state)))
+        resp = classify_regime(regime_inputs(scan_state))
+        if isinstance(resp, dict):
+            #  Le régime est daté par le SCAN qui l'a produit : sans `as_of`,
+            #  trois pages affichaient l'heure du navigateur comme âge.
+            resp['as_of'] = scan_state.get('scan_ts_h') or scan_state.get('updated')
+            resp['ts'] = scan_state.get('scan_ts')
+        return jsonify(resp)
 
     @bp.route('/api/company/twin/<sym>')
     def company_twin_ep(sym):
@@ -147,8 +170,37 @@ def make_blueprint(scan_state: dict) -> Blueprint:
         from vertex.options import on_demand as _od
         _greeks = _od.desk_greeks(body.get('option_positions') or [])
         _legs = _greeks.get('legs') or []
+        #  Aucune série de rendements n'est alignée sur cette route. La variable
+        #  le DIT au lieu de le sous-entendre : la cause servie plus bas est
+        #  conditionnée à ce fait mesurable, et non plus à « la matrice est vide ».
+        #  Sans cela, le jour où `returns_by_symbol` sera branché, une matrice
+        #  légitimement vide (aucune paire à 30 rendements communs) recevrait
+        #  encore le texte « cette route ne fournit aucune série de rendements »,
+        #  qui serait alors FAUX — une cause inventée à la place d'une cause
+        #  mesurée.
+        _returns_by_symbol = None
         risk = risk_engine.portfolio_risk(snap, profile,
+                                          returns_by_symbol=_returns_by_symbol,
                                           options_greeks=_legs if _legs else None)
+        # ── Corrélations : capacité NON BRANCHÉE sur cette route, dite comme telle ──
+        # Mesure : POST /api/portfolio/team avec 1 puis 3 positions rend le MÊME
+        # {'average': None, 'pairs': {}, 'symbols_covered': []} — `symbols_covered`
+        # reste vide même à 3 titres, donc ce n'est pas « moins de deux titres » :
+        # `portfolio_risk` est appelé ici sans `returns_by_symbol` (seul appelant de
+        # production), et risk_engine fait alors `correlation_matrix({})`. Le moteur
+        # fonctionne quand on le nourrit (mesuré : average 0.946 sur AAPL/KO). Une
+        # matrice vide SANS cause nommée se lisait comme « pas de corrélation » et
+        # laissait l'interface promettre un flux live qui ne l'alimentera jamais
+        # (invariant 8). Les corrélations MESURÉES sont servies par
+        # /api/portfolio/context, qui aligne de vraies séries de rendements.
+        if (_returns_by_symbol is None
+                and isinstance(risk.get('correlations'), dict)
+                and not risk['correlations'].get('pairs')):
+            risk['correlations']['reason'] = (
+                'NON_IMPLÉMENTÉ sur /api/portfolio/team — cette route ne fournit '
+                'aucune série de rendements au moteur ; les corrélations mesurées '
+                'sont servies par /api/portfolio/context (vue Allocation)')
+            risk['correlations']['available'] = False
         # ── Enrichissement stress avec des données RÉELLES du scan (jamais inventées) ──
         # Secteur : réel (yfinance via le scan). Nasdaq : classification par secteur —
         # Technology + Communication Services = cœur tech/comm du NDX (hypothèse documentée,
@@ -161,9 +213,22 @@ def make_blueprint(scan_state: dict) -> Blueprint:
         _NDX_SECTORS = {'Technology', 'Communication Services'}
         _nasdaq_exposure = {p.symbol: (_sector_of.get(p.symbol) in _NDX_SECTORS)
                             for p in snap.positions}
+        #  CONSTAT 26 — LE PÉRIMÈTRE OPTIONS N'ARRIVAIT PAS AU MOTEUR. Cette
+        #  route ne transmettait que le vega ; `options_open` restait None, et
+        #  le moteur ne pouvait donc pas distinguer « aucune option » (IV crush
+        #  réellement nul) de « des options sans greeks broker » (impact
+        #  inconnu). Conséquence mesurée sur un desk sans aucune option (KO
+        #  88,07 $ + 25 000 $ de cash) : IV_CRUSH et VIX_PLUS_50 sortaient tous
+        #  deux `impact_pct: null` alors que le premier vaut un 0,0 % VRAI et
+        #  le second -0,01 %. Deux mesures justes perdues sur TOUTE route
+        #  réelle — l'état `options_open == 0` était inatteignable en
+        #  production. `desk_greeks` compte déjà les jambes déclarées
+        #  (`open_options` = len(legs), 0 quand le corps n'en porte aucune) :
+        #  c'est le périmètre DÉCLARÉ par l'utilisateur, jamais une déduction.
         stress = stress_tests.run_stress_tests(
             snap, profile, sector_of=_sector_of, nasdaq_exposure=_nasdaq_exposure,
-            options_vega_value=_greeks.get('vega_usd'))
+            options_vega_value=_greeks.get('vega_usd'),
+            options_open=_greeks.get('open_options'))
         # Le scan ne porte pas les dates de résultats → on n'affiche PAS un faux 0 :
         # le scénario « gap résultats » devient honnêtement « inconnu ».
         _has_earn = any(isinstance((_det.get(p.symbol) or {}).get('earnings_dte'), (int, float))

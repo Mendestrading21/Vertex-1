@@ -98,7 +98,18 @@ RACINE = pathlib.Path(__file__).resolve().parents[2]
 if str(RACINE) not in sys.path:
     sys.path.insert(0, str(RACINE))
 
-BASE_DEFAUT = 'http://127.0.0.1:5002'
+#  `VERTEX_MESURE_BASE` : cibler une autre instance (par ex. l'instance QA
+#  sans code d'accès, 127.0.0.1:5003) sans toucher l'instance de travail.
+#  PORT DE MESURE PAR DÉFAUT : 5003, l'instance de VÉRIFICATION.
+#
+#  Mesuré le 2026-09-06 : ces outils visaient 5002 par défaut, c'est-à-dire, sur
+#  le poste de l'auteur, l'instance RÉELLE branchée sur le courtier et protégée
+#  par un code d'accès. Un outil de mesure qui frappe l'instance de travail lui
+#  vole des requêtes, la ralentit, et sur une machine tierce sonde un port dont
+#  il ne sait rien. L'instance de vérification (5003) existe précisément pour
+#  ça : sans IBKR, sans code, sans desk. `VERTEX_MESURE_BASE` reste le moyen de
+#  viser autre chose, explicitement.
+BASE_DEFAUT = os.environ.get('VERTEX_MESURE_BASE', 'http://127.0.0.1:5003')
 LARGEURS = (390, 768, 1440)
 
 #: Registre lu depuis le produit — recopier la liste ici la ferait diverger le
@@ -117,6 +128,12 @@ _MOTIFS_CHROMIUM = (
     '~/.cache/ms-playwright/chromium-*/chrome-linux/chrome',                 # Linux
     '~/Library/Caches/ms-playwright/chromium-*/chrome-mac*/'
     'Chromium.app/Contents/MacOS/Chromium',                                  # macOS
+    #  Windows : le SHELL headless d'abord — mesure du 2026-09-06 sur cette
+    #  machine : `chrome.exe` complet refuse de s'engendrer (« spawn UNKNOWN »)
+    #  alors que `chrome-headless-shell.exe` demarre ; c'est aussi ce que
+    #  Playwright choisit seul en headless.
+    '~/AppData/Local/ms-playwright/chromium_headless_shell-*/'
+    'chrome-headless-shell-win*/chrome-headless-shell.exe',                  # Windows (shell)
     '~/AppData/Local/ms-playwright/chromium-*/chrome-win*/chrome.exe',       # Windows
 )
 

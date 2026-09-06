@@ -63,6 +63,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import os
 import sys
 
 RACINE = pathlib.Path(__file__).resolve().parents[2]
@@ -74,7 +75,18 @@ from tools.mesures._sonde_http import appeler  # noqa: E402
 from tools.mesures.mesurer_qa_espaces import (  # noqa: E402
     _chromium, abandonner_sans_navigateur, espaces, navigateur_pret)
 
-BASE_DEFAUT = 'http://127.0.0.1:5002'
+#  `VERTEX_MESURE_BASE` : cibler une autre instance (par ex. l'instance QA
+#  sans code d'accès, 127.0.0.1:5003) sans toucher l'instance de travail.
+#  PORT DE MESURE PAR DÉFAUT : 5003, l'instance de VÉRIFICATION.
+#
+#  Mesuré le 2026-09-06 : ces outils visaient 5002 par défaut, c'est-à-dire, sur
+#  le poste de l'auteur, l'instance RÉELLE branchée sur le courtier et protégée
+#  par un code d'accès. Un outil de mesure qui frappe l'instance de travail lui
+#  vole des requêtes, la ralentit, et sur une machine tierce sonde un port dont
+#  il ne sait rien. L'instance de vérification (5003) existe précisément pour
+#  ça : sans IBKR, sans code, sans desk. `VERTEX_MESURE_BASE` reste le moyen de
+#  viser autre chose, explicitement.
+BASE_DEFAUT = os.environ.get('VERTEX_MESURE_BASE', 'http://127.0.0.1:5003')
 LARGEUR_DEFAUT = 390
 
 _CSS_RESPONSIVE = RACINE / 'vertex' / 'static' / 'vertex' / 'css' / 'responsive.css'

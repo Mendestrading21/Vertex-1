@@ -472,3 +472,91 @@ def detect_stock_anomalies(symbol, bars, context=None):
             'mouvement violent sans catalyseur identifié — chercher l’information manquante')
 
     return out
+
+
+#: Ce que chaque FAMILLE de détecteurs exige du contexte, et ce qu'elle promet.
+#: Mesuré le 2026-09-06 par recensement des 42 appels à `add()` de ce module.
+FAMILLES = {
+    'prix_volume': {
+        'exige': (),
+        'detections': 23,
+        'libelle': 'prix, volume et structure — depuis les barres seules',
+    },
+    'relatif': {
+        'exige': ('benchmark_closes',),
+        'detections': 4,
+        'libelle': 'force relative, corrélation et bêta vs référence',
+    },
+    'fondamental': {
+        'exige': ('fundamentals',),
+        'detections': 7,
+        'libelle': 'croissance, marge, valorisation et révisions',
+    },
+    'evenement': {
+        'exige': ('events',),
+        'detections': 8,
+        'libelle': 'résultats, guidance, révisions groupées et actualités',
+    },
+}
+
+
+def couverture_detecteurs(context=None) -> dict:
+    """Quelles familles de détecteurs le contexte fourni permet-il d'évaluer ?
+
+    ## Pourquoi cette fonction existe
+
+    Mesure du 2026-09-06 : le seul appelant de production
+    (`vertex.engines.anomaly_context.build`) construit son contexte avec
+    `context = {}` puis n'y ajoute au plus que `benchmark_closes`. Les blocs
+    `fundamentals` et `events` ne sont JAMAIS transmis. Conséquence mesurée par
+    recensement des appels à `add()` : **15 détections sur 42** ne peuvent pas
+    se déclencher — sept fondamentales (dont `VALUATION_DISLOCATION`,
+    `EARNINGS_REVISION_SHOCK`, `QUALITY_DETERIORATION`) et huit événementielles
+    (dont `GUIDANCE_SHOCK`, `POST_EARNINGS_DRIFT`).
+
+    Le balayage des lectures et des écritures du dépôt précise le tableau, et
+    la nuance compte :
+
+    - `quality_flags` et `eps_revision_pct` n'ont AUCUN producteur, nulle part.
+      La détection `QUALITY_DETERIORATION` et la pénalité de score de
+      `vertex.scanner.stages` sont donc mortes par construction, pas seulement
+      par contexte manquant ;
+    - `sector_median_pe` EN A un (`vertex.options.pack` le dérive de
+      `median_pe` par secteur, et `vertex.quant.scoring` le lit) — mais il
+      n'atteint jamais ce détecteur. Ce n'est pas la même maladie : ici la
+      donnée existe et le câble manque.
+
+    Rien de tout cela n'est FAUX : aucune anomalie inventée, aucun chiffre
+    fabriqué. Mais l'appelant publiait `provenance: OHLCV_ENRICHED` et
+    `limitations: []` dès qu'un benchmark était présent, c'est-à-dire qu'il
+    annonçait une couverture complète en ayant exécuté 27 détecteurs sur 42.
+    Une absence silencieuse se lit comme « rien à signaler » : c'est l'inverse
+    d'une mesure.
+
+    Le détecteur est le seul propriétaire légitime de cette information — lui
+    seul sait ce que chaque famille exige. Il la rend donc explicitement, à
+    charge pour l'appelant de la publier dans ses `limitations`.
+    """
+    context = context or {}
+    evaluees, absentes, limites = [], [], []
+    for nom, spec in FAMILLES.items():
+        manquants = [c for c in spec['exige'] if not context.get(c)]
+        if manquants:
+            absentes.append(nom)
+            limites.append('%s : %d détection(s) non exécutée(s) — %s absent du contexte'
+                           % (spec['libelle'], spec['detections'], ', '.join(manquants)))
+        else:
+            evaluees.append(nom)
+    total = sum(f['detections'] for f in FAMILLES.values())
+    executees = sum(FAMILLES[n]['detections'] for n in evaluees)
+    return {
+        'familles_evaluees': evaluees,
+        'familles_absentes': absentes,
+        'detections_executees': executees,
+        'detections_totales': total,
+        'complet': not absentes,
+        'limitations': limites,
+    }
+
+
+__all__ = ['detect_stock_anomalies', 'couverture_detecteurs', 'FAMILLES']

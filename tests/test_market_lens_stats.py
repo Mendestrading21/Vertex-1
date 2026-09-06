@@ -23,16 +23,76 @@ def test_climat_arithmetique_exacte_du_cas_porteur():
     assert c == {'score': 93, 'label': 'FAVORABLE', 'col': c['col']}
 
 
-def test_climat_borne_favorable_62_exacte():
-    # 62 pile = FAVORABLE ; 61 = NEUTRE. NOTE : la bande FAVORABLE du
-    # climat commence à 62 alors que le tilt de strategy_fit exige 65
-    # sur la même formule — divergence réelle DOCUMENTÉE ici.
-    c62 = ml.climate({'spy_regime': 'TREND', 'roro': None,
-                      'vix_band': 'calme', 'breadth': {'above50': 0}})
-    c61 = ml.climate({'spy_regime': 'NEUTRAL', 'roro': 'RISK-ON',
+def test_climat_borne_favorable_65_proprietaire_unique():
+    """CONSTAT 48 — la borne FAVORABLE avait TROIS propriétaires divergents.
+
+    Ce test épinglait auparavant 62 en DOCUMENTANT la divergence (« le tilt de
+    strategy_fit exige 65 sur la même formule »). Documenter une contradiction
+    ne la corrige pas : mesuré avec mc={'spy_regime':'TREND','roro':'RISK-ON',
+    'vix_band':'stress'}, above50 ∈ {0, 4, 8} donnait des scores 62/63/64
+    étiquetés FAVORABLE par `market_lens.climate` et NEUTRE par
+    /api/market/summary, au même instant sur la même donnée — une métrique,
+    deux verdicts. 65 est retenu parce que c'est la borne des deux propriétaires
+    réellement servis à l'écran : le comportement affiché ne bouge pas, seule la
+    bande 62-64 du JSON /api/decision s'aligne. La borne vit désormais dans
+    `CLIMAT_FAVORABLE_MIN` pour que la dérive ne puisse pas se reproduire.
+    """
+    c65 = ml.climate({'spy_regime': 'TREND', 'roro': None,
                       'vix_band': 'calme', 'breadth': {'above50': 12}})
-    assert c62['score'] == 62 and c62['label'] == 'FAVORABLE'
-    assert c61['score'] == 61 and c61['label'] == 'NEUTRE'
+    c64 = ml.climate({'spy_regime': 'TREND', 'roro': None,
+                      'vix_band': 'calme', 'breadth': {'above50': 8}})
+    assert c65['score'] == 65 and c65['label'] == 'FAVORABLE'
+    assert c64['score'] == 64 and c64['label'] == 'NEUTRE'
+    assert ml.CLIMAT_FAVORABLE_MIN == 65
+
+
+def test_climat_feu_marche_partage_la_borne_du_label():
+    """CONSTAT 48 — `lights['market']` était un QUATRIÈME propriétaire (62).
+
+    Un feu « marché » vert sur un climat étiqueté NEUTRE se lisait comme deux
+    lectures contradictoires du même score dans le même dictionnaire.
+    """
+    at64 = {'spy_regime': 'TREND', 'roro': None, 'vix_band': 'calme',
+            'breadth': {'above50': 8}}
+    at65 = {'spy_regime': 'TREND', 'roro': None, 'vix_band': 'calme',
+            'breadth': {'above50': 12}}
+    S = [{'sector': 'A', 'avg_score': 80}]
+    assert ml.build(market=at64, sectors=S, sector_name='A',
+                    stock_pct=50)['lights']['market'] is False
+    assert ml.build(market=at65, sectors=S, sector_name='A',
+                    stock_pct=50)['lights']['market'] is True
+
+
+def test_climat_largeur_absente_est_distincte_d_une_largeur_a_50():
+    """CONSTAT 30 — l'absence de largeur était indiscernable d'une mesure à 50.
+
+    MESURE d'origine, base={'spy_regime':'NEUTRAL','roro':'RISK-ON',
+    'vix_band':'calme'} :
+        breadth vide  → {'score': 70, 'label': 'FAVORABLE', 'col': '#22C55E'}
+        above50=None  → {'score': 70, 'label': 'FAVORABLE', 'col': '#22C55E'}
+        above50=50    → {'score': 70, 'label': 'FAVORABLE', 'col': '#22C55E'}
+        above50=0     → 58 NEUTRE   |   above50=100 → 83 FAVORABLE
+    Identiques au bit près alors que la composante participation pèse 25 points
+    sur 100 et peut faire basculer le label. Chemin atteignable : un scan
+    partiel laisse `breadth={}` (vertex/market/context.py:34, bloc de calcul
+    sous `except Exception: pass`) pendant que régime, RORO et VIX restent
+    renseignés — le MÊME dictionnaire disait alors honnêtement
+    « participation ?% » dans le verdict tout en servant un label chiffré dérivé
+    d'une participation inventée à 50.
+    """
+    base = {'spy_regime': 'NEUTRAL', 'roro': 'RISK-ON', 'vix_band': 'calme'}
+    vide = ml.climate(dict(base, breadth={}))
+    none = ml.climate(dict(base, breadth={'above50': None}))
+    mesure = ml.climate(dict(base, breadth={'above50': 50}))
+    # Le score n'est pas retouché : seule la COUVERTURE devient lisible.
+    assert vide['score'] == none['score'] == mesure['score'] == 70
+    assert vide != mesure and none != mesure
+    for absent in (vide, none):
+        assert absent['breadth_status'] == 'MISSING'
+        assert absent['partiel'] is True
+        assert 'partiel' in absent['note']
+    # Couverture complète → forme historique STRICTE, aucun marqueur parasite.
+    assert set(mesure) == {'score', 'label', 'col'}
 
 
 def test_climat_borne_dangereux_40_exacte():

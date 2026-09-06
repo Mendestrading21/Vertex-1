@@ -118,8 +118,6 @@ REGISTRE = {
         MARQUAGE,
     'tests/test_analysis_visual.py::test_candlestick_locale_is_stable_on_linux_browsers':
         MARQUAGE,
-    'tests/test_analysis_visual.py::test_future_catalyst_is_not_backdated_on_last_historical_candle':
-        MARQUAGE,
     'tests/test_analysis_visual.py::test_radar_keeps_missing_scores_missing':
         MARQUAGE,
     'tests/test_audit_coherence.py::test_breadth_prefers_canonical_mm200':
@@ -226,8 +224,6 @@ REGISTRE = {
         PALETTE,
     'tests/test_fonts.py::test_local_fonts_shipped':
         PALETTE,
-    'tests/test_fraicheur_garde_type.py::test_les_cinq_sites_appellent_bien_assess':
-        MARQUAGE,
     'tests/test_freshness.py::test_opportunities_header_carries_scan_freshness':
         MARQUAGE,
     'tests/test_hauteur_etats.py::test_l_en_tete_ne_promet_plus_ce_qu_aucune_regle_ne_tient':

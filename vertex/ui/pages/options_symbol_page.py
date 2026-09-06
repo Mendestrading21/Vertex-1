@@ -23,9 +23,9 @@ _CONTENT = """
     <span class="vx-mono" id="vx-osym-spot" style="font-size:20px;font-weight:700">—</span>
     <span class="vx-badge" id="vx-osym-envbadge">chaîne d'options</span>
     <span class="vx-right vx-flex" style="gap:.4rem" role="group" aria-label="Mode d'analyse">
-      <a class="vx-btn vx-btn-sm" href="/analysis/%%SYM%%">Action</a>
-      <span class="vx-btn vx-btn-sm vx-btn-primary" aria-current="true" title="Mode actuel : dossier options">Options</span>
-      <a class="vx-btn vx-btn-sm vx-btn-ghost" href="/options">Desk options →</a>
+      <a class="vx-btn vx-btn-sm" href="/analysis/%%SYM%%">Dossier action</a>
+      <span class="vx2-badge" data-state="option" title="Mode actuel : dossier options">Mode : options</span>
+      <a class="vx-btn vx-btn-sm vx-btn-ghost" href="/options">Espace Options →</a>
     </span>
   </div>
   <div id="vx-osym-scorecard" class="vx-mt3">%%LOADING%%</div>

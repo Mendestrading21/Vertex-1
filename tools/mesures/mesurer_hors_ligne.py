@@ -48,6 +48,8 @@ Sorties : 0 = mesuré, 2 = témoin muet, 3 = NON MESURÉ (navigateur indisponibl
 """
 from __future__ import annotations
 
+import os
+
 import json
 import pathlib
 import sys
@@ -59,7 +61,16 @@ if str(RACINE) not in sys.path:
 from tools.mesures.mesurer_qa_espaces import (  # noqa: E402
     _chromium, abandonner_sans_navigateur, espaces, navigateur_pret)
 
-BASE_DEFAUT = 'http://127.0.0.1:5002'
+#  PORT DE MESURE PAR DÉFAUT : 5003, l'instance de VÉRIFICATION.
+#
+#  Mesuré le 2026-09-06 : ces outils visaient 5002 par défaut, c'est-à-dire, sur
+#  le poste de l'auteur, l'instance RÉELLE branchée sur le courtier et protégée
+#  par un code d'accès. Un outil de mesure qui frappe l'instance de travail lui
+#  vole des requêtes, la ralentit, et sur une machine tierce sonde un port dont
+#  il ne sait rien. L'instance de vérification (5003) existe précisément pour
+#  ça : sans IBKR, sans code, sans desk. `VERTEX_MESURE_BASE` reste le moyen de
+#  viser autre chose, explicitement.
+BASE_DEFAUT = os.environ.get('VERTEX_MESURE_BASE', 'http://127.0.0.1:5003')
 LARGEUR = 1440
 
 #: Les mots par lesquels le produit peut avouer une coupure. Recopiés depuis

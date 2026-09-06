@@ -13,8 +13,33 @@ def run_stress_tests(snapshot: PortfolioSnapshot, profile,
                      nasdaq_exposure: dict | None = None,
                      rate_sensitivity_bp: float | None = None,
                      options_vega_value: float | None = None,
-                     earnings_positions: list[str] | None = None) -> dict:
-    """Impacts estimés en % de l'équité. Hypothèses documentées, pas de fausse précision."""
+                     earnings_positions: list[str] | None = None,
+                     options_open: int | None = None) -> dict:
+    """Impacts estimés en % de l'équité. Hypothèses documentées, pas de fausse précision.
+
+    `options_open` : nombre d'options ouvertes DÉCLARÉES, quand l'appelant le
+    connaît. Il sépare deux situations que `options_vega_value=None` confondait :
+    « aucune option » (impact d'un IV crush réellement nul) et « des options
+    sans greeks broker » (impact INCONNU). Non transmis → inconnu, jamais 0.
+
+    Quand l'ignorance demeure, le scénario reste `impact_pct: None` mais ce qui
+    EST mesuré est publié à part : `VIX_PLUS_50.equity_leg_pct` porte le volet
+    actions (poids réels × bêtas déclarés), et la note dit quelle entrée manque.
+    Un volet n'est pas le scénario : `worst_case_pct` ne lit que `impact_pct`.
+
+    Ce paramètre n'a eu d'appelant réel qu'à partir de ce lot :
+    `/api/portfolio/team` ne transmettait que le vega, donc `options_open`
+    valait toujours None en production. MESURE sur la signature exacte de la
+    route, desk KO 88,07 $ + 25 000 $ de cash sans aucune option — AVANT :
+    IV_CRUSH `impact_pct: None`, VIX_PLUS_50 `impact_pct: None` ;
+    APRÈS (`options_open=0`) : IV_CRUSH 0,0 % et VIX_PLUS_50 -0,01 %, deux
+    valeurs VRAIES qui n'étaient atteignables par aucun chemin servi.
+
+    Les notes de périmètre se décident sur `options_open`, jamais sur la
+    véracité du vega : mesuré avec `options_vega_value=0.0, options_open=2`,
+    la phrase « aucune option déclarée » cohabitait avec
+    `coverage.options_open: 2` dans la même réponse.
+    """
     eq = snapshot.equity
     out = {'equity': eq, 'scenarios': {}, 'assumptions': [
         'impact via bêta par position (bêta 1.0 si inconnu — documenté)',
@@ -53,10 +78,58 @@ def run_stress_tests(snapshot: PortfolioSnapshot, profile,
     ndx = nasdaq_exposure or {}
     out['scenarios']['NASDAQ_MINUS_10'] = {
         'impact_pct': market_shock(-10, only=lambda p: ndx.get(p.symbol, True))}
-    vega_val = options_vega_value or 0.0
-    out['scenarios']['VIX_PLUS_50'] = {
-        'impact_pct': round(market_shock(-4) + (vega_val / eq * 100 if eq else 0), 2),
-        'note': 'choc actions modéré + gain/perte vega des options'}
+    #  MESURE : avec 2 options déclarées et aucun greek broker, IV_CRUSH sortait
+    #  « 0,0 % » et VIX_PLUS_50 « −0,0 % · choc actions modéré + gain/perte vega
+    #  des options ». Preuve décisive : la même requête SANS `option_positions`
+    #  rendait des scénarios BIT POUR BIT identiques — le vega ne changeait rien,
+    #  pendant que la note affirmait le contraire. `options_vega_value or 0.0`
+    #  écrasait l'INCONNU en un zéro CONNU : invariant 5 (« zéro, absent,
+    #  estimation restent distincts »). Un 0 % n'est vrai que sans aucune option.
+    vega_val = options_vega_value
+    vega_inconnu = vega_val is None
+    if vega_inconnu and options_open == 0:
+        vega_val, vega_inconnu = 0.0, False       # aucune option : le zéro est un fait
+    #  DEUX ignorances différentes, deux phrases différentes. Avec
+    #  `options_open` connu et positif, il manque bien les greeks du courtier.
+    #  Avec `options_open is None`, il manque le PÉRIMÈTRE : dire « greeks
+    #  broker requis » sur un desk qui n'a peut-être aucune option invoque un
+    #  pré-requis courtier pour un livre sans options — mesuré sur KO +
+    #  25 000 $ de cash sans aucune option, où le vrai IV_CRUSH vaut 0,0 %.
+    #  Nommer l'entrée manquante, jamais une cause supposée.
+    _manque = ('%d option(s) ouverte(s) sans vega broker (greeks IBKR requis)'
+               % options_open if options_open else
+               'périmètre options non transmis par l’appelant : « aucune option » '
+               'et « options sans vega broker » restent indiscernables')
+    if vega_inconnu:
+        #  Le VOLET ACTIONS de ce scénario, lui, est MESURÉ (bêtas déclarés,
+        #  poids réels) : le taire perdait un chiffre vrai. Mesure sur le desk
+        #  KO + 25 000 $ : −0,01 %. Il est publié comme volet, jamais comme
+        #  total — le scénario complet reste « non estimé », et `worst_case_pct`
+        #  ne le lit pas (il ne somme que les `impact_pct`).
+        #  `or 0.0` : `round(-0.0001, 2)` rend −0.0, qui s'imprimerait
+        #  « -0,00 % » — un signe négatif sans perte derrière.
+        _volet_actions = market_shock(-4) or 0.0
+        out['scenarios']['VIX_PLUS_50'] = {
+            'impact_pct': None,
+            'equity_leg_pct': _volet_actions,
+            'note': '%s — total non estimé ; volet actions seul (mesuré) : %s %%'
+                    % (_manque, ('%.2f' % _volet_actions).replace('.', ','))}
+    else:
+        #  Le PÉRIMÈTRE décide de la phrase, jamais la véracité du vega.
+        #  MESURÉ avec `options_vega_value=0.0` et `options_open=2` : la note
+        #  disait « aucune option déclarée, donc aucun volet vega » dans la
+        #  MÊME réponse qui portait `coverage.options_open: 2` et
+        #  l'avertissement « 2 option(s) hors base de stress ». Un vega agrégé
+        #  qui tombe exactement à 0 est un FAIT mesuré sur des options
+        #  existantes — pas l'absence d'options.
+        _sans_option = options_open == 0
+        out['scenarios']['VIX_PLUS_50'] = {
+            'impact_pct': round(market_shock(-4) + (vega_val / eq * 100 if eq else 0), 2),
+            'note': ('choc actions modéré ; aucune option déclarée, donc aucun volet vega'
+                     if _sans_option else
+                     'choc actions modéré + gain/perte vega des options '
+                     '(vega agrégé déclaré : %s $ par point de vol)'
+                     % ('%.2f' % vega_val).replace('.', ','))}
     if rate_sensitivity_bp is not None:
         out['scenarios']['RATES_PLUS_50BP'] = {'impact_pct': round(rate_sensitivity_bp * 50, 2)}
         out['scenarios']['RATES_MINUS_50BP'] = {'impact_pct': round(-rate_sensitivity_bp * 50, 2)}
@@ -73,9 +146,41 @@ def run_stress_tests(snapshot: PortfolioSnapshot, profile,
         top_sec, top_w = max(sector_weights.items(), key=lambda kv: kv[1])
         out['scenarios']['TOP_SECTOR_MINUS_15'] = {
             'impact_pct': round(-15 * top_w / 100, 2), 'sector': top_sec}
-    out['scenarios']['IV_CRUSH'] = {
-        'impact_pct': round(-abs(vega_val) * 0.3 / eq * 100, 2) if vega_val else 0.0,
-        'note': 'contraction d’IV de 30 % sur les options longues détenues'}
+    if vega_inconnu:
+        #  Même distinction que pour VIX_PLUS_50 : `_manque` dit ce qui manque
+        #  RÉELLEMENT. Ce scénario n'a pas de volet actions — un IV crush ne
+        #  touche que les options —, donc il n'y a ici aucun chiffre vrai à
+        #  publier tant que le périmètre options est inconnu.
+        #  La parenthèse « sans option ouverte, l'impact serait 0 % » décrit un
+        #  desk qui n'est PAS celui du lecteur dès qu'il a des options : elle
+        #  n'est servie que lorsque le périmètre lui-même est inconnu, c'est-à-
+        #  dire lorsque le lecteur ne peut pas savoir dans quel cas il est.
+        out['scenarios']['IV_CRUSH'] = {
+            'impact_pct': None,
+            'note': ('%s — non estimé%s'
+                     % (_manque, (' (sans option ouverte, l’impact serait 0 %)'
+                                  if options_open is None else ''))),
+        }
+    else:
+        #  Même correction de périmètre que pour VIX_PLUS_50 : « aucune option
+        #  ouverte déclarée » ne se dit que si le périmètre le PROUVE. Un vega
+        #  agrégé nul sur des options RÉELLES est un fait mesuré, et il se dit
+        #  autrement — sinon un desk optionné se lit comme un desk sans option.
+        if vega_val:
+            _note_crush = 'contraction d’IV de 30 % sur les options longues détenues'
+        elif options_open == 0:
+            _note_crush = 'aucune option ouverte déclarée — un IV crush est sans effet'
+        elif options_open:
+            _note_crush = ('%d option(s) ouverte(s) dont le vega agrégé déclaré est nul '
+                           '— un IV crush est sans effet sur ce vega' % options_open)
+        else:
+            _note_crush = ('vega agrégé déclaré nul, périmètre options non transmis '
+                           '— un IV crush est sans effet sur ce vega')
+        out['scenarios']['IV_CRUSH'] = {
+            #  `if vega_val` évite un « -0,0 % » : un vega agrégé nul donne un
+            #  impact nul, pas un zéro négatif.
+            'impact_pct': round(-abs(vega_val) * 0.3 / eq * 100, 2) if vega_val else 0.0,
+            'note': _note_crush}
     earnings_positions = earnings_positions or []
     gap_w = sum(weights.get(s, 0) for s in earnings_positions)
     out['scenarios']['EARNINGS_GAP_ADVERSE'] = {
@@ -87,6 +192,29 @@ def run_stress_tests(snapshot: PortfolioSnapshot, profile,
         'impact_pct': round(-10 * stock_w / 100, 2),
         'note': 'toutes corrélations → 1 : la diversification disparaît, '
                 'seul le cash protège (choc -10 % uniforme)'}
+    #  PÉRIMÈTRE de la base de stress, publié avec les chiffres. `equity` vient
+    #  de PortfolioSnapshot (positions valorisées + cash) : les options déclarées
+    #  n'y entrent pas. Mesuré : 14 100 $ engagés sur 39 188 $ de capital déclaré
+    #  (36 %) restaient hors base ET hors impact, sous une tuile « pire scénario
+    #  −0,1 % » sans périmètre. La carte voisine (engines/portfolio_stress) le
+    #  disait déjà ; ce bloc-ci ne le disait nulle part.
+    out['coverage'] = {
+        'equity_basis': 'positions valorisées du snapshot + cash',
+        'options_open': options_open,
+        'options_in_equity': False,
+        'options_vega_known': not vega_inconnu,
+        'read_only': True,
+        'note': ('base de stress = positions valorisées + cash ; les options déclarées '
+                 'exigent marque et greeks IBKR et restent hors base'),
+    }
+    if options_open:
+        #  Avertissement réservé au cas où des options SONT déclarées : quand le
+        #  périmètre n'est pas transmis, `coverage.options_open: null` et les
+        #  notes « non estimé » des scénarios disent déjà ce qui manque, sans
+        #  noyer un desk sans option sous un avertissement permanent.
+        out['warnings'].append(
+            '%d option(s) hors base de stress — les %% sont rapportés aux positions '
+            'valorisées + cash, pas au capital total déclaré' % options_open)
     worst = min((v['impact_pct'] for v in out['scenarios'].values()
                  if v.get('impact_pct') is not None), default=None)
     out['worst_case_pct'] = worst

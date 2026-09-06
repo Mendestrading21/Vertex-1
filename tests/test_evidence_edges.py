@@ -61,13 +61,28 @@ def test_scenarios_with_empty_detail_never_crash_never_invent():
     for s in scen:
         assert s['move_pct'] is None, 'sans prix de base, jamais un % inventé'
         assert s['trigger'] and s['invalidation']
-    weights = sum(s['weight'] for s in scen)
-    assert 95 <= weights <= 105
+    #  CONSTAT 39 : la somme des `weight` à ~100 est ce qui FAISAIT lire ces
+    #  trois futurs comme une distribution de probabilités. Mesuré : lean=50
+    #  (incertitude maximale) donnait Haussier 45 / Central 9 / Baissier 45 —
+    #  le résidu `max(0.1, 1 - bull - bear)` écrasait le scénario central. Ces
+    #  poids ne mesuraient rien et n'avaient aucune calibration (invariant 7).
+    #  La caractérisation fige désormais leur ABSENCE, pas leur somme.
+    for s in scen:
+        assert 'weight' not in s and 'likelihood' not in s
+        assert s['probability'] is None and s['probability_note']
 
 
-def test_weights_with_no_committee_are_balanced():
-    w = rs._weights(None, 'WAIT')
-    assert w['bull'][0] == w['bear'][0], 'sans comité, aucun biais inventé'
+def test_no_committee_no_invented_bias():
+    """Sans comité, aucun biais inventé — et plus aucun poids du tout.
+
+    L'ancienne assertion (`rs._weights(None,'WAIT')['bull'][0] ==
+    ['bear'][0]`) vérifiait la symétrie d'une pondération qui n'aurait pas dû
+    exister : `_weights` est supprimée (constat 39), les trois scénarios sont
+    strictement équivalents devant la probabilité — aucune.
+    """
+    assert not hasattr(rs, '_weights')
+    scen = rs.scenarios({'plan': {'entry': 100, 'stop': 90, 'tp2': 120}}, None, 'WAIT')
+    assert [s['probability'] for s in scen] == [None, None, None]
 
 
 def test_invalidations_always_actionable_and_capped():

@@ -33,8 +33,21 @@
       + '<p class="vx2-state-cause">' + esc(cause) + '</p></div>';
   }
 
-  function badge(state, texte) {
-    return '<span class="vx2-badge" data-state="' + esc(state) + '">' + esc(texte) + '</span>';
+  function badge(state, texte, titre) {
+    return '<span class="vx2-badge" data-state="' + esc(state) + '"'
+      + (titre ? ' title="' + esc(titre) + '"' : '') + '>' + esc(texte) + '</span>';
+  }
+
+  /* Niveau de confirmation d'une date : dérivé de ce que le serveur a dit
+   * (`confirmation`, `demo`, `approx`). Sans information, on l'écrit
+   * (« n/d ») au lieu d'affirmer « Confirmé ». */
+  function badgeConfirmation(e, court) {
+    if (e.demo) return badge('stale', court ? 'Démo' : 'Synthétique (démo)', e.confirmation || '');
+    if (e.approx) return badge('stale', court ? 'Approx.' : 'Approximative', e.confirmation || '');
+    var c = String(e.confirmation || '');
+    if (!c) return badge('stale', court ? 'Confirmation n/d' : 'Confirmation inconnue');
+    if (/^confirm/i.test(c)) return badge('live', court ? 'Confirmée' : 'Confirmée par l’émetteur', c);
+    return badge('stale', court ? 'Non confirmée' : 'Non confirmée par l’émetteur', c);
   }
 
   function positionsDetenues() {
@@ -61,6 +74,8 @@
         approx: !!m.approx,
         importance: m.importance || '',
         source: m.source || '',
+        confirmation: m.confirmation || '',
+        demo: !!m.demo,
         sym: null, expose: false
       });
     });
@@ -69,8 +84,13 @@
       out.push({
         when: it.date, dte: it.dte, cat: 'earnings', kind: 'Résultats',
         titre: sym + ' — publication des résultats',
-        note: '', approx: false,
-        importance: '', source: 'calendrier des résultats',
+        note: '', approx: !!it.approx,
+        importance: '',
+        /* Source et niveau de confirmation SERVIS par /cal-feed ; rien n'est
+         * affirmé ici (« Confirmé » n'est jamais décidé par l'écran). */
+        source: it.source || (cal.source ? String(cal.source) : ''),
+        confirmation: it.confirmation || '',
+        demo: !!(it.demo || cal.demo),
         sym: sym,
         verdict: it.verdict || null,
         grade: it.grade || null,
@@ -111,11 +131,12 @@
     var metas = [];
     metas.push(e.kind);
     if (e.approx) metas.push('date approximative');
+    if (e.confirmation) metas.push(e.confirmation);
     if (e.importance) metas.push('importance ' + e.importance);
     if (e.verdict) metas.push('verdict du moteur : ' + libelleVerdict(e.verdict));
     if (e.note) metas.push(e.note);
     return '<li class="vx-cal-ev" data-expose="' + (e.expose ? '1' : '0') + '">'
-      + (e.approx ? badge('stale', 'Approx.') : badge('live', 'Confirmé'))
+      + badgeConfirmation(e, true)
       + '<span class="vx-cal-ev-corps">'
       + '<span class="vx-cal-ev-titre">' + esc(e.titre) + '</span>'
       + '<span class="vx-cal-ev-meta">' + esc(metas.join(' · ')) + '</span>'
@@ -198,7 +219,7 @@
         + '<td>' + esc(e.titre) + '</td>'
         + '<td>' + (e.sym ? '<a href="/analysis/' + encodeURIComponent(e.sym) + '">'
           + esc(e.sym) + '</a>' : '<span class="vx2-absent">' + ABSENT + '</span>') + '</td>'
-        + '<td>' + (e.approx ? badge('stale', 'Approximative') : badge('live', 'Confirmée')) + '</td>'
+        + '<td>' + badgeConfirmation(e, false) + '</td>'
         + '<td>' + (e.source ? esc(e.source) : '<span class="vx2-absent">' + ABSENT + '</span>') + '</td>'
         + '</tr>';
     }).join('');
@@ -210,7 +231,15 @@
       + '<th class="vx2-sticky-col vx2-num" scope="col">Date</th>'
       + '<th class="vx2-num" scope="col">Échéance <span class="vx2-th-unit">(j)</span></th>'
       + '<th scope="col">Type</th><th scope="col">Événement</th>'
-      + '<th scope="col">Instrument</th><th scope="col">Date</th>'
+      /* La 6e colonne rend `badgeConfirmation(e)` — « Confirmée par
+         l'émetteur », « Approximative », « Non confirmée par l'émetteur ». Son
+         en-tête disait « Date ». Mesure du 06/09/2026 sur 5003 (vue Semaine) :
+         en-têtes servis ['Date','Échéance (j)','Type','Événement','Instrument',
+         'Date','Source'] — DEUX colonnes « Date » — et la cellule sous la
+         seconde valait « Non confirmée par l’émetteur ». Un en-tête qui nomme
+         autre chose que sa colonne est une valeur fausse : le lecteur lit un
+         niveau de confirmation en croyant lire une date. */
+      + '<th scope="col">Instrument</th><th scope="col">Confirmation</th>'
       + '<th scope="col">Source</th></tr></thead>'
       + '<tbody>' + rows + '</tbody></table></div></div>';
   }

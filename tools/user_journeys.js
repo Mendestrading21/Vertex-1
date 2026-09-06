@@ -1,6 +1,8 @@
 // LOT 80 — 5 parcours bout-en-bout « du réveil à la décision ».
 const { chromium } = require('playwright');
-const BASE = 'http://127.0.0.1:5002';
+/*  Instance de VÉRIFICATION par défaut (5003), jamais l'instance réelle
+    branchée sur le courtier. */
+const BASE = process.env.VERTEX_MESURE_BASE || 'http://127.0.0.1:5003';
 (async () => {
   const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
   const page = await (await browser.newContext()).newPage();

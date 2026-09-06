@@ -89,10 +89,37 @@ def start_background_enrichment():
     return True
 
 
+def reconcilier_cotations(snap, detail):
+    """Chaque cotation trouvée par recherche web reçoit le prix CANONIQUE du scan
+    et l'écart en % — une cotation LLM n'est jamais un cours de marché ; le scan
+    fait foi. Sans prix de scan : écart absent, dit tel quel. Ne mute pas
+    l'instantané persisté."""
+    import copy
+    snap = copy.deepcopy(snap or {})
+    quotes = (snap.get('surfaces') or {}).get('quotes') or {}
+    detail = detail or {}
+    for sym, q in quotes.items():
+        if not isinstance(q, dict):
+            continue
+        prix = (detail.get(str(sym).upper()) or {}).get('price')
+        q['canonique'] = 'scan'
+        q['scan_price'] = prix if isinstance(prix, (int, float)) else None
+        v = q.get('value')
+        if isinstance(v, (int, float)) and isinstance(prix, (int, float)) and prix > 0:
+            q['ecart_pct'] = round((v - prix) / prix * 100.0, 2)
+        else:
+            q['ecart_pct'] = None
+    snap['note_quotes'] = ('cotations issues d’une recherche web par Claude — jamais le prix '
+                           'canonique ; le prix du scan fait foi et l’écart est servi')
+    return snap
+
+
 @bp.route('/api/ai/enrichment')
 def ai_enrichment():
-    """Instantané complet Claude+web (cotations/actualités étiquetées provenance)."""
-    return jsonify(_enrich.load_snapshot())
+    """Instantané complet Claude+web (cotations/actualités étiquetées provenance),
+    cotations réconciliées avec le prix canonique du scan (`scan_price`, `ecart_pct`)."""
+    return jsonify(reconcilier_cotations(_enrich.load_snapshot(),
+                                         scan_state.get('detail') or {}))
 
 
 @bp.route('/api/ai/status')
@@ -126,7 +153,24 @@ def _analyst_agent():
 def _analyst_packet(sym, detail, resp):
     """Dossier RÉEL et complet passé à l'analyste : verdict déterministe + physique,
     Monte-Carlo, bootstrap, Kelly, MTF, anomalies — tout ce que l'app calcule déjà.
-    Aucune valeur inventée : les champs absents restent None."""
+    Aucune valeur inventée : les champs absents restent None — et un champ PRÉSENT
+    n'est jamais servi comme absent.
+
+    CONSTAT 5, site jumeau. Ce paquet lisait `detail['st_fund'] or
+    detail['fund_score']`, deux clés SANS producteur sur le `detail` du scan
+    (`fund_score` : 0 assignation dans le dépôt ; `st_fund` : posée uniquement sur
+    la LIGNE de tableau, terminal.py:609). Mesure sur un detail portant
+    `sub.fundamental = 100` : le dossier envoyé à Claude publiait
+    ``fundamental {'score': None, 'quality': None}`` alors que le moteur du même
+    appel rendait ``{'score': 100.0, 'is_proxy': False}``. Depuis que
+    `decision_packet` est corrigé, `unknowns` ne liste PLUS 'fundamental' : le
+    dossier affirmait donc un fondamental ABSENT tout en ne le déclarant PLUS
+    inconnu — deux mensonges qui se couvrent, état pire qu'avant le lot pour ce
+    chemin. Le `or` était un second défaut : il écrasait un 0 légitime.
+    Le lecteur canonique `decision_packet.read_fundamental` est réutilisé ici —
+    même note, même sémantique du 0, même lignage `is_proxy` que le verdict.
+    """
+    from vertex.strategy import decision_packet as _decision_packet
     vx = detail.get('vertex') or {}
     plan = detail.get('plan') if isinstance(detail.get('plan'), dict) else {}
     resp = resp or {}
@@ -143,8 +187,8 @@ def _analyst_packet(sym, detail, resp):
                       'setup_quality': detail.get('setup_quality'),
                       'overextended': (detail.get('ext_atr') or 0) >= 2.5,
                       'rsi': detail.get('rsi')},
-        'fundamental': {'score': detail.get('st_fund') or detail.get('fund_score'),
-                        'quality': vx.get('fund_quality')},
+        'fundamental': dict(_decision_packet.read_fundamental(detail),
+                            quality=vx.get('fund_quality')),
         'sector': detail.get('sector'), 'thesis': detail.get('thesis'),
         'chart_read': detail.get('chart_read'),
         'anomalies': detail.get('anomalies') or [],

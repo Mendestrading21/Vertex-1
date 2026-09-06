@@ -91,18 +91,28 @@ button.vx-nav-item{background:none;font:inherit;cursor:pointer;text-align:left;
 /* ── Grille 12 colonnes ────────────────────────────────────────────── */
 .vx-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));
   gap:var(--vx-s4)}
-.vx-col-2{grid-column:span 2}.vx-col-3{grid-column:span 3}
-.vx-col-4{grid-column:span 4}.vx-col-5{grid-column:span 5}
-.vx-col-6{grid-column:span 6}.vx-col-7{grid-column:span 7}
-.vx-col-8{grid-column:span 8}.vx-col-9{grid-column:span 9}
-.vx-col-10{grid-column:span 10}.vx-col-11{grid-column:span 11}
-.vx-col-12{grid-column:span 12}
-/* Alias .vx-span-* (Hyper Visual §11) — même sémantique que .vx-col-* */
-.vx-span-2{grid-column:span 2}.vx-span-3{grid-column:span 3}
-.vx-span-4{grid-column:span 4}.vx-span-5{grid-column:span 5}
-.vx-span-6{grid-column:span 6}.vx-span-7{grid-column:span 7}
-.vx-span-8{grid-column:span 8}.vx-span-9{grid-column:span 9}
-.vx-span-12{grid-column:span 12}
+/* `.vx-span-*` est l'ALIAS de `.vx-col-*` (Hyper Visual §11), et
+   `tests/test_grille_portees.py` le donne comme portée LICITE au même titre.
+   Les deux familles étaient déclarées SÉPARÉMENT, et seule `.vx-col-*` était
+   reprise par les paliers de `responsive.css` : l'alias promettait la même
+   sémantique et ne la tenait à AUCUNE largeur réduite.
+   Mesure du 06/09/2026, Chromium sur 127.0.0.1:5003/markets, quatre blocs
+   posés dans une `.vx-grid` servie :
+       1600 px : col-4=523  span-4=523   col-6=792  span-6=792   (identiques)
+       1024 px : col-4=1024 span-4=331   col-6=504  span-6=504
+        390 px : col-4=390  span-4=122   col-6=390  span-6=189
+   Une carte `vx-span-4` valait donc 122 px sur un téléphone là où son
+   équivalent `vx-col-4` en valait 390 : le contenu n'était pas seulement
+   étroit, il était coupé — exactement le défaut décrit par le lot 610.
+   Et `vx-span-10` / `vx-span-11` n'existaient pas du tout : leur porteur
+   tombait dans une colonne implicite sur douze.
+   Déclarées ENSEMBLE, les deux familles ne peuvent plus diverger. */
+.vx-col-2,.vx-span-2{grid-column:span 2}.vx-col-3,.vx-span-3{grid-column:span 3}
+.vx-col-4,.vx-span-4{grid-column:span 4}.vx-col-5,.vx-span-5{grid-column:span 5}
+.vx-col-6,.vx-span-6{grid-column:span 6}.vx-col-7,.vx-span-7{grid-column:span 7}
+.vx-col-8,.vx-span-8{grid-column:span 8}.vx-col-9,.vx-span-9{grid-column:span 9}
+.vx-col-10,.vx-span-10{grid-column:span 10}.vx-col-11,.vx-span-11{grid-column:span 11}
+.vx-col-12,.vx-span-12{grid-column:span 12}
 /* Grilles auto-fit prêtes (cartes égales) : remplacent les repeat() inline */
 .vx-grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--vx-s4)}
 .vx-grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--vx-s4)}
@@ -130,3 +140,20 @@ button.vx-nav-item{background:none;font:inherit;cursor:pointer;text-align:left;
   color:var(--vx-text-muted);background:none;border:none;cursor:pointer}
 .vx-mobile-bar a[aria-current="page"]{color:var(--vx-brand-strong)}
 .vx-mobile-bar svg{width:20px;height:20px;stroke:currentColor}
+
+/* ── Grammaire de composition commune — RESTAURÉE (refonte dashboards) ─────
+   Ces règles existaient (commit fcc41cd2, layout.css) et ont disparu lors d'un
+   nettoyage ; seules leurs surcharges responsive avaient survécu
+   (responsive.css:22-23,72). Résultat mesuré : sur Options (Structure,
+   Volatilité, Positionnement), Analyse, Marchés, Portefeuille… le « hero » et
+   son rail s'empilaient à 1600 px au lieu de se juxtaposer. Base rapatriée,
+   proportion 7/5 du design system (carte dominante + rail de preuves). */
+.vx-section-stack{display:flex;flex-direction:column;gap:var(--vx-s4);min-width:0}
+.vx-section-stack--loose{gap:var(--vx-s6)}
+.vx-hero-grid{display:grid;grid-template-columns:minmax(0,7fr) minmax(260px,5fr);
+  gap:var(--vx-s4);align-items:start;min-width:0}
+.vx-hero-grid--wide{grid-template-columns:minmax(0,3fr) minmax(250px,1fr)}
+.vx-hero-main,.vx-insight-rail{min-width:0}
+.vx-insight-rail{display:flex;flex-direction:column;gap:var(--vx-s4)}
+.vx-grid--dense{gap:var(--vx-s3)}
+.vx-grid--loose{gap:var(--vx-s6)}

@@ -30,9 +30,34 @@ def api_market_summary():
     mc = scan_state.get('market_ctx') or {}
     cl = market_lens.climate(mc)
     sc = cl['score'] if cl else None
-    verdict = 'FAVORABLE' if (sc or 0) >= 65 else 'NEUTRE' if (sc or 0) >= 40 else 'DANGEREUX'
+    #  Le verdict est celui du MOTEUR, il n'est plus re-dérivé ici. Deux défauts
+    #  mesurés dans l'ancienne ligne `(sc or 0) >= 65 ... else 'DANGEREUX'` :
+    #  1) au démarrage à froid ou scan échoué, `market_ctx` vide → climate() rend
+    #     None à dessein, mais `(sc or 0)` convertissait l'ABSENCE en branche
+    #     basse : la route servait {"score": null, "verdict": "DANGEREUX"} avec
+    #     ses six dimensions nulles — un jugement catégoriel sans donnée derrière
+    #     (invariant 5 : absence et valeur restent distinctes).
+    #  2) la borne 65 re-dérivait un label que le moteur possède déjà, avec une
+    #     valeur différente de la sienne (62) : mesuré, un score de 62/63/64 était
+    #     FAVORABLE pour le moteur et NEUTRE pour cette route, au même instant.
+    #  `market_lens.CLIMAT_FAVORABLE_MIN` vaut désormais 65 : le verdict servi
+    #  ici est identique à celui d'avant sur toute la plage, la divergence est
+    #  supprimée et l'absence voyage avec le score.
+    verdict = cl['label'] if cl else None
     return jsonify({
         'score': sc, 'verdict': verdict,
+        # Couverture du score : `partiel`/`breadth_status` ne sont posés par le
+        # moteur QUE lorsque la largeur de marché manque (25 pts non mesurés) —
+        # sans eux, un score partiel était indiscernable d'un score complet.
+        #  Second tour : `bool(cl and ...)` rendait `score_partiel: False` quand
+        #  il n'y a AUCUN climat (mesuré : `market_ctx` vide → `climate()` rend
+        #  None, donc score null ET « couverture complète »). Affirmer une
+        #  couverture complète sur un score absent est la même faute que le
+        #  score partiel non marqué qu'on venait de corriger : absence et
+        #  couverture restent trois états distincts (None / True / False).
+        'score_partiel': (bool(cl.get('partiel')) if cl else None),
+        'score_note': (cl or {}).get('note'),
+        'breadth_status': (cl or {}).get('breadth_status'),
         'regime': mc.get('spy_regime'), 'roro': mc.get('roro'), 'roro_gap': mc.get('roro_gap'),
         'vix': mc.get('vix'), 'vix_band': mc.get('vix_band'), 'vix_chg': mc.get('vix_chg'),
         'breadth': mc.get('breadth'), 'market_verdict': mc.get('verdict'),
@@ -88,28 +113,69 @@ def api_options():
     return jsonify({'board': scan_state.get('options_board') or [], 'updated': scan_state.get('updated')})
 
 
+#  QUATRE CHARGES VIDES SANS MOTIF — mesuré le 2026-09-06 en exerçant les 184
+#  règles du runtime : `/api/search`, `/api/weekly`, `/api/strategie` et
+#  `/api/comite` rendaient `[]` ou `{}` sans une seule clé disant POURQUOI.
+#  Un appelant ne pouvait donc pas distinguer « rien à signaler » de « le calcul
+#  n'a pas tourné » — l'invariant 5 sépare précisément ces deux états.
+#
+#  Aucune de ces routes n'a de consommateur dans le dépôt (relevé .py/.js) :
+#  elles servent un humain ou un script externe, c'est-à-dire exactement le
+#  lecteur qui n'a aucun moyen de deviner. La forme non vide est INCHANGÉE ;
+#  seul le cas vide gagne un motif.
+def _vide(motif, **extra):
+    charge = {'disponible': False, 'motif': motif, 'read_only': True}
+    charge.update(extra)
+    return jsonify(charge)
+
+
 @bp.route('/api/search')
 def api_search():
     q = (request.args.get('q') or '').upper().strip()
-    res = [{'ticker': s} for s in UNIVERSE if q in s][:20] if q else []
+    if not q:
+        return jsonify({'disponible': False, 'read_only': True,
+                        'usage': 'GET /api/search?q=NVDA — recherche dans '
+                                 'l’univers scanné, 20 résultats au plus',
+                        'resultats': []})
+    res = [{'ticker': s} for s in UNIVERSE if q in s][:20]
+    #  La liste reste la forme historique quand il y a des résultats ; un
+    #  ensemble VIDE dit qu'il l'est, et sur quel univers il a cherché.
+    if not res:
+        return jsonify({'disponible': True, 'read_only': True, 'resultats': [],
+                        'motif': 'aucun titre de l’univers scanné ne contient « %s »' % q,
+                        'univers': len(UNIVERSE)})
     return jsonify(res)
 
 
 @bp.route('/api/weekly')
 def api_weekly():
-    return jsonify(weekly_state.get('data') or {})
+    d = weekly_state.get('data')
+    if not d:
+        return _vide('revue hebdomadaire pas encore produite sur cette '
+                     'instance — elle est écrite par le job WEEKLY_REVIEW')
+    return jsonify(d)
 
 
 @bp.route('/api/strategie')
 def api_strategie():
     """Stratégie options personnalisée (1/2/3/6/9/12 mois). Lecture seule, analyse only."""
-    return jsonify(scan_state.get('strategy') or {})
+    d = scan_state.get('strategy')
+    if not d:
+        return _vide('aucune stratégie dans le dernier scan — le scan n’a pas '
+                     'encore tourné, ou il n’a produit aucune ligne',
+                     scan=scan_state.get('scan_ts_h'))
+    return jsonify(d)
 
 
 @bp.route('/api/comite')
 def api_comite():
     """Comité d'investissement : décisions documentées (4 portes). Analyse only."""
-    return jsonify(scan_state.get('committee') or {})
+    d = scan_state.get('committee')
+    if not d:
+        return _vide('aucune délibération de comité dans le dernier scan — '
+                     'le scan n’a pas encore tourné, ou aucune ligne n’a '
+                     'franchi les portes', scan=scan_state.get('scan_ts_h'))
+    return jsonify(d)
 
 
 __all__ = ['bp']

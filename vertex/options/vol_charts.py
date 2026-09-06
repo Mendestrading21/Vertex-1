@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 
+from vertex.options import board_fields as _bf
 from vertex.visualization.schemas import (
     interpretation, unknown, ST_FAVORABLE, ST_NEUTRE, ST_DEFAVORABLE,
 )
@@ -85,7 +86,12 @@ def oi_by_strike(contracts, spot):
     agg = {}
     for c in contracts:
         strike = _num(c.get('strike'))
-        oi = _num(c.get('oi'))
+        #  Accesseur honnête plutôt que champ brut : `_i(None) -> 0`. Ici le
+        #  zéro imputé était déjà écarté par la garde suivante, mais lire le
+        #  champ brut laisse croire que la garde protège d'un zéro RÉEL —
+        #  elle protégeait surtout d'une absence. Un seul accesseur pour tous
+        #  les lecteurs du dépôt, sinon le prochain oubli est invisible.
+        oi = _bf.open_interest(c)
         if strike is None or oi is None:
             continue
         k = round(strike, 1)

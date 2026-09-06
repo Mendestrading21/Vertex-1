@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from itertools import islice
 
+from vertex.options import board_fields as _bf
 from vertex.options import iv_units
 
 _FALLBACK_UNIVERSES = {
@@ -126,6 +127,25 @@ def _quote_freshness(age, maximum):
             'age_seconds': age, 'max_age_seconds': maximum, 'read_only': True}
 
 
+#  Liquidité : lire le champ que le board publie RÉELLEMENT.
+#  Les lectures directes des noms `spread_pct` / `volume` ne trouvaient rien sur
+#  le board de production (`legacy_engine` publie `spread` et `vol`) : mesure du
+#  2026-09-06, Scanner LEAPS 33/33 lignes motivées « spread indisponible » et
+#  SWING_3_6M 74/74 « volume indisponible », `IN_MANDATE` structurellement
+#  inatteignable quelle que soit la liquidité. Pire, la fausse absence PROMOUT :
+#  `rank` classe PARTIAL_MANDATE (1) avant OUT_OF_MANDATE (2), donc 22 des 31
+#  candidats étiquetés « partiel » étaient mesurablement hors mandat, dont la
+#  tête du mandat 3–6 mois (CPAY, vol 1 et spread 14,2 % sur sa ligne de board).
+#  `board_fields` refuse en outre de rendre la pénalité 99.0 ou un volume imputé
+#  à 0 : une absence reste une absence, jamais une conformité ni un rejet faux.
+#
+#  MESURE DU 2026-09-06 : la porte de l'intérêt ouvert lisait encore `oi` BRUT,
+#  alors que `legacy_engine._i` impute `0` quand le courtier ne reporte rien.
+#  `_minimum_ok(0, 500)` rend `False` — un REJET affirmé — là où
+#  `_minimum_ok(None, 500)` rend `None`, c'est-à-dire « non mesurable ». Le
+#  scanner écartait donc des contrats pour une raison qu'il n'avait pas mesurée,
+#  et l'écran affichait « OI insuffisant » sur une absence. Les trois lectures
+#  passent par l'accesseur, comme le volume et le spread avant elles.
 def _leaps_mandate(contract, profile):
     category = profile.category('LEAPS') if profile is not None else {}
     d_min = category.get('delta_min', 0.70)
@@ -134,8 +154,8 @@ def _leaps_mandate(contract, profile):
     spread_max = category.get('spread_pct_max', 5.0)
     return {
         'delta_ok': _value_in_range(contract.get('delta'), d_min, d_max),
-        'oi_ok': _minimum_ok(contract.get('oi'), oi_min),
-        'spread_ok': _maximum_ok(contract.get('spread_pct'), spread_max),
+        'oi_ok': _minimum_ok(_bf.open_interest(contract), oi_min),
+        'spread_ok': _maximum_ok(_bf.spread_pct(contract), spread_max),
         'bounds': {
             'delta': [d_min, d_max],
             'oi_min': oi_min,
@@ -148,9 +168,9 @@ def _swing_3_6m_mandate(contract, config):
     age = _quote_age(contract)
     return {
         'delta_ok': _value_in_range(contract.get('delta'), config['delta_abs_min'], config['delta_abs_max']),
-        'oi_ok': _minimum_ok(contract.get('oi'), config['open_interest_min']),
-        'volume_ok': _minimum_ok(contract.get('volume'), config['volume_min']),
-        'spread_ok': _maximum_ok(contract.get('spread_pct'), config['spread_pct_max']),
+        'oi_ok': _minimum_ok(_bf.open_interest(contract), config['open_interest_min']),
+        'volume_ok': _minimum_ok(_bf.volume(contract), config['volume_min']),
+        'spread_ok': _maximum_ok(_bf.spread_pct(contract), config['spread_pct_max']),
         'quote_fresh_ok': _maximum_ok(age, config['max_quote_age_seconds']),
         'bounds': {
             'delta_abs': [config['delta_abs_min'], config['delta_abs_max']],
@@ -248,9 +268,9 @@ def scan(board, universe, sym=None, profile=None):
             'delta': raw.get('delta'),
             'iv': iv_dec,
             'iv_unit': 'DECIMAL' if iv_dec is not None else None,
-            'oi': raw.get('oi'),
-            'volume': raw.get('volume'),
-            'spread_pct': raw.get('spread_pct'),
+            'oi': _bf.open_interest(raw),
+            'volume': _bf.volume(raw),
+            'spread_pct': _bf.spread_pct(raw),
             'quote_age_seconds': _quote_age(raw),
             'quote_freshness': _quote_freshness(_quote_age(raw), swing_config['max_quote_age_seconds']),
             'cost': raw.get('cost'),

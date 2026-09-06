@@ -42,10 +42,25 @@
 .vx-kpi canvas{margin-top:6px}
 
 /* ── Badges ────────────────────────────────────────────────────────── */
+/* `white-space:nowrap` sans plafond de largeur : un badge plus long que sa
+   colonne SORT du cadre, et le `overflow-x:clip` de la coque l'efface sans
+   barre de défilement ni signal — une phrase servie, jamais lue.
+   Mesure du 06/09/2026, Chromium sur 127.0.0.1:5003, 9 pages × 3 largeurs,
+   1 597 badges rendus :
+     390 px, « Aujourd'hui » → badge « Calls : Volatilité implicite basse :
+     environnement porteur… » large de 587 px dans une colonne de 390,
+     soit 234 px de texte hors écran ;
+     tous les autres badges : 0 coupé.
+   Le badge se REPLIE donc au lieu de déborder. Blast radius mesuré après
+   correctif : 1 badge coupé → 0, et un seul badge replié sur les 1 597
+   (celui-là, 56 px de haut) ; aucun autre badge ne change de boîte, à
+   aucune des trois largeurs. Un badge court n'a rien où se replier : il
+   reste sur une ligne, sans avoir besoin de `nowrap` pour cela. */
 .vx-badge{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;
   border-radius:99px;font-size:11px;font-weight:600;letter-spacing:.3px;
   border:1px solid var(--vx-border-soft);background:var(--vx-surface-elevated);
-  color:var(--vx-text-secondary);white-space:nowrap}
+  color:var(--vx-text-secondary);max-width:100%;
+  white-space:normal;overflow-wrap:anywhere}
 .vx-badge-decision[data-decision="ACHETER"],.vx-badge-decision[data-decision="RENFORCER"]{
   background:var(--vx-positive-dim);color:var(--vx-positive);border-color:rgba(34,199,122,.4)}
 .vx-badge-decision[data-decision="ATTENDRE"]{
@@ -195,3 +210,39 @@
   background:var(--vx-warning-dim)}
 .vx-insight[data-tone="ai"]{border-left-color:var(--vx-violet);
   background:var(--vx-violet-dim)}
+
+/* ── Disclosure, bouclier lecture seule, corps/pied de carte — RESTAURÉS ──
+   Règles présentes au commit fcc41cd2 (components.css:100-122) et perdues
+   ensuite : `<details class="vx-disclosure">` rendait un résumé natif de
+   ~20 px avec son chevron, le bouclier « Suivi uniquement · aucun ordre »
+   était un span nu. `.vx-card-body`/`.vx-card-foot` n'avaient jamais eu de
+   base malgré 20 consommateurs. Cibles tactiles ≥ 44 px sur le résumé. */
+.vx-disclosure{border:1px solid var(--vx-border-soft);border-radius:var(--vx-r-lg);
+  background:var(--vx-surface-1);overflow:hidden;min-width:0}
+.vx-disclosure>summary{display:flex;align-items:center;gap:var(--vx-s2);
+  min-height:44px;padding:0 var(--vx-s4);cursor:pointer;list-style:none;
+  color:var(--vx-text-secondary);font-size:13px;font-weight:600}
+.vx-disclosure>summary::-webkit-details-marker{display:none}
+.vx-disclosure>summary::after{content:"+";margin-left:auto;color:var(--vx-text-muted);
+  font-family:var(--vx-font-mono);font-size:17px;font-weight:500}
+.vx-disclosure[open]>summary{color:var(--vx-text-primary);
+  border-bottom:1px solid var(--vx-border-soft)}
+.vx-disclosure[open]>summary::after{content:"−"}
+.vx-disclosure>summary:hover{background:var(--vx-surface-hover)}
+.vx-disclosure__body{padding:var(--vx-s4);min-width:0}
+.vx-data-ledger{display:flex;align-items:center;gap:var(--vx-s2);flex-wrap:wrap;
+  color:var(--vx-text-muted);font-size:11.5px;line-height:1.45}
+.vx-data-ledger>*+*::before{content:"·";margin-right:var(--vx-s2);color:var(--vx-text-faint)}
+.vx-readonly-shield{display:inline-flex;align-items:center;gap:6px;
+  min-height:28px;padding:3px 9px;border:1px solid var(--vx-border-soft);
+  border-radius:999px;background:var(--vx-surface-2);color:var(--vx-text-secondary);
+  font-size:10.5px;font-weight:600;letter-spacing:.02em;white-space:nowrap}
+.vx-card-body{min-width:0}
+.vx-card-foot{display:flex;align-items:center;gap:var(--vx-s2);flex-wrap:wrap;
+  margin-top:var(--vx-s3);padding-top:var(--vx-s2);
+  border-top:1px solid var(--vx-border-faint);font-size:var(--vx-fs-meta);
+  color:var(--vx-text-muted)}
+/* Mention « données de démonstration » : un mot visible, jamais un fond coloré. */
+.vx-demo-tag{display:inline-flex;align-items:center;font-size:10.5px;font-weight:600;
+  letter-spacing:.04em;color:var(--vx-warning);border:1px solid var(--vx-border-soft);
+  border-radius:999px;padding:2px 8px;margin:0 0 var(--vx-s2)}

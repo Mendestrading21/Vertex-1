@@ -42,7 +42,11 @@ def _mode_label(port: int) -> str:
 
 
 class IBKRReader:
-    """Lecture seule des donnees IBKR (compte, positions, bougies, options)."""
+    """Lecture seule des donnees de MARCHE IBKR (bougies, parametres d'options).
+
+    Frontiere Vertex : ce lecteur ne lit ni compte, ni positions, ni P&L, ni
+    ordres — la session est ouverte par `vertex.data_sources.ibkr_session`
+    (poignee de main seulement, puis verrouillage des methodes de compte)."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = PAPER_PORT, client_id: int = 11):
         self.host = host
@@ -52,8 +56,10 @@ class IBKRReader:
 
     # ---- connexion -------------------------------------------------------
     def connect(self) -> "IBKRReader":
-        # readonly=True : cette session NE PEUT PAS placer d'ordre (verrou IBKR).
-        self.ib.connect(self.host, self.port, clientId=self.client_id, readonly=True)
+        # readonly=True et session marche seulement (aucune lecture de compte).
+        from vertex.data_sources import ibkr_session
+        ibkr_session.connecter(self.ib, self.host, self.port, client_id=self.client_id,
+                               readonly=True)
         print(f"[OK] Connecte a IBKR — {_mode_label(self.port)} — readonly")
         return self
 
@@ -61,9 +67,11 @@ class IBKRReader:
         """Sonde les ports API usuels (reel d'abord) et se connecte au 1er ouvert, en readonly."""
         order = [self.port] + [p for p in COMMON_PORTS if p != self.port]
         last_err = None
+        from vertex.data_sources import ibkr_session
         for port in order:
             try:
-                self.ib.connect(self.host, port, clientId=self.client_id, readonly=True)
+                ibkr_session.connecter(self.ib, self.host, port, client_id=self.client_id,
+                                       readonly=True)
                 self.port = port
                 print(f"[OK] Connecte a IBKR — {_mode_label(port)} — readonly")
                 return self
@@ -79,22 +87,11 @@ class IBKRReader:
             self.ib.disconnect()
             print("[OK] Deconnecte")
 
-    # ---- lecture ---------------------------------------------------------
-    def account_summary(self) -> dict:
-        return {row.tag: row.value for row in self.ib.accountSummary()}
-
-    def positions(self) -> pd.DataFrame:
-        data = [
-            {
-                "symbol": p.contract.symbol,
-                "secType": p.contract.secType,
-                "currency": p.contract.currency,
-                "position": p.position,
-                "avgCost": p.avgCost,
-            }
-            for p in self.ib.positions()
-        ]
-        return pd.DataFrame(data)
+    # ---- lecture (marche seulement) -------------------------------------
+    #  Les deux lectures de compte (resume et lignes detenues) ont ete
+    #  retirees : IBKR est une source de donnees de marche uniquement pour
+    #  Vertex ; le portefeuille est declare par l'utilisateur. Aucun appelant
+    #  du depot ne les utilisait.
 
     def historical_bars(
         self,

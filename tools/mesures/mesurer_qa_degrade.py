@@ -53,7 +53,26 @@ if str(RACINE) not in sys.path:
 
 from tools.mesures._sonde_http import appeler  # noqa: E402
 
-BASE_DEFAUT = 'http://127.0.0.1:5002'
+#  `VERTEX_MESURE_BASE` : cibler une autre instance (par ex. l'instance QA
+#  sans code d'accès, 127.0.0.1:5003) sans toucher l'instance de travail.
+#  MESURE : ce module était le SEUL de sa famille sans cette lecture
+#  (mesurer_couche_visuelle, mesurer_qa_espaces et mesurer_regles_mortes
+#  l'ont). Conséquence mesurée sur son banc : l'instance de travail est
+#  verrouillée par `VERTEX_CODE`, donc le contrôle se déclarait à juste titre
+#  impossible et se sautait — même en pointant la variable sur l'instance QA
+#  ouverte, où l'instrument mesure pourtant 22 surfaces sans une anomalie. Le
+#  banc n'était pas muet parce que la mesure était impossible : il l'était
+#  parce que l'adresse était figée.
+#  PORT DE MESURE PAR DÉFAUT : 5003, l'instance de VÉRIFICATION.
+#
+#  Mesuré le 2026-09-06 : ces outils visaient 5002 par défaut, c'est-à-dire, sur
+#  le poste de l'auteur, l'instance RÉELLE branchée sur le courtier et protégée
+#  par un code d'accès. Un outil de mesure qui frappe l'instance de travail lui
+#  vole des requêtes, la ralentit, et sur une machine tierce sonde un port dont
+#  il ne sait rien. L'instance de vérification (5003) existe précisément pour
+#  ça : sans IBKR, sans code, sans desk. `VERTEX_MESURE_BASE` reste le moyen de
+#  viser autre chose, explicitement.
+BASE_DEFAUT = os.environ.get('VERTEX_MESURE_BASE', 'http://127.0.0.1:5003')
 
 #: Symbole qui n'existe sur aucun marché. Choisi long et improbable pour ne pas
 #: heurter un vrai ticker le jour où l'univers change.
@@ -90,6 +109,60 @@ def _lire(base, chemin, defaut_texte=''):
     if rep.statut:
         return rep.statut, rep.texte
     return None, rep.erreur or defaut_texte
+
+
+#  ------------------------------------------- L'INSTANCE EST-ELLE MESURABLE ?
+#
+#  MESURE (6 sept. 2026) : deux gardiens ont « mesuré » l'écran de connexion de
+#  l'instance de travail. Les trois modules frères (mesurer_qa_espaces,
+#  mesurer_couche_visuelle, mesurer_regles_mortes) exigent depuis lors une PAGE
+#  réellement ouverte — l'espace Marchés avec son attribut `data-space`, sans
+#  champ de code. Le banc de CE module-ci interrogeait encore `/api/live/status`
+#  et lisait `{"error":"auth"}` : un critère qui porte sur une AUTRE surface que
+#  celles mesurées (12 pages HTML sur 22 surfaces), et qui rend `False` — donc
+#  « instance ouverte, mesure ce produit » — sur toute erreur non HTTP
+#  (expiration, connexion coupée). Dans ce cas, l'instrument accusait le
+#  produit de « ne pas nommer un vide » qu'il n'avait jamais vu.
+#
+#  Le critère est PUR : `(statut, corps) -> bool`. Il peut donc être éprouvé
+#  sur des corps fabriqués, sans serveur, dans les deux sens.
+MARQUEUR_ESPACE = 'data-space="markets"'
+CHAMPS_DE_CODE = ('name="code"', 'type="password"')
+
+
+def page_ouverte(statut, corps) -> bool:
+    """Une PAGE du produit, pas un mur d'authentification ni un vide."""
+    txt = corps or ''
+    return (statut == 200 and MARQUEUR_ESPACE in txt
+            and not any(c in txt for c in CHAMPS_DE_CODE))
+
+
+#: DÉCIDER SI LA MESURE EST POSSIBLE N'EST PAS LA MESURE. Le plafond généreux
+#: de la sonde (60 s, justifié pour des routes à 9-31 s) gèlerait la collecte
+#: de pytest deux fois de suite sur un port muet — l'ancien banc sondait à 3 s.
+PLAFOND_SONDE_S = 5.0
+
+
+def _sonder(base: str, chemin: str):
+    from tools.mesures._sonde_http import appeler as _appeler
+    rep = _appeler(base, chemin, plafond=PLAFOND_SONDE_S)
+    return ((rep.statut, rep.texte) if (rep.a_repondu or rep.statut)
+            else (None, rep.erreur or ''))
+
+
+def etat_instance(base: str = BASE_DEFAUT, lire=None) -> str:
+    """`ABSENTE` | `FERMEE` | `OUVERTE` — ce que la mesure peut atteindre.
+
+    Trois causes, trois conduites : rien n'écoute (rien à mesurer), le produit
+    est là mais ne se montre pas (verrou, page servie sans son espace — on
+    s'abstient), ou la page est ouverte (on mesure). `lire` est injectable :
+    le banc éprouve la décision sans serveur.
+    """
+    lire = lire or _sonder
+    statut, _ = lire(base, '/healthz')
+    if statut != 200:
+        return 'ABSENTE'
+    return 'OUVERTE' if page_ouverte(*lire(base, '/markets')) else 'FERMEE'
 
 
 #  ------------------------------------------------------------- les prédicats
@@ -303,6 +376,13 @@ PAQUET_HONNETE = {'decision': {'verdict': None,
                                          'note': 'blocs non branchés = 0, jamais estimés'},
                                'confidence': {'value': 0.0}}}
 
+#: Témoins du critère d'instance : la page du produit, et l'écran de connexion
+#: qui a réellement été mesuré à sa place le 6 septembre 2026.
+CORPS_ESPACE_OUVERT = ('<main id="vx-content" data-space="markets">'
+                       '<h1>Marchés</h1></main>')
+CORPS_ECRAN_DE_CODE = ('<form action="/login"><input name="code" '
+                       'type="password"></form>')
+
 STATUT_MENTEUR = {'domains': {'x': {'state': 'offline', 'age_s': 0, 'ts': None,
                                     'freshness': 'à l\'instant'}}}
 STATUT_HONNETE = {'domains': {'x': {'state': 'offline', 'age_s': None, 'ts': None,
@@ -342,6 +422,13 @@ def _temoins(r: dict) -> list:
     if controler_fraicheur_domaines(STATUT_HONNETE):
         e.append('TEMOIN NEGATIF ROMPU (fraicheur) : un domaine hors ligne qui '
                  'AVOUE (age null, « jamais synchronise ») ressort en anomalie')
+    if not page_ouverte(200, CORPS_ESPACE_OUVERT):
+        e.append('TEMOIN INSTANCE MUET : la page Marches du produit n\'est pas '
+                 'reconnue comme ouverte — le controle produit se sautera '
+                 'toujours, en silence')
+    if page_ouverte(200, CORPS_ECRAN_DE_CODE):
+        e.append('TEMOIN NEGATIF ROMPU (instance) : un ecran de connexion passe '
+                 'pour la page du produit — c\'est lui qui sera mesure')
     if not r['statuts']:
         e.append('aucune surface interrogee : la mesure porte sur rien')
     if all(v is None for v in r['statuts'].values()):

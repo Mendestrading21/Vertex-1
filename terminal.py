@@ -6,13 +6,14 @@ détaillée (signaux techniques, score Track, IV / IV-rank, earnings, plan de
 trade entrée/stop/cibles, mini-chart)  +  GEX (positionnement dealers) à la
 demande. Esthétique sombre pro. Auto-rafraîchi.
 
-Lancer :  py terminal.py   →   http://localhost:5002
+Lancer :  py terminal.py   →   http://127.0.0.1:5002
 Données :  yfinance (différé ~15 min — OK swing). Greeks/GEX = Black-Scholes maison.
 ⛔ ANALYSE ONLY — aucun ordre, aucune exécution. NOT FINANCIAL ADVICE.
 """
 import os
 import copy
 import hashlib
+import contextlib
 import json
 import time
 import threading
@@ -49,6 +50,7 @@ from vertex.data_sources import scan_evidence as _scan_evidence
 #  Point UNIQUE de decouverte de TWS : ordre des ports et identifiants de
 #  session. Voir vertex/data_sources/ibkr_link.py pour ce qu'il corrige.
 from vertex.data_sources import ibkr_link as _ibkr_link
+from vertex.data_sources import ibkr_session as _ibkr_session  # noqa: E402
 from vertex.engines import decide as engine
 from vertex.engines import scorecard as ibkr
 from vertex.strategy import legacy_adapter as strategy
@@ -346,14 +348,49 @@ def _yf_ttl():
         return _YF_TTL_CLOSED
 
 
-def _download_universe(tickers, period='1y', chunk=50):
+def _download_universe(tickers, period='1y', chunk=50, *, publier_provenance=True):
     """Télécharge l'univers PAR LOTS (plus robuste/rapide qu'un seul gros appel
     sur le plan gratuit). Renvoie un dict {ticker: DataFrame} ; un lot ou un
     ticker en échec est simplement ignoré (jamais de plantage global).
     Si yfinance échoue (ex: Yahoo bloque l'IP du serveur cloud), bascule
     automatiquement sur Stooq pour les tickers manquants.
     Cache mémoire par ticker (Lot 2) : sert depuis le cache les tickers encore
-    frais selon la séance, ne télécharge que les périmés/manquants."""
+    frais selon la séance, ne télécharge que les périmés/manquants.
+
+    `publier_provenance` — UN SEUL PROPRIÉTAIRE POUR LA PROVENANCE DU SCAN.
+    Cette fonction a deux appelants : `_scan_once` (533 symboles = 517 titres
+    + 16 de contexte) et `edge_backtest` (140 titres + le benchmark = 141),
+    lancé toutes les 6 h par `_edge_loop`. Les écritures de provenance étaient
+    INCONDITIONNELLES : le backtest réécrivait donc, au nom du scan, une
+    provenance qui décrivait une autre population.
+
+    MESURE (doublures en mémoire, NO_IBKR=1) :
+
+    ```text
+    APRES SCAN   source='yfinance'  detail={'yfinance':533,'symboles_demandes':533} scanned_n=513
+    APRES EDGE   source='yfinance'  detail={'yfinance':141,'symboles_demandes':141} scanned_n=513
+    Yahoo bridé pendant le BACKTEST seulement :
+    APRES EDGE   source='unavailable' abandon_debit={'restes_sans_donnee':41,
+                 'exemples':['CAT','BA','HON','GE','RTX','LMT','DE','MMM']}
+    ```
+
+    Deux conséquences servies, jusqu'à 30 min sur 6 h : `scan_state['source']`
+    — lu par /healthz, scan_api, positions/recalculator (`actionable_allowed`),
+    decision_packet, daily_brief et le badge « live/delayed » des pages —
+    affichait une dégradation FAUSSE sur un scan de 513 lignes parfaitement
+    saines ; et `abandon_debit` nommait CAT, BA, HON, GE, RTX « restés sans
+    donnée » alors que le scan les avait servis — une ABSENCE FABRIQUÉE, ce
+    que ce bloc avait justement été écrit pour empêcher.
+
+    Seul l'appelant qui EST le scan publie donc. `_SOURCE_BUDGET_STATE` reste
+    hors du garde : il décrit l'état de la source elle-même (Yahoo a-t-il
+    répondu à l'instant), pas une population attribuée au scan.
+
+    Le drapeau est KEYWORD-ONLY : `_download_universe(syms, '1y', 50, False)`
+    poserait `publier_provenance=False` par accident, en silence, et le scan
+    cesserait de publier sa provenance — la panne la plus discrète possible,
+    puisque tout continuerait de fonctionner.
+    """
     ttl = _yf_ttl()
     now = time.time()
     frames = {}
@@ -435,16 +472,31 @@ def _download_universe(tickers, period='1y', chunk=50):
     #  alors que Yahoo n'avait rien servi — un diagnostic faux, et faux dans le
     #  sens rassurant.
     yahoo_n -= ibkr_n
-    _SOURCE_BUDGET_STATE['yfinance'] = 'AVAILABLE' if yahoo_n else 'UNAVAILABLE'
+    #  UNE SOURCE QU'ON N'A PAS INTERROGÉE N'EST PAS INDISPONIBLE (invariant 5 :
+    #  absence, zéro et dégradation restent distincts). Quand IBKR sert TOUT
+    #  l'univers, `manquants` est vide, la boucle yfinance ne s'exécute pas, et
+    #  `yahoo_n` vaut 0 — l'ancienne écriture en déduisait `UNAVAILABLE`, servi
+    #  tel quel dans `source_health.yfinance_budget`. MESURÉ sur la carte
+    #  « Pannes en cours » (page Système) : un budget `UNAVAILABLE` s'y affiche
+    #  « source indisponible », donc une panne INVENTÉE — et une vraie panne se
+    #  noierait dedans. `NOT_COLLECTED` (« non collectée lors de ce scan ») est
+    #  déjà du vocabulaire public, traduit par la page.
+    #
+    #  Le budget reste hors du garde `publier_provenance` : il décrit l'état de
+    #  la SOURCE à l'instant (Yahoo a-t-il répondu à qui l'interrogeait), pas
+    #  une population attribuée au scan. Il peut donc légitimement diverger de
+    #  `scan_state['source']` — Yahoo peut brider pendant le backtest alors que
+    #  le scan, servi plus tôt, était sain : ces deux phrases sont vraies.
+    if manquants:
+        _SOURCE_BUDGET_STATE['yfinance'] = 'AVAILABLE' if yahoo_n else 'UNAVAILABLE'
+    else:
+        _SOURCE_BUDGET_STATE['yfinance'] = 'NOT_COLLECTED'
     #  La provenance NOMME chaque contributeur. « ibkr+yfinance » n'est pas
     #  « ibkr » : l'ecran doit pouvoir dire qu'une partie de l'univers n'a pas
     #  ete servie par le courtier, sinon le repli devient invisible — et un
     #  repli invisible est un mensonge de source (QUALITY_STANDARD §1).
     contributeurs = [n for n, c in (('ibkr', ibkr_n), ('yfinance', yahoo_n),
                                     ('stooq', stooq_n)) if c > 0]
-    scan_state['source'] = '+'.join(contributeurs) if contributeurs else 'unavailable'
-    scan_state['source_detail'] = {'ibkr': ibkr_n, 'yfinance': yahoo_n,
-                                   'stooq': stooq_n, 'univers': len(tickers)}
     #  CE QUI A ETE ABANDONNE, et pourquoi. Le backoff anti-429 coupait la file
     #  en silence : le Dashboard affichait « n/d » pendant que le scan annoncait
     #  « aucune erreur ». Un abandon qui ne se nomme pas se lit comme une
@@ -453,15 +505,31 @@ def _download_universe(tickers, period='1y', chunk=50):
     #  `restants` compte ce qui n'a ete servi NI par Yahoo, NI par Stooq : les
     #  abandonnes que le filet de secours a rattrapes ne manquent plus.
     restants = [t for t in _abandonnes if t not in frames]
-    scan_state['abandon_debit'] = {
-        'apres_lots_vides': bool(_abandonnes),
-        'symboles_abandonnes': len(_abandonnes),
-        'restes_sans_donnee': len(restants),
-        'exemples': restants[:8],
-        'motif': ('trois lots vides d affilee : Yahoo limite le debit, la file '
-                  'est coupee et le filet Stooq prend le relais'),
-        'read_only': True,
-    } if _abandonnes else None
+    #  Ces trois cles sont ATTRIBUEES AU SCAN : seul le scan les publie (cf. le
+    #  docstring). Un autre appelant qui les ecrirait raconterait sa propre
+    #  population sous l'etiquette du scan.
+    if publier_provenance:
+        scan_state['source'] = '+'.join(contributeurs) if contributeurs else 'unavailable'
+        #  'univers' -> 'symboles_demandes'. TROIS DÉNOMINATEURS JUSTES sous un
+        #  mot qui en suggérait un seul : ce compte vaut 533 (517 titres + 16
+        #  symboles de contexte demandés à la file), pendant que `universe_n`
+        #  en sert 517 et `scanned_n` 513. Le nom invitait à les comparer, donc
+        #  à lire un écart de 20 titres là où il n'y a que trois questions
+        #  différentes. Aucun consommateur ne lisait cette clé par son nom
+        #  (relevé sur tout le dépôt : `.py`, `.js`) — seul le détail complet
+        #  circule, via /api/system/diagnostics.
+        scan_state['source_detail'] = {'ibkr': ibkr_n, 'yfinance': yahoo_n,
+                                       'stooq': stooq_n,
+                                       'symboles_demandes': len(tickers)}
+        scan_state['abandon_debit'] = {
+            'apres_lots_vides': bool(_abandonnes),
+            'symboles_abandonnes': len(_abandonnes),
+            'restes_sans_donnee': len(restants),
+            'exemples': restants[:8],
+            'motif': ('trois lots vides d affilee : Yahoo limite le debit, la file '
+                      'est coupee et le filet Stooq prend le relais'),
+            'read_only': True,
+        } if _abandonnes else None
     return frames
 
 
@@ -746,6 +814,10 @@ def _scan_once():
                   'titres_en_echec': _te,
                   **({'source': 'demo'} if DEMO_MODE else {}),
                   'scan_ts': time.time(),
+                  #  `scan_ts_h` : lu par 23 consommateurs (as_of des routes,
+                  #  DecisionTrace…) et jamais ecrit jusqu'a la mission
+                  #  alimentation — la fraicheur se lisait « HH:MM:SS » sans date.
+                  'scan_ts_h': _horodatage_iso_utc(),
                   'updated': datetime.now().strftime('%H:%M:%S'), 'error': None})
         if DEMO_MODE:                                  # VITRINE : board d'options synthétique
             try:
@@ -870,6 +942,7 @@ def _scan_once():
                   },
                   'universe_n': len(syms_scan), 'scanned_n': len(rows),
                   'scan_ts': time.time(),
+                  'scan_ts_h': _horodatage_iso_utc(),
                   'updated': datetime.now().strftime('%H:%M:%S'), 'error': None})
         try:
             _apply_ibkr_indices()   # overlay indices/VIX TEMPS RÉEL IBKR par-dessus le différé yfinance
@@ -998,9 +1071,9 @@ def _ibkr_opt_worker():
         #  reel.
         for port in _ibkr_link.ordre_des_ports():
             try:
-                ib.connect(_ibkr_link.hote(), port,
-                           clientId=_ibkr_link.client_id('options'),
-                           readonly=True, timeout=6)
+                #  Session marché seulement (aucune lecture de compte au connect).
+                _ibkr_session.connecter(ib, _ibkr_link.hote(), port, client_id=_ibkr_link.client_id('options'),
+                                        timeout=6, readonly=True)
                 ib.reqMarketDataType(1)              # temps réel (abonnement actif)
                 _ibkr_link.noter_succes(port, 'options')
                 _optf.noter_connexion(True)
@@ -1554,6 +1627,19 @@ def _opt_loop():
                 pass
             time.sleep(120)
         else:
+            #  LA BOUCLE TOURNE, SON ENTRÉE MANQUE — et elle est la seule à le
+            #  savoir. Sans ce signal, le registre ne voit rien pendant que la
+            #  garde ci-dessus attend le premier scan : MESURÉ, à 241 s
+            #  d'uptime (2× la cadence de 120 s), `jobs()` servait
+            #  `JAMAIS_DEMARRE` et l'écran « boucle non démarrée dans cette
+            #  configuration ou arrêtée avant son premier passage » pour une
+            #  boucle vivante. Le signal périme en 60 s : si cette boucle
+            #  meurt ici, le diagnostic redevient juste tout seul.
+            try:
+                from vertex.scheduler import registry as _sched
+                _sched.attente('OPTIONS_BOARD_REFRESH', 'MARKET_DATA_REFRESH')
+            except Exception:
+                pass
             time.sleep(8)
 
 
@@ -1674,6 +1760,16 @@ def _news_loop():
             for sym in NEWS_SYMS + hot:
                 try:
                     its = depeches.get(sym) or []
+                    #  ATTESTATION DU VENDEUR — ce que cette branche-ci SAIT.
+                    #  `depeches_lot` interroge `reqHistoricalNews` sur le
+                    #  `conId` QUALIFIE du contrat : c'est le courtier qui
+                    #  rattache la depeche au titre, pas Vertex. Le repli web,
+                    #  lui, est une recherche de mots-cles (`'%s stock'`) : rien
+                    #  n'y garantit que l'article PARLE du titre — mesure du
+                    #  2026-09-06 sur les 45 items servis, 22 titres sur 45 ne
+                    #  nommaient ni le ticker ni la societe du fil.
+                    #  Le drapeau n'est donc pose QUE sur la branche courtier.
+                    atteste = bool(its)
                     if its:
                         n_ibkr += 1
                     else:
@@ -1688,7 +1784,18 @@ def _news_loop():
                     its, _ = ai.fr_news(sym, its)
                     for it in its:
                         it['senti'] = _news_plus.sentiment((it.get('title') or '') + ' ' + (it.get('fr') or ''))
-                        feed.append({**it, 'sym': sym})
+                        #  `sym` est le FIL INTERROGE, jamais une affirmation de
+                        #  sujet : le role est POSE ICI, au seul producteur du
+                        #  fil, pour que tous les consommateurs (route, brief,
+                        #  pipeline) lisent le meme verdict au lieu de le
+                        #  rejuger — ou pire, de prendre la provenance pour le
+                        #  sujet. Pose apres `fr_news` : la traduction FR fait
+                        #  partie du texte servi, donc du texte juge.
+                        _it = {**it, 'sym': sym}
+                        if atteste:
+                            _it['sym_atteste'] = True
+                        _it['sym_role'] = _news_plus.role_sujet(_it, sym)
+                        feed.append(_it)
                 except Exception:
                     continue
             # LOT 605 : la deduplication se faisait sur `titre[:60]` — deux
@@ -1699,7 +1806,14 @@ def _news_loop():
             # NORMALISE COMPLET + le lien : le fil ne l'appelait simplement pas.
             # Dedupe AVANT le tri : on garde le premier arrive, comme avant.
             feed = _news_plus.dedupe_news(feed)
-            feed.sort(key=lambda x: x.get('time') or '', reverse=True)
+            #  Traçabilité (P2) : heure de RÉCEPTION (ici, UTC) distincte de
+            #  l'horodatage de PUBLICATION fourni par la source (normalisé,
+            #  jamais inventé : None si la source n'en donne pas de lisible).
+            _recu = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            for _it in feed:
+                _it['received_at'] = _recu
+                _it['published_at'] = _news_plus.horodatage_source(_it.get('time'))
+            feed.sort(key=lambda x: x.get('published_at') or x.get('time') or '', reverse=True)
             #  Regle produit n°5 : tout texte externe passe par
             #  `sanitize_news` AVANT d'etre servi. Cette branche-ci —
             #  RSS, yfinance, traduction — ne le faisait pas ; seule
@@ -1707,6 +1821,8 @@ def _news_loop():
             #  innerHTML : un titre porteur de balise passait tel quel.
             news_state['items'] = _news_plus.sanitize_news(feed[:45])
             news_state['updated'] = datetime.now().strftime('%H:%M:%S')
+            news_state['ts'] = time.time()                 # époque serveur (âge vivant des cartes)
+            news_state['as_of'] = _recu
             #  La provenance NOMME ses contributeurs, comme le scan : « ibkr »
             #  n'est pas « ibkr+web ». Sans ce compte, un fil bascule
             #  entierement sur le web sans que rien ne change a l'ecran.
@@ -1719,6 +1835,13 @@ def _news_loop():
             #  fausse elle aussi ; la vraie est celle d'en dessous, 60 s.
             from vertex.scheduler import registry as _sched
             _sched.beat('NEWS_REFRESH', ok=True)
+            #  Diffusion : les cartes Actualités se rafraîchissent sur l'événement
+            #  (comptes et provenance seulement — jamais le contenu).
+            with contextlib.suppress(Exception):
+                from vertex.services.live_stream import BROKER as _broker
+                _broker.publish('news', {'n': len(news_state.get('items') or []),
+                                         'source': news_state.get('source'),
+                                         'updated': news_state.get('updated')})
         except Exception as e:
             #  Ce battement ne pouvait JAMAIS dire ERREUR : place en fin de
             #  `try`, il n'etait atteint qu'en cas de succes, et l'echec
@@ -1895,6 +2018,14 @@ def _fund_loop():
                 pass
             time.sleep(45 if still_missing else 6 * 3600)     # rapide tant que ça remplit, puis lent
         else:
+            #  Même signal que `_opt_loop` : cadence 6 h, donc le faux
+            #  `JAMAIS_DEMARRE` mesuré tombe à 43 201 s d'uptime. Plus rare,
+            #  même mensonge.
+            try:
+                from vertex.scheduler import registry as _sched
+                _sched.attente('FUNDAMENTALS_REFRESH', 'MARKET_DATA_REFRESH')
+            except Exception:
+                pass
             time.sleep(12)
 
 
@@ -1914,8 +2045,17 @@ from vertex.engines import edge_validation as _edge_validation  # noqa: E402
 #  `_download_universe` reste résolu dans CES globales au moment de l'appel,
 #  donc les doublures de test continuent de mordre.
 def edge_backtest(syms=None, horizons=(5, 21, 63), step=8, lookback=460):
+    #  Le backtest TÉLÉCHARGE, il ne publie pas la provenance du scan : ses 141
+    #  symboles (140 + le benchmark) ne sont pas la population du scan, et
+    #  écrire `scan_state['source']` en son nom a été mesuré comme produisant
+    #  une dégradation fausse et des absences fabriquées (cf. docstring de
+    #  `_download_universe`). Le lambda résout toujours `_download_universe`,
+    #  `_stooq_download` et `yf` dans CES globales : les doublures de test
+    #  continuent de mordre.
     return _edge_validation.edge_backtest(
-        telecharger=_download_universe, analyser=analyse,
+        telecharger=lambda _syms, **kw: _download_universe(
+            _syms, publier_provenance=False, **kw),
+        analyser=analyse,
         univers=list(dict.fromkeys(WATCHLIST + _BIG_EXTRA + _TREND_EXTRA))[:140],
         bench=BENCH, syms=syms, horizons=horizons, step=step, lookback=lookback)
 
@@ -1954,6 +2094,13 @@ def _edge_loop():
                 pass
             time.sleep(6 * 3600)
         else:
+            #  Même signal que `_opt_loop` (cadence 6 h, faux `JAMAIS_DEMARRE`
+            #  mesuré à 43 201 s d'uptime).
+            try:
+                from vertex.scheduler import registry as _sched
+                _sched.attente('TRACK_RECORD_UPDATE', 'MARKET_DATA_REFRESH')
+            except Exception:
+                pass
             time.sleep(20)
 
 
@@ -2001,6 +2148,14 @@ def _weekly_loop():
                 pass
             time.sleep(300)        # options réelles = lent → toutes les 5 min
         else:
+            #  Même signal que `_opt_loop` : mesuré à 601 s d'uptime (2× la
+            #  cadence de 300 s), cette boucle vivante était servie
+            #  `JAMAIS_DEMARRE`. Attendre son entrée n'est pas être morte.
+            try:
+                from vertex.scheduler import registry as _sched
+                _sched.attente('WEEKLY_REVIEW', 'MARKET_DATA_REFRESH')
+            except Exception:
+                pass
             time.sleep(8)
 
 
@@ -2140,9 +2295,9 @@ def _ibkr_worker(res):
     #  cash d'un compte et les cotations d'un autre, sans que rien ne le dise.
     for port in _ibkr_link.ordre_des_ports():
         try:
-            r.ib.connect(_ibkr_link.hote(), port,
-                         clientId=_ibkr_link.client_id('compte'),
-                         readonly=True, timeout=2)
+            #  Preuve de socket seulement : session marché, jamais de compte.
+            _ibkr_session.connecter(r.ib, _ibkr_link.hote(), port, client_id=_ibkr_link.client_id('compte'),
+                                    timeout=2, readonly=True)
             r.port = port
             _ibkr_link.noter_succes(port, 'compte')
             break
@@ -2258,9 +2413,8 @@ def _quotes_worker():
             ok = False
             for port in _ibkr_link.ordre_des_ports():
                 try:
-                    ib.connect(_ibkr_link.hote(), port,
-                               clientId=_ibkr_link.client_id('cotations'),
-                               readonly=True, timeout=4)
+                    _ibkr_session.connecter(ib, _ibkr_link.hote(), port, client_id=_ibkr_link.client_id('cotations'),
+                                            timeout=4, readonly=True)
                     _ibkr_link.noter_succes(port, 'cotations')
                     ok = True
                     break
@@ -2407,9 +2561,8 @@ def _indices_loop():
             ok = False
             for port in _ibkr_link.ordre_des_ports():
                 try:
-                    ib.connect(_ibkr_link.hote(), port,
-                               clientId=_ibkr_link.client_id('indices'),
-                               readonly=True, timeout=4)
+                    _ibkr_session.connecter(ib, _ibkr_link.hote(), port, client_id=_ibkr_link.client_id('indices'),
+                                            timeout=4, readonly=True)
                     _ibkr_link.noter_succes(port, 'indices')
                     ok = True
                     break
@@ -2597,6 +2750,12 @@ def _alerts_loop():
 #  dependances vivaient deja dans le paquet).
 
 
+def _horodatage_iso_utc() -> str:
+    """Horodatage ISO 8601 UTC (`2026-09-06T00:12:03Z`) : parseable par
+    `VX.freshness._ms`, contrairement a `updated` (heure locale sans date)."""
+    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+
 def _demarrer_les_boucles():
     """Démarre les threads de fond. En mode DÉMO (vitrine cloud) on ne lance QUE le
     scan synthétique : les autres boucles (options/news/calendrier/hebdo/fondamentaux)
@@ -2619,6 +2778,11 @@ def _demarrer_les_boucles():
         threading.Thread(target=_weekly_loop, daemon=True).start()
         threading.Thread(target=_fund_loop, daemon=True).start()
         threading.Thread(target=_edge_loop, daemon=True).start()
+        #  Références macro officielles (FRED, BCE, BNS) : collecteur de fond
+        #  propre au paquet (`vertex/services/macro_officiel.py`), rien de
+        #  nouveau dans le monolithe hormis ce démarrage.
+        from vertex.services import macro_officiel as _macro_officiel
+        _macro_officiel.demarrer()
     if IBKR_ENABLED:                                  # pas de TWS sur le cloud → on n'essaie pas
         threading.Thread(target=_quotes_worker, daemon=True).start()
         threading.Thread(target=_indices_loop, daemon=True).start()      # indices/VIX TEMPS RÉEL IBKR (lecture seule)
@@ -2721,7 +2885,13 @@ def _start_app():
         print(_etat['raison'])
         raise SystemExit(2)
     host = _etat['hote']
-    print(f'VERTEX -> http://localhost:{port}  ·  IBKR live: {IBKR_ENABLED}  (Ctrl+C pour arreter)')
+    #  ADRESSE IPv4 EXPLICITE, mesuree le 2026-09-06 : le serveur ecoute en
+    #  IPv4 (0.0.0.0 ou 127.0.0.1). Un navigateur qui resout `localhost` en
+    #  IPv6 (::1) n'atteint alors rien — et si un service worker a deja mis
+    #  la coque en cache, il sert une page PERIMEE sans feuille de style :
+    #  l'application parait cassee alors qu'elle tourne. On annonce donc
+    #  l'adresse qui repond a coup sur. L'ECOUTE est inchangee.
+    print(f'VERTEX -> http://127.0.0.1:{port}  ·  IBKR live: {IBKR_ENABLED}  (Ctrl+C pour arreter)')
     print('   ' + _phrase(_etat))
     app.run(host=host, port=port, debug=False, use_reloader=False, threaded=True)
 

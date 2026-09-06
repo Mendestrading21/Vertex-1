@@ -100,3 +100,59 @@ def test_resolve_model_prefers_vertex_then_anthropic(monkeypatch):
     assert health.resolve_model() == 'autre'
     monkeypatch.delenv('ANTHROPIC_MODEL', raising=False)
     assert health.resolve_model() == health.DEFAULT_MODEL
+
+
+def test_paquet_analyste_lit_le_fondamental_chez_son_producteur():
+    """CONSTAT 5, site jumeau — le dossier envoyé à Claude lisait deux clés mortes.
+
+    MESURE (detail portant `sub.fundamental = 100.0`) :
+      - moteur   → fundamental {'score': 100.0, 'is_proxy': False}
+      - paquet IA→ fundamental {'score': None, 'quality': None}
+    Le paquet lisait `detail['st_fund'] or detail['fund_score']` : `fund_score`
+    n'a AUCUNE assignation dans le dépôt et `st_fund` n'est posée que sur la
+    LIGNE de tableau (terminal.py:643), jamais sur le `detail`. Le dossier
+    servait donc une valeur MESURÉE comme une absence, sous un docstring
+    promettant « aucune valeur inventée ».
+    """
+    from vertex.app.routes import ai_api
+    detail = {'score': 78, 'sub': {'fundamental': 100.0, 'fundamental_is_proxy': False},
+              'vertex': {'fund_quality': 'A'}}
+    pk = ai_api._analyst_packet('NVDA', detail, {})
+    assert pk['fundamental']['score'] == 100.0
+    assert pk['fundamental']['is_proxy'] is False        # lignage transporté
+    assert pk['fundamental']['quality'] == 'A'           # champ historique conservé
+    # Le `or` écrasait en plus un 0 légitime : 0 = « fondamentaux non branchés »,
+    # donc ABSENT (sémantique figée par tests/test_evidence_edges.py), jamais 0.
+    zero = ai_api._analyst_packet('NVDA', {'sub': {'fundamental': 0}}, {})
+    assert zero['fundamental']['score'] is None
+
+
+def test_paquet_analyste_ne_se_contredit_pas_sur_les_inconnues():
+    """RÉGRESSION du premier tour — fondamental « absent » ET non déclaré inconnu.
+
+    MESURE après le correctif partiel du lot précédent : `unknowns`, repris du
+    moteur exécutif corrigé, ne listait plus 'fundamental' pendant que le paquet
+    IA servait toujours `fundamental {'score': None}`. Claude recevait donc un
+    fondamental présenté comme ABSENT et simultanément PAS déclaré inconnu —
+    état pire qu'avant le lot, où les deux disaient « inconnu ». L'invariant
+    testé ici est la cohérence du dossier avec lui-même, dans les deux sens.
+    """
+    from vertex.app.routes import ai_api
+    from vertex.strategy import decision_packet as dp
+    from vertex.strategy import executive_engine as ex
+    scan = {'source': 'stooq', 'market': {'et': '08:54 ET', 'open': False}}
+
+    def _coherent(detail):
+        resp = ex.decide(dp.build('NVDA', detail, scan))
+        pk = ai_api._analyst_packet('NVDA', detail, resp)
+        absent = pk['fundamental']['score'] is None
+        declare = 'fundamental' in (pk['unknowns'] or [])
+        return absent == declare, pk
+
+    ok, pk = _coherent({'score': 78, 'rr': 2.3,
+                        'sub': {'fundamental': 100.0, 'fundamental_is_proxy': False}})
+    assert ok and pk['fundamental']['score'] == 100.0
+    assert 'fundamental' not in pk['unknowns']
+    ok, pk = _coherent({'score': 78, 'rr': 2.3})          # vraiment absent
+    assert ok and pk['fundamental']['score'] is None
+    assert 'fundamental' in pk['unknowns']

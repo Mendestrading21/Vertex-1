@@ -26,6 +26,7 @@ re-télécharger par requête coûterait un appel réseau par fiche ouverte.
 """
 from __future__ import annotations
 
+import threading
 import time
 
 from flask import Blueprint, jsonify
@@ -69,11 +70,58 @@ def references():
     return brut
 
 
+#  Résultats par titre (TTL = celui des références) et calculs en cours : la
+#  requête ne tire jamais yfinance elle-même — le calcul part en fond et la
+#  première réponse dit « EN_COURS ».
+_CORR_SYM: dict = {}
+_CORR_EN_COURS: dict = {}
+_CORR_VERROU = threading.Lock()
+RETRY_S = 10
+
+
+def _calculer_en_fond(sym):
+    now = time.time()
+    with _CORR_VERROU:
+        if now - _CORR_EN_COURS.get(sym, 0) < 120:
+            return False
+        _CORR_EN_COURS[sym] = now
+
+    def _run():
+        try:
+            res = calculer(sym)
+            _CORR_SYM[sym] = {'ts': time.time(), 'res': res}
+        finally:
+            with _CORR_VERROU:
+                _CORR_EN_COURS.pop(sym, None)
+    threading.Thread(target=_run, daemon=True, name='corr-' + sym).start()
+    return True
+
+
 @bp.route('/api/correlations/<sym>')
 def api_correlations(sym):
     """Corrélation RÉELLE (rendements journaliers, 6 mois) avec chaque référence.
 
-    Repli honnête : liste vide **et** l'erreur, si les données ne suffisent pas."""
+    Aucun réseau dans la requête : résultat servi du cache (`etat` CACHE),
+    sinon calcul EN FOND et réponse `EN_COURS` + `retry_s`. Repli honnête :
+    liste vide **et** l'erreur, si les données ne suffisent pas."""
+    sym = (sym or '').upper()
+    ent = _CORR_SYM.get(sym)
+    if ent and time.time() - ent['ts'] < TTL_S:
+        out = dict(ent['res'])
+        out['etat'] = 'CACHE'
+        out['as_of'] = ent['ts']
+        return jsonify(out)
+    _calculer_en_fond(sym)
+    if ent:                      # périmé : servi tel quel, étiqueté
+        out = dict(ent['res'])
+        out.update({'etat': 'PERIME', 'stale': True, 'as_of': ent['ts'], 'retry_s': RETRY_S})
+        return jsonify(out)
+    return jsonify({'sym': sym, 'corr': [], 'etat': 'EN_COURS', 'retry_s': RETRY_S,
+                    'note': 'corrélations en cours de calcul (références + titre) — réessayer'})
+
+
+def calculer(sym):
+    """Le calcul lui-même (réseau yfinance) — appelé EN FOND, jamais par la requête."""
     sym = (sym or '').upper()
     try:
         import pandas as pd
@@ -99,13 +147,13 @@ def api_correlations(sym):
             if pd.notna(c):
                 out.append([label, round(float(c), 2)])
         out.sort(key=lambda x: -x[1])
-        return jsonify({'sym': sym, 'corr': out})
+        return {'sym': sym, 'corr': out}
     except Exception:                                         # noqa: BLE001
         #  Code stable, jamais le texte de l'exception.
-        return jsonify({'sym': sym, 'corr': [],
-                        'error': 'correlations_unavailable',
-                        'note': 'corrélations indisponibles — série trop '
-                                'courte ou source injoignable'})
+        return {'sym': sym, 'corr': [],
+                'error': 'correlations_unavailable',
+                'note': 'corrélations indisponibles — série trop '
+                        'courte ou source injoignable'}
 
 
-__all__ = ['bp', 'REFERENCES', 'TTL_S', 'references']
+__all__ = ['bp', 'REFERENCES', 'TTL_S', 'references', 'calculer']

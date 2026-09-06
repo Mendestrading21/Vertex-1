@@ -116,21 +116,39 @@ def test_attach_vehicle_board_vide_reco_action():
     assert 'aucune option' in rows[0]['vehicle']['why']
 
 
-# ── attach_strategy : repli vx_rr et seuil R:R exact ─────────────────────────
+# ── attach_strategy : seuil R:R exact, et plus AUCUN repli d'une autre échelle ─
 
-def test_rr_repli_sur_vx_rr_et_seuil_2_strict():
-    # Pas de plan → repli sur vx_rr ; le seuil rr_ok est ≥ 2 STRICT :
-    # 1.99 échoue, 2.0 passe.
-    r199 = [{'symbol': 'Y', 'score': 50, 'vx_rr': 1.99}]
-    r200 = [{'symbol': 'Z', 'score': 50, 'vx_rr': 2.0}]
-    sf.attach_strategy(r199, {})
-    sf.attach_strategy(r200, {})
+def test_le_seuil_rr_ok_est_2_strict_sur_le_ratio_mesure():
+    """Le seuil reste ≥ 2 STRICT — seule la SOURCE du nombre a changé.
+
+    Ce test figeait auparavant le repli sur `vx_rr` avec des valeurs 1.99/2.00,
+    qui ressemblaient à des ratios. Elles n'en sont pas : `vx_rr` = `vertex['rr']`
+    = `quant_engine.rr_score`, une NOTE /100 (`rr_real * 32` : « 2:1→64 »).
+    Mesuré le 6 sept. 2026 sur /api/vertex/<sym> — NVDA 8, MSFT 22, AAPL 41,
+    TSLA 44, AMD 55, META 44, GOOGL 64, AMZN 55 — le repli allumait donc
+    `rr_ok` (note ≥ 2) sur 8/8 titres, note 8 comprise, qui encode le PIRE
+    ratio réel (~0,25:1). Le seuil est désormais appliqué au ratio mesuré.
+    """
+    r199 = [{'symbol': 'Y', 'score': 50}]
+    r200 = [{'symbol': 'Z', 'score': 50}]
+    sf.attach_strategy(r199, {'Y': {'plan': {'rr_res': 1.99}}})
+    sf.attach_strategy(r200, {'Z': {'plan': {'rr_res': 2.0}}})
     assert r199[0]['rr'] == 1.99 and r199[0]['rr_ok'] is False
-    assert r200[0]['rr_ok'] is True
+    assert r200[0]['rr'] == 2.0 and r200[0]['rr_ok'] is True
 
 
-def test_rr_plan_prioritaire_sur_vx_rr():
-    rows = [{'symbol': 'X', 'score': 50, 'vx_rr': 1.0}]
+def test_la_note_quant_sur_100_n_allume_plus_le_drapeau_de_ratio():
+    """Une note /100 ne remplace jamais un ratio : ni valeur, ni feu vert."""
+    notes_mesurees_le_6_septembre = [8, 22, 41, 44, 55, 64]
+    for note in notes_mesurees_le_6_septembre:
+        rows = [{'symbol': 'X', 'score': 50, 'vx_rr': note}]
+        sf.attach_strategy(rows, {})
+        assert rows[0]['rr'] is None, note
+        assert rows[0]['rr_ok'] is False, note
+
+
+def test_rr_plan_est_la_seule_source():
+    rows = [{'symbol': 'X', 'score': 50, 'vx_rr': 100}]
     sf.attach_strategy(rows, {'X': {'plan': {'rr_res': 2.5}}})
     assert rows[0]['rr'] == 2.5 and rows[0]['rr_ok'] is True
 
@@ -155,11 +173,21 @@ def test_tilt_favorable_arithmetique_exacte():
 def test_tilt_neutre_climat_inconnu_prudence_mediane():
     # Régime NEUTRAL, roro/vix inconnus, breadth vide : 18+12+12+8 = 50
     # (round(12.5) bancaire → 12) → bande NEUTRE, CALL en taille réduite.
+    #  CONSTAT 30 (second tour) : ces 12 points de participation venaient d'un
+    #  50 SUBSTITUÉ à une largeur jamais mesurée. Le score ne bouge pas — aucun
+    #  seuil déplacé — mais la couverture est désormais MARQUÉE : sans cette
+    #  marque, ce 50 était indiscernable d'une participation réellement mesurée
+    #  à 50 % (mesuré : breadth {} et {'above50': 50} rendaient exactement le
+    #  même dictionnaire). La caractérisation fige donc les deux : le chiffre
+    #  ET son aveu de couverture.
     t = sf.strat_tilt({'spy_regime': 'NEUTRAL', 'roro': None,
                        'vix_band': None, 'breadth': {}})
     assert t['score'] == 50 and t['regime'] == 'NEUTRE'
     assert 'réduite' in t['call_size']
     assert t['emphasis'] == ['Repli sur tendance', 'Qualité forte']
+    assert t['partiel'] is True and t['breadth_status'] == 'MISSING'
+    #  Bande NEUTRE : la prescription est déjà prudente, rien à plafonner.
+    assert 'call_size_plafonne' not in t
 
 
 def test_tilt_dangereux_defense_et_bornes():

@@ -79,6 +79,15 @@ _ROUTES = (
     '/api/anomalies/AAPL',
     '/api/skyler/graph',
     '/api/weekly',
+    #  Ajoutées au lot J-routes-api. MESURE du 2026-09-06, avant correctif,
+    #  sur `app.test_client()` : la première rendait
+    #  `{"error":"simulation impossible: float division by zero"}` et la
+    #  seconde `{"error":"simulation impossible: math domain error"}` — deux
+    #  messages de la bibliothèque standard servis comme état. Le balayage
+    #  statique ne les voyait pas : le texte passait par une f-string, pas par
+    #  `str(exc)`. D'où le critère de FLUX ajouté plus bas.
+    '/api/options/simulate?sym=AAPL&spot=100&strike=0&dte=30&mid=5&iv=0.3',
+    '/api/options/simulate?sym=AAPL&spot=100&strike=100&dte=30&mid=5&iv=99999',
 )
 
 #: Sous-ensemble pour le DÉNOMINATEUR. `/api/weekly` en est absent : il rend
@@ -203,6 +212,143 @@ def test_str_d_exception_LARGE_ne_devient_pas_une_charge():
                 fautes.append('%s:%d' % (os.path.relpath(chemin, _RACINE), n.lineno))
     assert fautes == [], (
         'texte d’une exception LARGE servi au client : %s' % '; '.join(fautes))
+
+
+# ── 2 bis. Le critère de FLUX : où le nom de l'exception ATTERRIT-il ? ──────
+#
+#  Les deux critères ci-dessus regardent la FORME (`str(e)`, `type(e).__name__`)
+#  dans le TEXTE de la clause. Mesuré le 2026-09-06 : trois fuites réelles leur
+#  échappaient, toutes dans `vertex/app/routes/redesign.py`, pour deux raisons
+#  de forme et non de fond —
+#
+#    · `return jsonify({'error': f'simulation impossible: {exc}'}), 422`
+#      — f-string : pas de `str(exc)`, donc invisible ;
+#    · `base['daily_error'] = str(e)[:120]` (idem `editorial_error`), puis
+#      `return jsonify(base)` DEUX lignes plus bas, hors de la clause : le
+#      segment de la clause ne contient ni `jsonify` ni `'error'`, donc le
+#      garde-fou se taisait alors même que le texte partait au client.
+#
+#  Un gardien qui interdit une ÉCRITURE plutôt qu'un EFFET se contourne sans le
+#  vouloir : il suffit de changer de syntaxe. Celui-ci mesure la propriété qui
+#  compte — le nom de l'exception rejoint-il la charge servie ? — et il
+#  n'interdit pas la bonne pratique inverse, garder le détail pour un usage
+#  INTERNE (`_sched.beat(error=…)`, `_IV_NON_RECALCULEE.append({'erreur': …})`).
+
+
+def _racine_cible(cible):
+    """`base['daily_error']` → `base`. None si la cible n'a pas de racine nommée."""
+    while isinstance(cible, (ast.Subscript, ast.Attribute)):
+        cible = cible.value
+    return cible.id if isinstance(cible, ast.Name) else None
+
+
+def _noms_servis(fn):
+    """Les variables passées telles quelles à `jsonify(...)` dans cette fonction."""
+    noms = set()
+    for n in ast.walk(fn):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id == 'jsonify'):
+            noms |= {a.id for a in n.args if isinstance(a, ast.Name)}
+    return noms
+
+
+def _emploie(noeud, nom):
+    return any(isinstance(x, ast.Name) and x.id == nom for x in ast.walk(noeud))
+
+
+def fuites_de_flux(src):
+    """Positions où le nom d'une exception LARGE atteint une charge servie."""
+    fautes = set()
+    for fn in ast.walk(ast.parse(src)):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        servis = _noms_servis(fn)
+        for h in ast.walk(fn):
+            if not isinstance(h, ast.ExceptHandler) or h.name is None:
+                continue
+            large = (h.type is None
+                     or (isinstance(h.type, ast.Name) and h.type.id == 'Exception'))
+            if not large:
+                continue
+            for st in ast.walk(h):
+                #  a) le nom part dans un `return` (jsonify direct ou dict) ;
+                if isinstance(st, ast.Return) and _emploie(st, h.name):
+                    fautes.add((st.lineno, 'return'))
+                #  b) le nom entre dans un appel à `jsonify(...)` ;
+                elif (isinstance(st, ast.Call) and isinstance(st.func, ast.Name)
+                        and st.func.id == 'jsonify' and _emploie(st, h.name)):
+                    fautes.add((st.lineno, 'jsonify'))
+                #  c) le nom est rangé dans une variable que la fonction sert
+                #     ensuite — la fuite différée, la plus discrète des trois.
+                elif isinstance(st, ast.Assign) and _emploie(st.value, h.name):
+                    if any(_racine_cible(c) in servis for c in st.targets):
+                        fautes.add((st.lineno, 'variable servie'))
+    return sorted(fautes)
+
+
+def test_le_nom_de_l_exception_LARGE_n_atteint_pas_une_charge_SERVIE():
+    fautes = []
+    for chemin in sorted(_sources()):
+        with open(chemin, encoding='utf-8', errors='ignore') as f:
+            src = f.read()
+        try:
+            trouvees = fuites_de_flux(src)
+        except SyntaxError:
+            continue
+        rel = os.path.relpath(chemin, _RACINE)
+        fautes += ['%s:%d (%s)' % (rel, ligne, voie) for ligne, voie in trouvees]
+    assert fautes == [], (
+        'le nom d’une exception LARGE rejoint une charge servie — employer un '
+        'code stable et une note française, et garder le détail côté serveur : '
+        '%s' % '; '.join(fautes))
+
+
+def test_le_critere_de_FLUX_mord_sur_les_trois_fuites_MESUREES():
+    """Anti-vide : les trois formes réellement trouvées le 2026-09-06 doivent
+    être détectées, sinon ce banc ne prouve rien de ce qu'il prétend garder."""
+    for source in (
+        # f-string dans un return — /api/options/simulate
+        "def r():\n"
+        "    try:\n        x = 1\n"
+        "    except Exception as exc:\n"
+        "        return jsonify({'error': f'simulation impossible: {exc}'}), 422\n",
+        # variable servie plus loin — /api/briefing/editorial
+        "def r():\n"
+        "    base = {}\n    try:\n        x = 1\n"
+        "    except Exception as e:\n        base['daily_error'] = str(e)[:120]\n"
+        "    return jsonify(base)\n",
+        # concaténation via %, forme historique
+        "def r():\n"
+        "    try:\n        x = 1\n"
+        "    except Exception as e:\n"
+        "        return jsonify({'erreur': '%s: %s' % (type(e).__name__, e)})\n",
+    ):
+        assert fuites_de_flux(source), 'critère aveugle sur :\n%s' % source
+
+
+def test_le_critere_de_FLUX_laisse_vivre_le_diagnostic_INTERNE():
+    """Contre-épreuve : garder le détail d'une exception pour un usage interne
+    est une BONNE pratique, et le dépôt en use à deux endroits mesurés
+    (`desk.py` → battement du scheduler, `options_intel_api.py` → compteur d'IV
+    non recalculée). Un gardien qui les condamnerait ferait perdre du
+    diagnostic pour rien."""
+    for source in (
+        "def r():\n"
+        "    try:\n        x = 1\n"
+        "    except Exception as e:\n"
+        "        _sched.beat('DATA_BACKUP', ok=False,\n"
+        "                    error='%s: %s' % (type(e).__name__, e))\n",
+        "def r():\n"
+        "    try:\n        x = 1\n"
+        "    except Exception as _e:\n"
+        "        _IV_NON_RECALCULEE.append({'erreur': str(_e)[:120]})\n",
+        #  Une variable NON servie garde le droit de porter le détail.
+        "def r():\n"
+        "    journal = {}\n    try:\n        x = 1\n"
+        "    except Exception as e:\n        journal['erreur'] = str(e)\n"
+        "    return jsonify({'ok': False})\n",
+    ):
+        assert fuites_de_flux(source) == [], 'critère trop large sur :\n%s' % source
 
 
 # ── 3. Sur les OCTETS SERVIS ────────────────────────────────────────────────

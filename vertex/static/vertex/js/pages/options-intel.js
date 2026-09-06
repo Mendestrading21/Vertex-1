@@ -45,7 +45,16 @@
       '</div>' +
       '<p class="vx-lead">' + esc(reading) + '</p>' +
       '<p class="vx-sub">' + esc(interp.strategy_impact || '') + '</p>' +
+      evidenceHtml(interp) +
+      (interp.as_of ? '<div class="vx-table-stamp"><span>Source <b>' + esc(interp.source || 'scan') + '</b> · ' + esc(interp.as_of) + '</span></div>' : '') +
       '</div>';
+  }
+  // Preuves pour / contre, en clair sous la lecture (le tiroir garde le détail).
+  function evidenceHtml(interp) {
+    var pos = interp.positive_evidence || [], neg = interp.negative_evidence || [];
+    if (!pos.length && !neg.length) return '';
+    var li = function (arr, tone) { return arr.map(function (x) { return '<li data-tone="' + tone + '">' + esc(x) + '</li>'; }).join(''); };
+    return '<ul class="vx-verdict-evidence">' + li(pos, 'pos') + li(neg, 'neg') + '</ul>';
   }
 
   // Tiroir « Comprendre ce graphique » — question, preuves, incertitudes, limites.
@@ -69,6 +78,7 @@
       ' · Donnée : ' + esc(interp.as_of || 'n/d') + '</p>' +
       '</div>';
     if (window.VX && VX.drawer && VX.drawer.open) { VX.drawer.open('Comprendre ce graphique', html); }
+    else if (window.VX && VX.shell && VX.shell.openDrawer) { VX.shell.openDrawer('Comprendre', html); }
     else { showFallbackModal(html); }
   }
 
@@ -86,7 +96,13 @@
     if (x) x.addEventListener('click', function () { host.remove(); });
   }
 
-  function loading(el) { if (el) el.innerHTML = (window.VX && VX.states) ? VX.states.loading(3) : 'Chargement…'; }
+  // Squelette à la hauteur RÉSERVÉE de la zone (CLS) : le contenu remplace un
+  // bloc de même taille au lieu de faire sauter la page.
+  function loading(el, h) {
+    if (!el) return;
+    var inner = (window.VX && VX.states) ? VX.states.loading(3) : 'Chargement…';
+    el.innerHTML = h ? '<div aria-busy="true" style="min-height:' + h + 'px">' + inner + '</div>' : inner;
+  }
   function fail(el, cause) {
     if (el) el.innerHTML = (window.VX && VX.states)
       ? VX.states.error(cause) : '<div class="vx-error-banner">' + esc(cause) + '</div>';
@@ -97,53 +113,70 @@
       : fetch(url).then(function (r) { return r.json(); });
   }
 
-  // Jauge d'environnement + pulses (OPTIONS HERO §14).
-  function heroHtml(env, op, vp, demo) {
+  // ── Vue d'ensemble — carte d'environnement ─────────────────────────
+  // Libellé MOTEUR de l'environnement (PORTEUR / MITIGE / HOSTILE) : le mot
+  // affiché est celui du moteur, jamais une relecture par seuils côté client.
+  var ENV = {
+    PORTEUR: { tone: 'pos', label: 'Porteur' },
+    MITIGE: { tone: 'warn', label: 'Mitigé' },
+    HOSTILE: { tone: 'neg', label: 'Hostile' }
+  };
+  function envBadge(label) {
+    var e = ENV[label];
+    if (!e) return '<span class="vx-badge" data-tone="neutral">' + esc(label || 'Inconnu') + '</span>';
+    return '<span class="vx-badge" data-tone="' + e.tone + '">' + e.label + '</span>';
+  }
+  function envTone(label) { var e = ENV[label]; return e ? e.tone : 'neutral'; }
+
+  // Jauge d'environnement + dimensions (OPTIONS HERO §14). Chaque dimension
+  // rend libellé | barre | valeur | note. Une dimension NON MESURÉE n'a pas de
+  // barre remplie (absence ≠ zéro) et dit pourquoi avec la note du moteur.
+  function heroHtml(env, demo) {
     if (!env || env.score == null) {
       LAST['options.environment'] = env && env.interpretation;
-      return '<div class="vx-empty">Environnement non calculable : aucune dimension mesurable.</div>';
+      return (window.VX && VX.states)
+        ? VX.states.empty('Aucune dimension mesurable dans ce scan.', '', { title: 'Environnement non calculable' })
+        : '<div class="vx-empty">Environnement non calculable : aucune dimension mesurable.</div>';
     }
     LAST['options.environment'] = env.interpretation;
-    var pct = Math.max(0, Math.min(100, env.score));
-    var tone = env.label === 'PORTEUR' ? 'pos' : env.label === 'HOSTILE' ? 'neg' : 'neutral';
+    var it = env.interpretation || {};
+    var cov = env.data_coverage || {};
+    var known = env.dimensions_known != null ? env.dimensions_known : cov.known_dimensions;
+    var total = env.dimensions_total != null ? env.dimensions_total : cov.total_dimensions;
     var dims = (env.dimensions || []).map(function (d) {
-      var w = d.known ? Math.round(d.score) : null;
-      return '<div class="vx-opt-dim"><span class="vx-opt-dim-l">' + esc(d.label) + '</span>' +
-        '<span class="vx-opt-dim-bar"><i style="width:' + (w == null ? 0 : w) + '%"></i></span>' +
-        '<span class="vx-opt-dim-v">' + (w == null ? 'n/d' : w) + '</span></div>';
+      var w = (d.known && d.score != null) ? Math.round(d.score) : null;
+      var note = d.note ? esc(d.note) : '';
+      return '<div class="vx-opt-dim" data-state="' + (w == null ? 'missing' : 'known') + '">' +
+        '<span class="vx-opt-dim-l">' + esc(d.label) + '</span>' +
+        '<span class="vx-opt-dim-bar" aria-hidden="true">' + (w == null ? '' : '<i style="width:' + w + '%"></i>') + '</span>' +
+        '<span class="vx-opt-dim-v">' + (w == null ? '—' : w) + '</span>' +
+        '<span class="vx-opt-dim-n">' + (w == null ? 'non mesuré' + (note ? ' · ' + note : '') : note) + '</span></div>';
     }).join('');
-    var pulse = '';
-    if (op && !op.empty) {
-      pulse += pill('CALLS', op.calls) + pill('PUTS', op.puts) +
-        pill('C/P', op.call_put_ratio != null ? VXf.num(op.call_put_ratio, 2) : '—') +
-        pill('IV moy', op.avg_iv != null ? VXf.num(op.avg_iv, 1) + ' %' : '—') +
-        pill('DTE moy', op.avg_dte != null ? Math.round(op.avg_dte) + ' j' : '—') +
-        pill('Theta', op.avg_theta_burn != null ? VXf.num(op.avg_theta_burn, 2) : '—');
-    }
-    if (vp && !vp.empty) {
-      pulse += pill('Vol', vp.state) + pill('IV médiane', vp.median_iv != null ? VXf.num(vp.median_iv, 1) + ' %' : '—') +
-        pill('Dispersion', vp.dispersion != null ? VXf.num(vp.dispersion, 1) + ' pts' : '—');
+    var coverage = '';
+    if (known != null && total != null) {
+      var partial = known < total;
+      coverage = '<span class="vx2-badge" data-state="' + (partial ? 'partial' : 'live') + '">' +
+        (partial ? 'Partielle' : 'Complète') + ' · ' + known + '/' + total + ' dimensions mesurées</span>';
     }
     return (demo ? '<div class="vx-demo-tag">Données de démonstration</div>' : '') +
       '<div class="vx-opt-hero-grid">' +
-      '<div class="vx-opt-gauge" style="align-items:center;text-align:center">' +
+      '<div class="vx-opt-gauge">' +
       '<div id="vx-opt-gauge-radial" data-score="' + Math.round(env.score) + '"></div>' +
-      badge(env.label === 'PORTEUR' ? 'FAVORABLE' : env.label === 'HOSTILE' ? 'DEFAVORABLE' : 'NEUTRE') +
-      '<div class="vx-muted">' + env.dimensions_known + '/' + env.dimensions_total + ' dimensions mesurées</div></div>' +
+      '<div class="vx-opt-coverage">' + envBadge(env.label) + coverage + confHtml(it.confidence) + '</div></div>' +
       '<div class="vx-opt-dims">' + dims + '</div></div>' +
-      (pulse ? '<div class="vx-opt-pulse">' + pulse + '</div>' : '');
+      (cov.note ? '<p class="vx-meta vx-mt2">' + esc(cov.note) + '</p>' : '');
   }
   function mountEnvGauge(env) {
     if (!env || !window.VXCharts || !VXCharts.gauge) return;
     var el = document.getElementById('vx-opt-gauge-radial'); if (!el) return;
     var s = Math.round(env.score || 0);
-    var reading = s >= 60 ? 'Environnement porteur pour l’achat de calls'
-      : s >= 40 ? 'Environnement neutre — sélectivité' : 'Environnement coûteux — prudence sur les primes';
-    VXCharts.gauge(el, { value: s, min: 0, max: 100, unit: ' /100', label: 'environnement', reading: reading,
-      bands: [{ to: 40, color: VXCharts.colors.negative }, { to: 60, color: VXCharts.colors.warning }, { to: 100, color: VXCharts.colors.positive }] });
-  }
-  function pill(label, val) {
-    return '<span class="vx-opt-chip"><b>' + esc(label) + '</b> ' + esc(val == null ? '—' : val) + '</span>';
+    var it = env.interpretation || {};
+    var cc = VXCharts.colors || {};
+    var tone = envTone(env.label);
+    var color = tone === 'pos' ? cc.positive : tone === 'neg' ? cc.negative : cc.warning;
+    // Une seule bande, colorée par le libellé MOTEUR : aucun seuil recodé ici.
+    VXCharts.gauge(el, { value: s, min: 0, max: 100, unit: ' /100', label: 'environnement',
+      reading: it.dominant_reading || '', bands: [{ to: 100, color: color || cc.neutral }] });
   }
 
   // ── Vue d'ensemble ────────────────────────────────────────────────
@@ -152,11 +185,11 @@
     var cEl = document.getElementById('vx-opt-counters-body');
     var vEl = document.getElementById('vx-opt-verdict-body');
     var rEl = document.getElementById('vx-opt-radar-lite-body');
-    [hEl, cEl, vEl, rEl].forEach(loading);
+    loading(hEl, 220); loading(cEl, 110); loading(vEl, 220); loading(rEl, 300);
     get('/api/options/overview').then(function (d) {
       if (!d || d.empty) {
         var msg = (window.VX && VX.states) ? VX.states.empty('Aucun contrat dans le tableau (scan vide ou hors séance).') : 'Aucune donnée.';
-        if (hEl) { hEl.innerHTML = heroHtml(d && d.environment, d && d.option_pulse, d && d.volatility_pulse, d && d.demo); mountEnvGauge(d && d.environment); }
+        if (hEl) { hEl.innerHTML = heroHtml(d && d.environment, d && d.demo); mountEnvGauge(d && d.environment); }
         if (cEl) cEl.innerHTML = msg;
         if (vEl) vEl.innerHTML = verdictCard(d && d.interpretation);
         // Vider en silence laissait une carte titree « Meilleurs contrats
@@ -169,56 +202,68 @@
         return;
       }
       var c = d.counters || {};
-      if (hEl) { hEl.innerHTML = heroHtml(d.environment, d.option_pulse, d.volatility_pulse, d.demo); mountEnvGauge(d.environment); }
-      if (cEl) cEl.innerHTML = countersHtml(c, d.demo, d.as_of);
+      if (hEl) { hEl.innerHTML = heroHtml(d.environment, d.demo); mountEnvGauge(d.environment); }
+      if (cEl) cEl.innerHTML = countersHtml(c, d.demo, d.as_of, d.option_pulse, d.volatility_pulse);
       if (vEl) vEl.innerHTML = verdictCard(d.interpretation);
-      if (rEl) rEl.innerHTML = radarTable((d.radar || []).slice(0, 4));
-    }).catch(function (e) { fail(hEl, 'Chargement overview: ' + e.message); if (cEl) cEl.innerHTML = ''; });
+      if (rEl) rEl.innerHTML = radarTable((d.radar || []).slice(0, 6), { asOf: d.as_of, total: c.total, shown: Math.min(6, (d.radar || []).length) });
+    }).catch(function (e) {
+      var cause = 'Chargement de la vue d’ensemble : ' + e.message;
+      [hEl, cEl, vEl, rEl].forEach(function (el) { fail(el, cause); });
+    });
   }
 
-  function stat(label, val) {
-    // Builder partagé (markup .vx-stat canonique stylé). Repli inline si VX.tile absent.
-    return (window.VX && VX.tile) ? VX.tile.stat({ k: label, v: val })
-      : '<div class="vx-stat"><div class="vx-stat-k">' + esc(label) + '</div><div class="vx-stat-v">' + val + '</div></div>';
-  }
-
-  // Cellule de métrique premium color-codée (kit .vx-metric). bar = valeur 0-100
-  // pour la mini-barre (optionnelle). Repli « — » honnête.
-  function mCell(k, v, unit, tone, bar) {
-    // Builder partagé (CMP-02) — markup .vx-metric canonique (data-tone + barre). Repli inline si VX.tile absent.
-    if (window.VX && VX.tile) return VX.tile.metric({ k: k, v: v, unit: unit, tone: tone, bar: bar });
-    var barHtml = (bar != null && v != null) ? '<div class="vx-metric-bar"><i style="width:' + Math.max(3, Math.min(100, bar)) + '%"></i></div>' : '';
+  // Tuile de métrique canonique (kit .vx-metric via VX.tile.metric) avec une
+  // ligne de contexte (`meta`). Repli « — » honnête si la valeur manque.
+  function kpi(k, v, unit, tone, meta, bar) {
+    if (window.VX && VX.tile) return VX.tile.metric({ k: k, v: v, unit: unit, tone: tone, meta: meta, bar: bar });
     return '<div class="vx-metric" data-tone="' + (v == null ? '' : (tone || '')) + '"><span class="vx-metric-k">' + esc(k) + '</span>' +
-      '<span class="vx-metric-v">' + (v == null ? '—' : v) + (unit ? '<span class="vx-metric-u">' + unit + '</span>' : '') + '</span>' + barHtml + '</div>';
+      '<span class="vx-metric-v">' + (v == null ? '—' : v) + (unit ? '<span class="vx-metric-u">' + unit + '</span>' : '') + '</span>' +
+      (meta ? '<span class="vx-metric-meta">' + esc(meta) + '</span>' : '') + '</div>';
   }
 
-  // Répartition CALL vs PUT en barre empilée (kit .vx-stackbar) + légende.
-  function callPutBar(calls, puts) {
+  // Répartition CALL vs PUT en barre empilée. CALL = argent, PUT = violet :
+  // un type de contrat n'est ni un gain ni une perte (le vert/rouge reste aux
+  // valeurs signées). Aucune consigne de stratégie dans une légende de donnée.
+  function callPutBar(calls, puts, ratio) {
     var t = (calls || 0) + (puts || 0); if (!t) return '';
     var cp = Math.round((calls || 0) / t * 100), pp = 100 - cp;
-    return '<div style="margin-top:.9rem" role="img" aria-label="CALLS ' + (calls || 0) + ' contre PUTS ' + (puts || 0) + ', ' + cp + ' % calls">' +
+    return '<div class="vx-mt3" role="img" aria-label="CALLS ' + (calls || 0) + ' contre PUTS ' + (puts || 0) + ', ' + cp + ' % de calls">' +
       '<div class="vx-stackbar-legend" style="justify-content:space-between;margin-bottom:6px">' +
-      '<span><i style="background:var(--vx-positive)"></i>CALLS ' + VXf.nd(calls) + ' <b>' + cp + '%</b></span>' +
-      '<span><i style="background:var(--vx-negative)"></i>PUTS ' + VXf.nd(puts) + ' <b>' + pp + '%</b></span></div>' +
-      '<div class="vx-stackbar"><i style="width:' + cp + '%;background:var(--vx-positive)"></i><i style="width:' + pp + '%;background:var(--vx-negative)"></i></div>' +
-      '<div class="vx-muted" style="font-size:11px;margin-top:5px">Dominante : ' + ((calls || 0) >= (puts || 0) ? 'CALLS' : 'PUTS') + ' — biais de la Stratégie Vertex : achat de calls (les puts restent tactiques). Volume/OI ≠ conviction certaine.</div></div>';
+      '<span><i class="vx-swatch--call"></i>CALLS ' + VXf.nd(calls) + ' <b>' + cp + ' %</b></span>' +
+      '<span class="vx-muted">Dominante : ' + ((calls || 0) >= (puts || 0) ? 'CALLS' : 'PUTS') +
+      (ratio != null ? ' · ratio C/P ' + VXf.num(ratio, 1) : '') + '</span>' +
+      '<span><i class="vx-swatch--put"></i>PUTS ' + VXf.nd(puts) + ' <b>' + pp + ' %</b></span></div>' +
+      '<div class="vx-stackbar vx-stackbar--options"><i data-side="call" style="width:' + cp + '%"></i><i data-side="put" style="width:' + pp + '%"></i></div></div>';
   }
 
-  function countersHtml(c, demo, asOf) {
-    var band = c.quality_band ? esc(c.quality_band) : '—';
-    var qtone = c.avg_quality == null ? '' : (c.avg_quality >= 66 ? 'pos' : c.avg_quality >= 45 ? 'warn' : 'neg');
+  var VOL_STATE = { EXPANSION: 'en expansion', COMPRESSION: 'en compression', STABLE: 'stable', NEUTRE: 'neutre' };
+  var BAND = { FAIBLE: ['faible', 'neg'], MOYEN: ['moyenne', 'warn'], BON: ['bonne', 'pos'], BONNE: ['bonne', 'pos'], ELEVE: ['élevée', 'pos'], HAUT: ['haute', 'pos'] };
+
+  // Bande de six indicateurs : chaque chiffre porte son contexte (population,
+  // dispersion, bande moteur) au lieu de le répéter dans d'autres cartes.
+  function countersHtml(c, demo, asOf, op, vp) {
+    op = op || {}; vp = vp || {};
+    var band = BAND[String(c.quality_band || '').toUpperCase()];
+    var ivMeta = [];
+    if (vp.median_iv != null) ivMeta.push('médiane ' + VXf.num(vp.median_iv, 1) + ' %');
+    if (vp.min_iv != null && vp.max_iv != null) ivMeta.push(VXf.num(vp.min_iv, 1) + '–' + VXf.num(vp.max_iv, 1) + ' %');
+    if (vp.state) ivMeta.push(VOL_STATE[String(vp.state).toUpperCase()] || String(vp.state).toLowerCase());
+    var dteMeta = op.avg_theta_burn != null ? 'theta moy. ' + VXf.num(op.avg_theta_burn, 2) + ' %/j de prime' : '';
     return (demo ? '<div class="vx-demo-tag">Données de démonstration</div>' : '') +
-      '<div class="vx-metricgrid">' +
-      mCell('Contrats', VXf.nd(c.total)) +
-      mCell('CALLS', VXf.nd(c.calls), '', (c.calls >= c.puts ? 'pos' : '')) +
-      mCell('PUTS', VXf.nd(c.puts), '', (c.puts > c.calls ? 'neg' : '')) +
-      mCell('Titres', VXf.nd(c.symbols)) +
-      mCell('IV moyenne', c.avg_iv != null ? VXf.num(c.avg_iv, 1) : null, '%', 'warn', c.avg_iv) +
-      mCell('Qualité moy.', c.avg_quality != null ? VXf.num(c.avg_quality, 0) : null, ' (' + band + ')', qtone, c.avg_quality) +
-      mCell('Spread moy.', c.avg_spread_pct != null ? VXf.num(c.avg_spread_pct, 1) : null, '%', (c.avg_spread_pct > 5 ? 'warn' : '')) +
+      '<div class="vx-metricgrid vx-opt-kpis">' +
+      kpi('Contrats', VXf.nd(c.total), '', '',
+        (c.symbols != null ? c.symbols + ' titres' : '') + (c.avg_oi != null ? ' · OI moy. ' + VXf.num(c.avg_oi, 0) : '')) +
+      kpi('CALLS / PUTS', (c.calls != null && c.puts != null) ? VXf.nd(c.calls) + ' / ' + VXf.nd(c.puts) : null, '', '',
+        op.call_put_ratio != null ? 'ratio C/P ' + VXf.num(op.call_put_ratio, 1) : '') +
+      kpi('IV moyenne', c.avg_iv != null ? VXf.num(c.avg_iv, 1) : null, '%', '', ivMeta.join(' · ')) +
+      kpi('Qualité moy.', c.avg_quality != null ? VXf.num(c.avg_quality, 0) : null, '/100', band ? band[1] : '',
+        band ? 'bande moteur : ' + band[0] : (c.quality_band ? 'bande : ' + String(c.quality_band).toLowerCase() : ''), c.avg_quality) +
+      kpi('Spread moy.', c.avg_spread_pct != null ? VXf.num(c.avg_spread_pct, 1) : null, '%', '',
+        c.avg_spread_pct != null ? 'moyenne des spreads cotés' : 'non disponible sur ce scan') +
+      kpi('DTE moy.', op.avg_dte != null ? Math.round(op.avg_dte) : null, ' j', '', dteMeta) +
       '</div>' +
-      callPutBar(c.calls, c.puts) +
-      (asOf ? '<div class="vx-muted" style="margin-top:.5rem">Scan : ' + esc(asOf) + '</div>' : '');
+      callPutBar(c.calls, c.puts, op.call_put_ratio) +
+      (asOf ? '<div class="vx-table-stamp"><span>Source <b>scan</b> · ' + esc(asOf) + '</span></div>' : '');
   }
 
   // Suivi hypothétique d'un contrat : référence = prime par action (cost/100).
@@ -226,55 +271,94 @@
     var d = btn.dataset;
     var mark = d.cost ? Number(d.cost) / 100 : null;
     if (mark == null || !isFinite(mark)) { if (window.VX && VX.toast) VX.toast('Prime indisponible — suivi impossible', 'error'); return; }
+    btn.setAttribute('data-state', 'loading'); btn.disabled = true;
     fetch('/api/tracking', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ entity_type: 'OPTION', symbol: d.sym, contract_id: d.cid, mark: mark, decision: 'SURVEILLER' })
     }).then(function () { if (window.VX && VX.toast) VX.toast('Contrat ' + d.sym + ' suivi (hypothétique)', 'success'); setTimeout(function () { location.href = '/tracking'; }, 700); })
-      .catch(function () { if (window.VX && VX.toast) VX.toast('Suivi impossible', 'error'); });
+      .catch(function () { btn.removeAttribute('data-state'); btn.disabled = false; if (window.VX && VX.toast) VX.toast('Suivi impossible', 'error'); });
   };
 
-  // Cellule micro-barre inline (qualité, PoP…) : barre + nombre, color-codée.
-  function microBar(val, unit, col) {
-    if (val == null || isNaN(val)) return '<td>—</td>';
-    var w = Math.max(4, Math.min(100, val));
-    return '<td><span style="display:inline-flex;align-items:center;gap:6px">' +
-      '<span style="flex:0 0 34px;height:5px;border-radius:99px;background:var(--vx-surface-0);position:relative;overflow:hidden">' +
-      '<i style="position:absolute;left:0;top:0;bottom:0;width:' + w + '%;background:' + (col || 'var(--vx-brand)') + ';border-radius:99px"></i></span>' +
-      '<b class="vx-mono" style="font-weight:600">' + Math.round(val) + (unit || '') + '</b></span></td>';
+  // Cellule micro-barre (qualité, PoP…) : builder partagé VX.tile.microbar —
+  // le chiffre porte le sens, la barre est un repère. Seuils inchangés (66/45).
+  function microBar(val, unit, tone, label) {
+    var td = '<td class="vx-num"' + (label ? ' data-label="' + esc(label) + '"' : '') + '>';
+    if (val == null || isNaN(val)) return td + '<span class="vx2-absent">—</span></td>';
+    var html = (window.VX && VX.tile && VX.tile.microbar)
+      ? VX.tile.microbar({ v: val, unit: unit, tone: tone })
+      : '<b class="vx-mono">' + Math.round(val) + (unit || '') + '</b>';
+    return td + html + '</td>';
   }
+  function qualityTone(q) { return q == null ? '' : q >= 66 ? 'pos' : q >= 45 ? 'warn' : 'neg'; }
+  function dateFr(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+    return m ? m[3] + '/' + m[2] + '/' + m[1] : (iso || '—');
+  }
+  var BUCKET = { long: 'longue', moyen: 'moyenne', court: 'courte', tactique: 'tactique' };
 
-  function radarTable(rows) {
+  // Table des meilleurs contrats. Colonnes numériques alignées à droite en
+  // mono, échéance en date, action nommée (« Suivre NVDA CALL 230 · 19/03/2027 »),
+  // population et source sous la table — jamais une liste tronquée en silence.
+  function radarTable(rows, opts) {
+    opts = opts || {};
     if (!rows || !rows.length) return '<div class="vx-empty">Aucun contrat de qualité mesurable.</div>';
     var body = rows.map(function (r) {
       var cid = [r.sym, r.exp || '', r.strike != null ? r.strike : '', r.type === 'PUT' ? 'P' : 'C'].join('|');
+      var name = esc(r.sym) + ' ' + esc(r.type || '') + ' ' + VXf.nd(r.strike) + (r.exp ? ' · ' + dateFr(r.exp) : '');
       var follow = r.cost != null ? '<button class="vx-btn vx-btn-sm vx-btn-ghost" data-sym="' + esc(r.sym) +
-        '" data-cid="' + esc(cid) + '" data-cost="' + esc(r.cost) + '" onclick="window.__optFollow(this)">Suivre</button>' : '<span class="vx-muted">—</span>';
-      return '<tr><td><b>' + esc(r.sym) + '</b></td>' +
-        '<td>' + esc(r.type || '') + '</td>' +
-        '<td>' + esc(r.bucket || '') + '</td>' +
-        '<td>' + VXf.nd(r.strike) + '</td>' +
-        '<td>' + (r.dte != null ? r.dte + ' j' : '—') + '</td>' +
-        '<td>' + (r.iv != null ? VXf.num(r.iv, 1) + ' %' : '—') + '</td>' +
-        microBar(r.quality, '', r.quality >= 66 ? 'var(--vx-positive)' : r.quality >= 45 ? 'var(--vx-warning)' : 'var(--vx-negative)') +
-        microBar(r.pop, '%', 'var(--vx-brand)') +
-        '<td>' + follow + '</td></tr>';
+        '" data-cid="' + esc(cid) + '" data-cost="' + esc(r.cost) + '" aria-label="Suivre ' + name + '" onclick="window.__optFollow(this)">Suivre</button>'
+        : '<span class="vx-muted" title="Prime indisponible">—</span>';
+      return '<tr><td data-label="Titre"><span class="vx-ticker">' + esc(r.sym) + '</span></td>' +
+        '<td data-label="Type">' + esc(r.type || '') + '</td>' +
+        '<td data-label="Échéance"><span class="vx-table-primary"><strong>' + esc(dateFr(r.exp)) + '</strong>' +
+        (r.bucket ? '<span>' + esc(BUCKET[r.bucket] || r.bucket) + '</span>' : '') + '</span></td>' +
+        '<td data-label="DTE" class="vx-num">' + (r.dte != null ? r.dte + ' j' : '—') + '</td>' +
+        '<td data-label="Strike" class="vx-num">' + (r.strike != null ? VXf.num(r.strike, r.strike % 1 ? 2 : 0) : '—') + '</td>' +
+        '<td data-label="IV" class="vx-num">' + (r.iv != null ? VXf.num(r.iv, 1) + ' %' : '—') + '</td>' +
+        '<td data-label="Coût" class="vx-num">' + (r.cost != null ? VXf.num(r.cost, 0) + ' $' : '—') + '</td>' +
+        microBar(r.quality, '', qualityTone(r.quality), 'Qualité') +
+        microBar(r.pop, ' %', 'opt', 'PoP') +
+        '<td data-label="Suivi">' + follow + '</td></tr>';
     }).join('');
-    return '<div class="vx-table-wrap"><table class="vx-table"><thead><tr>' +
-      '<th>Titre</th><th>Type</th><th>Échéance</th><th>Strike</th><th>DTE</th>' +
-      '<th>IV</th><th>Qualité</th><th>PoP</th><th></th></tr></thead><tbody>' + body + '</tbody></table></div>';
+    var stamp = '';
+    if (opts.asOf || opts.total != null) {
+      stamp = '<div class="vx-table-stamp">' +
+        (opts.shown != null && opts.total != null ? '<span><b>' + opts.shown + '</b> contrats affichés sur ' + opts.total + ', classés par qualité décroissante</span>' : '') +
+        (opts.asOf ? '<span>Source <b>scan</b> · ' + esc(opts.asOf) + '</span>' : '') +
+        '<span>PoP : probabilité de profit estimée par le moteur</span></div>';
+    }
+    return '<div class="vx-table-wrap vx-table-cards"><table class="vx-table"><caption class="vx2-sr-only">Meilleurs contrats du tableau d’options</caption><thead><tr>' +
+      '<th scope="col">Titre</th><th scope="col">Type</th><th scope="col">Échéance</th><th scope="col" class="vx-num">DTE</th>' +
+      '<th scope="col" class="vx-num">Strike</th><th scope="col" class="vx-num">IV</th><th scope="col" class="vx-num">Coût</th>' +
+      '<th scope="col" class="vx-num" title="Qualité moteur 0–100">Qualité</th><th scope="col" class="vx-num" title="Probabilité de profit estimée">PoP (est.)</th>' +
+      '<th scope="col"><span class="vx2-sr-only">Suivi</span></th></tr></thead><tbody>' + body + '</tbody></table></div>' + stamp;
   }
 
   // Nuage qualité × probabilité de profit : chaque contrat placé par sa qualité (X)
   // et sa PoP (Y) ; taille = IV (convexité), violet = PUT / acier = CALL. Le coin
   // haut-droit = contrats de qualité ET à forte probabilité. Données réelles /api.
+  /* Le nuage se VIDAIT en silence dans deux branches terminales : moteur de
+     graphiques absent, et moins de deux contrats traçables. Un emplacement
+     qui s'efface ne dit pas s'il n'a rien à montrer ou s'il a échoué. */
+  function scatterMuet(host, cause) {
+    if (host) host.innerHTML = '<div class="vx-empty">Nuage qualité × probabilité non traçable : ' + esc(cause) + '.</div>';
+  }
   function radarScatter(hostId, rows) {
     var host = document.getElementById(hostId);
-    if (!host || !window.VXCharts || !window.Chart) { if (host) host.innerHTML = ''; return; }
+    if (!host) return;
+    if (!window.VXCharts || !window.Chart) {
+      scatterMuet(host, 'le moteur de graphiques n’est pas chargé — le classement reste lisible dans la table ci-dessous');
+      return;
+    }
     var cc = VXCharts.colors;
     var pts = (rows || []).filter(function (r) { return r.quality != null && r.pop != null; }).map(function (r) {
       return { x: +r.quality, y: +r.pop, sym: r.sym, type: r.type, iv: r.iv, r: 4 + Math.min(9, (r.iv || 30) / 12) };
     });
-    if (pts.length < 2) { host.innerHTML = ''; return; }
+    if (pts.length < 2) {
+      scatterMuet(host, pts.length + ' contrat(s) portent à la fois une qualité et une '
+        + 'probabilité sur ' + (rows || []).length + ' — il en faut au moins 2 pour un nuage');
+      return;
+    }
     var cfg = {
       type: 'scatter', data: { datasets: [{ data: pts,
         pointRadius: function (ctx) { return ctx.raw ? ctx.raw.r : 5; }, pointHoverRadius: 11,
@@ -313,7 +397,10 @@
       var interp = d && d.interpretation;
       el.innerHTML = verdictCard(interp) +
         '<div class="vx-muted" style="margin-top:.6rem">Contrats analysés : ' + VXf.nd(d && d.contracts) +
-        (d && d.current_iv != null ? ' · IV médiane ' + VXf.num(d.current_iv * 100, 1) + ' %' : '') + '</div>';
+        (d && d.current_iv != null ? ' · IV médiane ' + VXf.num(d.current_iv * 100, 1) + ' %' : '') + '</div>' +
+        /* `iv_rank_note` est servi par la route et n’était lu par AUCUNE page :
+           l’absence d’IV rank restait expliquée dans le JSON seulement. */
+        (d && d.iv_rank_note ? '<div class="vx-muted" style="margin-top:.35rem">' + esc(d.iv_rank_note) + '</div>' : '');
     }).catch(function (e) { fail(el, e.message); });
     renderVolCharts(sym);
   }
@@ -500,6 +587,21 @@
     var rows = (d.oi_by_strike && d.oi_by_strike.rows) || [];
     if (!rows.length) { (document.getElementById('vx-opt-oi')||{}).innerHTML = '<div class="vx-card"><div class="vx-empty">Open interest indisponible.</div></div>'; return; }
     var brand = col(VC, 'brand', '#c9cdd4'), violet = col(VC, 'violet', '#9c79d0');
+    /*  CONTRE-MESURE du 2026-09-06 (Chromium sur l'instance de controle,
+        `/options?view=volatility`, reponse de `/api/options/vol-charts/NVDA`
+        substituee pour porter les trois cas a la fois) : les cellules de la
+        table avaient bien appris a separer l'absence du zero, mais la
+        CONCLUSION de la meme carte comptait encore `!r.call && !r.put` — une
+        verite de JavaScript, pas une mesure : `!null` vaut `true` comme `!0`.
+        Mesure sur les lignes servies [226 : call 2959 / put ABSENT],
+        [230 : call 0 / put 12], [235 : les deux ABSENTS] — la carte annoncait
+        « 1 a zero des deux cotes » alors que l'unique ligne comptee ne portait
+        AUCUNE valeur d'aucun cote. Un zero affirme sur une absence : c'est
+        exactement ce que la note de la table venait de renoncer a faire.
+        Les deux comptes sont donc separes, et celui des absences ne s'affiche
+        que s'il existe — sinon il ajouterait du bruit a une source complete.  */
+    var zeroRecu = rows.filter(function (r) { return r.call === 0 && r.put === 0; }).length;
+    var sansValeur = rows.filter(function (r) { return r.call == null || r.put == null; }).length;
     var c = VC.card('vx-opt-oi', {
       title: 'Open interest par strike', question: 'Où se concentrent les positions ouvertes ?',
       /*  Le contrat exige que l'OI montre LE ZERO et la PROVENANCE des niveaux
@@ -507,8 +609,9 @@
           ouvert se ressemblent sur une barre : le compte des strikes vides le
           separe, et la limite dit d'ou viennent les niveaux — jamais d'un
           moteur de « murs » que Vertex ne possede pas.  */
-      conclusion: 'CALL vs PUT sur ' + rows.length + ' strike(s) · '
-        + rows.filter(function (r) { return !r.call && !r.put; }).length + ' à zéro contrat ouvert',
+      conclusion: 'CALL vs PUT sur ' + rows.length + ' strike(s) · ' + zeroRecu
+        + ' à zéro reçu des deux côtés'
+        + (sansValeur ? ' · ' + sansValeur + ' sans valeur d’un côté au moins' : ''),
       height: 240, source: 'SCAN', timestamp: volTs(d), mode: 'delayed',
       limits: 'Niveaux agrégés depuis les contrats du scan, strike par strike — '
         + 'aucun « mur » n’est déduit : Vertex ne possède pas de moteur de niveaux. '
@@ -541,13 +644,26 @@
                  { titre: 'OI put', unite: '(contrats)', num: true },
                  { titre: 'Solde call \u2212 put', unite: '(contrats)', num: true }],
       lignes: rows.map(function (r) {
-        var solde = (r.call || 0) - (r.put || 0);
-        /*  ZERO EXPLICITE : un 0 reel s'ecrit « 0 », il ne se tait pas et ne
-            devient pas un tiret. Le tiret est reserve a l'absence.  */
-        return [VXf.nd(r.strike), VXf.num(r.call || 0, 0), VXf.num(r.put || 0, 0),
-                (solde >= 0 ? '+' : '') + VXf.num(solde, 0)];
+        /*  ZERO NON IMPUTE : `r.call || 0` ecrivait « 0 » pour une valeur
+            ABSENTE — l'interface fabriquait donc elle-meme un zero. Un cote
+            absent redevient un tiret ; seul un zero RECU s'ecrit « 0 ».  */
+        var solde = (r.call == null || r.put == null) ? null : (r.call - r.put);
+        return [VXf.nd(r.strike),
+                r.call == null ? '—' : VXf.num(r.call, 0),
+                r.put == null ? '—' : VXf.num(r.put, 0),
+                solde == null ? '—' : ((solde >= 0 ? '+' : '') + VXf.num(solde, 0))];
       }),
-      note: 'Spot ' + VXf.nd(d.spot) + ' \u00b7 « 0 » est un z\u00e9ro mesur\u00e9, pas une absence \u00b7 '
+      /*  MESURE du 2026-09-06 (instance de controle, /api/options/vol-charts/NVDA) :
+          les 3 lignes rendent « put : 0 » alors que le tableau d'options ne porte
+          AUCUN contrat PUT sur NVDA — ces trois zeros sont IMPUTES par
+          l'agregateur (vertex/options/vol_charts.py:92 initialise call et put a
+          0.0), pas observes. La note affirmait pourtant « 0 est un zero mesure,
+          pas une absence » : faux sur 3 cellules sur 3. Tant que la source ne
+          separe pas les deux cas, la note dit ce qu'elle sait, et rien de plus.  */
+      note: 'Spot ' + VXf.nd(d.spot) + ' \u00b7 un tiret = valeur absente de la source \u00b7 '
+        + '« 0 » vient de l\u2019agr\u00e9gation par strike, qui rend le m\u00eame 0 pour '
+        + '\u00ab open interest nul \u00bb et pour \u00ab aucun contrat de ce c\u00f4t\u00e9 \u00e0 ce strike \u00bb : '
+        + 'z\u00e9ro observ\u00e9 et z\u00e9ro imput\u00e9 ne sont pas s\u00e9par\u00e9s en amont \u00b7 '
         + 'niveaux agr\u00e9g\u00e9s depuis les contrats du scan, aucun mur d\u00e9duit.'
     });
   }
@@ -619,15 +735,19 @@
       var c = d.contract || {}, sim = d.sim || {};
       var sc = sim.scenarios || {};
       var order = ['STOP', 'BEAR', 'FLAT', 'BASE', 'TP1', 'TP2', 'TP3'];
+      var SCN = { STOP: 'Stop', BEAR: 'Baissier', FLAT: 'Stable', BASE: 'Base', TP1: 'Objectif 1', TP2: 'Objectif 2', TP3: 'Objectif 3' };
+      var horizon = null;
       // Chaque scénario porte {spot, by_time_days:{'0':{value,pnl_pct},...}} :
       // on affiche l'immédiat (J+0) et un horizon (J+10) pour montrer le theta.
       var rows = order.filter(function (k) { return sc[k]; }).map(function (k) {
         var s = sc[k]; var bt = s.by_time_days || {};
-        var d0 = bt['0'] || {}, d10 = bt['10'] || bt['15'] || {};
+        var hk = bt['10'] ? '10' : (bt['15'] ? '15' : null);
+        if (hk && horizon == null) horizon = hk;
+        var d0 = bt['0'] || {}, d10 = hk ? bt[hk] : {};
         var g = d0.pnl_pct, g10 = d10.pnl_pct;
         var cls = g == null ? '' : (g >= 0 ? 'vx-pos' : 'vx-neg');
         var cls10 = g10 == null ? '' : (g10 >= 0 ? 'vx-pos' : 'vx-neg');
-        return '<tr><td><b>' + esc(k) + '</b></td>' +
+        return '<tr><td><b>' + esc(SCN[k] || k) + '</b></td>' +
           '<td>' + (s.spot != null ? VXf.num(s.spot, 2) : '—') + '</td>' +
           '<td>' + (d0.value != null ? VXf.num(d0.value, 2) : '—') + '</td>' +
           '<td class="' + cls + '">' + (g != null ? (g >= 0 ? '+' : '') + VXf.num(g, 0) + ' %' : '—') + '</td>' +
@@ -635,7 +755,7 @@
       }).join('');
       var lims = (sim.limitations || []).map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('');
       // Table plate = repli honnête si les composants graphiques ne sont pas chargés.
-      var tableHTML = rows ? '<div class="vx-table-wrap"><table class="vx-table"><thead><tr><th>Scénario</th><th>Spot</th><th>Prime (J+0)</th><th>Gain J+0</th><th>Gain J+10</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<div class="vx-empty">Grille de scénarios indisponible.</div>';
+      var tableHTML = rows ? '<div class="vx-table-wrap"><table class="vx-table"><thead><tr><th scope="col">Scénario</th><th scope="col" class="vx-num">Spot</th><th scope="col" class="vx-num">Prime (J+0)</th><th scope="col" class="vx-num">Gain J+0</th><th scope="col" class="vx-num">Gain J+' + (horizon || '10') + '</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<div class="vx-empty">Grille de scénarios indisponible.</div>';
       el.innerHTML =
         '<div class="vx-muted" style="margin-bottom:.6rem">Contrat : ' + esc(c.type || '') + ' ' + VXf.nd(c.strike) +
         ' · ' + (c.dte != null ? c.dte + ' j' : '—') + ' · IV ' + (c.iv != null ? VXf.num(c.iv, 1) + ' %' : '—') +
@@ -648,7 +768,7 @@
       // Heatmap scénario×temps + décote temps (theta) + sensibilité IV — mêmes données
       // moteur (sim.scenarios / sim.time_decay / sim.iv_sensitivity), rien de calculé ici.
       if (window.VXCharts) {
-        var VC = window.VXCharts, ts = Date.now();
+        var VC = window.VXCharts, ts = (d && d.ts) || null;   /* époque serveur, jamais l'heure du clic */
         if (VC.scenarioMatrix && VC.heatmapCard) VC.scenarioMatrix('vx-opt-sc-matrix', sim, { title: 'Valeur du contrat — scénario × horizon', question: 'Que vaut le contrat selon le mouvement du spot et le temps ?', source: 'scenario_pricer', timestamp: ts, mode: 'delayed' });
         if (VC.thetaCard) VC.thetaCard('vx-opt-sc-theta', sim, { title: 'Décote temps (theta)',unit:'$ par jour', question: 'Combien le temps grignote-t-il la prime, à spot figé ?', source: 'scenario_pricer', timestamp: ts, mode: 'delayed' });
         if (VC.ivSensitivityCard && VC.barCard) VC.ivSensitivityCard('vx-opt-sc-iv', sim, { title: 'Sensibilité à l\'IV', unit: '$ de prime', question: 'Quel impact d\'une variation d\'implicite sur la prime ?', source: 'scenario_pricer', timestamp: ts, mode: 'delayed' });
@@ -669,6 +789,14 @@
     if (!sym) { el.innerHTML = '<div class="vx-empty">Saisis un symbole.</div>'; return; }
     loading(el);
     get('/api/options/strategies/' + encodeURIComponent(sym)).then(function (d) {
+      /* Chaîne chargée en fond (serveur : en_cours) → réessai borné hors cache. */
+      if (d && d.en_cours && (loadStrategies._retry || 0) < 2) {
+        loadStrategies._retry = (loadStrategies._retry || 0) + 1;
+        setTimeout(function () {
+          try { VX.fetch.invalidate('/api/options/strategies/' + encodeURIComponent(sym)); } catch (e1) {}
+          loadStrategies(sym);
+        }, ((d.retry_s || 8) * 1000));
+      }
       if (!d || !d.available || !d.strategies || !d.strategies.length) {
         el.innerHTML = (window.VX && VX.states) ? VX.states.empty(esc((d && d.reason) || 'Stratégies indisponibles pour ce titre.')) : 'Indisponible.';
         return;
@@ -753,20 +881,51 @@
   }
 
   // ── Symboles réellement présents dans le tableau d'options (démo/scan) ──
+  /* Le second argument est l'ERREUR de lecture, pas une liste vide : un tableau
+     réellement vide et un tableau qu'on n'a PAS PU LIRE sont deux états que
+     l'invariant 5 exige de garder distincts, et `catch(cb([]))` les fondait. */
   function boardSyms(cb) {
     get('/api/options/overview').then(function (d) {
       var rows = (d && d.radar) || [];
       var seen = {}, syms = [];
       rows.forEach(function (r) { var s = (r && r.sym || '').toUpperCase(); if (s && !seen[s]) { seen[s] = 1; syms.push(s); } });
-      cb(syms);
-    }).catch(function () { cb([]); });
+      cb(syms, null);
+    }).catch(function (e) { cb([], e || new Error('lecture impossible')); });
   }
+
+  /* ABSENCE NOMMÉE quand le tableau d'options ne fournit aucun titre.
+     MESURE du 2026-09-06 (instance de contrôle, sans IBKR) :
+     `/options?view=volatility` rendait 16 valeurs vides sur 16. Cause :
+     `autoSym` faisait `if (!syms.length) return;` — un retour SILENCIEUX —
+     et les quatre hôtes de graphiques (`vx-opt-term`, `vx-opt-cone`,
+     `vx-opt-oi`, `vx-opt-smile`) restaient littéralement vides sous un rail
+     qui conseillait « Choisis un symbole présent dans le tableau d'options »,
+     consigne inapplicable puisqu'il n'y en avait aucun. Une absence se dit ;
+     et une PANNE de lecture se dit autrement qu'une absence. */
+  function nommerAbsenceDeTableau(railId, chartIds, erreur) {
+    var msg = erreur
+      ? ('Le tableau d’options n’a pas pu être lu (' + (erreur.message || 'erreur inconnue') + ') : '
+         + 'ce n’est pas une absence de données, c’est une lecture en échec. Saisis un symbole pour interroger directement.')
+      : ('Aucun titre dans le tableau d’options pour l’instant : rien à pré-sélectionner. '
+         + 'Le tableau se remplit au passage du scan ; tu peux saisir un symbole à la main.');
+    var rail = document.getElementById(railId);
+    if (rail) {
+      rail.innerHTML = erreur
+        ? ((window.VX && VX.states) ? VX.states.error(esc(msg)) : '<div class="vx-error-banner">' + esc(msg) + '</div>')
+        : ((window.VX && VX.states) ? VX.states.empty(esc(msg)) : '<div class="vx-empty">' + esc(msg) + '</div>');
+    }
+    (chartIds || []).forEach(function (id) {
+      var e = document.getElementById(id);
+      if (e) e.innerHTML = '<div class="vx-card"><div class="vx-' + (erreur ? 'error-banner' : 'empty') + '">' + esc(msg) + '</div></div>';
+    });
+  }
+
   // Pré-sélectionne un symbole du tableau + puces d'accès rapide, pour que les
   // graphiques s'affichent d'emblée (§36) au lieu d'un formulaire vide (§10).
-  function autoSym(goEl, inputEl, loadFn) {
+  function autoSym(goEl, inputEl, loadFn, vide) {
     if (!inputEl) return;
-    boardSyms(function (syms) {
-      if (!syms.length) return;
+    boardSyms(function (syms, erreur) {
+      if (!syms.length) { if (vide) vide(erreur); return; }
       if (goEl && goEl.parentNode && !goEl.parentNode.querySelector('.opt-chips')) {
         var chips = document.createElement('div');
         chips.className = 'opt-chips vx-flex vx-wrap';
@@ -800,19 +959,33 @@
       var s = document.getElementById('vx-opt-vol-sym');
       if (g) g.addEventListener('click', function () { loadVolatility((s.value || '').trim().toUpperCase()); });
       if (s) s.addEventListener('keydown', function (e) { if (e.key === 'Enter') loadVolatility((s.value || '').trim().toUpperCase()); });
-      autoSym(g, s, loadVolatility);
+      autoSym(g, s, loadVolatility, function (err) {
+        nommerAbsenceDeTableau('vx-opt-vol-out-body',
+          ['vx-opt-term', 'vx-opt-cone', 'vx-opt-oi', 'vx-opt-smile'], err);
+      });
     } else if (v === 'events') {
       var g2 = document.getElementById('vx-opt-ev-go');
       var s2 = document.getElementById('vx-opt-ev-sym');
       if (g2) g2.addEventListener('click', function () { loadEvents((s2.value || '').trim().toUpperCase()); });
       if (s2) s2.addEventListener('keydown', function (e) { if (e.key === 'Enter') loadEvents((s2.value || '').trim().toUpperCase()); });
-      autoSym(g2, s2, loadEvents);
+      autoSym(g2, s2, loadEvents, function (err) {
+        nommerAbsenceDeTableau('vx-opt-ev-out-body', [], err);
+      });
     } else if (v === 'scenarios') {
       var g3 = document.getElementById('vx-opt-sc-go');
       var s3 = document.getElementById('vx-opt-sc-sym');
       if (g3) g3.addEventListener('click', function () { loadScenarios((s3.value || '').trim().toUpperCase()); });
       if (s3) s3.addEventListener('keydown', function (e) { if (e.key === 'Enter') loadScenarios((s3.value || '').trim().toUpperCase()); });
-      autoSym(g3, s3, loadScenarios);
+      autoSym(g3, s3, loadScenarios, function (err) {
+        /* MESURE du 2026-09-06 : cette vue porte un SECOND hôte,
+           `vx-opt-strategies` (options_intel_page.py:289). Il n'était pas
+           passé ici, donc il gardait son texte de départ — « Choisis un
+           symbole pour construire les stratégies depuis le board » — à
+           l'identique dans les DEUX états : consigne inapplicable quand le
+           board est vide, et panne muette quand la lecture échoue. C'est la
+           même confusion absence/panne que le rail voisin vient de fermer. */
+        nommerAbsenceDeTableau('vx-opt-sc-out-body', ['vx-opt-strategies'], err);
+      });
     }
   }
 

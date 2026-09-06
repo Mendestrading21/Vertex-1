@@ -92,5 +92,10 @@ def test_system_route_200_and_readonly(client):
     r = client.get('/system')
     assert r.status_code == 200
     html = r.get_data(as_text=True)
-    assert '<h1 class="vx2-title">Système</h1>'  # VERTEX 2.0 : titre via vx2.page_header in html
+    #  `in html` avait glissé DANS le commentaire : l'assertion portait sur une
+    #  chaîne littérale non vide, donc toujours vraie. Mesure par mutation
+    #  (page_header privé de son <h1>) : /system rendait 103 987 caractères SANS
+    #  le titre et ce banc restait vert, pendant que la garde jumelle de la
+    #  ligne 77 (forme correcte) échouait. Garde morte, remise en vie.
+    assert '<h1 class="vx2-title">Système</h1>' in html  # VERTEX 2.0 : titre via vx2.page_header
     assert 'READONLY' in html  # invariant affiché

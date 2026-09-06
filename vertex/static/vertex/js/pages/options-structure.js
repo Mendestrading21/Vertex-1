@@ -24,108 +24,124 @@
     return VX.fetch('/api/options', { ttl: 120000 }).then(function (d) { _board = (d && d.board) || []; return _board; }).catch(function () { return []; });
   }
 
-  /* ── Liquidité (LOT G) — état explicite, jamais un zéro pour un bid/ask absent ── */
-  function liqState(oi, vol, spreadPct) {
-    if (oi == null && spreadPct == null) return { key: 'insuffisante', label: 'Insuffisante', tone: 'neg', note: 'bid/ask ou OI absent — non évaluable' };
-    var o = oi || 0, s = (spreadPct == null ? 99 : spreadPct);
-    if (o >= 5000 && s <= 3) return { key: 'excellente', label: 'Excellente', tone: 'pos', note: 'OI ' + nd(oi) + ' · spread ' + num(s, 1) + ' %' };
-    if (o >= 1500 && s <= 6) return { key: 'acceptable', label: 'Acceptable', tone: 'pos', note: 'OI ' + nd(oi) + ' · spread ' + num(s, 1) + ' %' };
-    if (o >= 500 && s <= 10) return { key: 'mediocre', label: 'Médiocre', tone: 'warn', note: 'OI ' + nd(oi) + ' · spread ' + num(s, 1) + ' %' };
-    return { key: 'insuffisante', label: 'Insuffisante', tone: 'neg', note: 'OI ' + nd(oi) + ' · spread ' + num(s, 1) + ' %' };
-  }
-  function contractsFor(bd, sym, exp) {
-    return (bd || []).filter(function (c) { return c.sym === sym && (!exp || c.exp === exp); });
-  }
-  /* liquidité d'une stratégie = pire jambe (approchée depuis le board). */
-  function strategyLiquidity(bd, sym, exp, legs) {
-    var cs = contractsFor(bd, sym, exp);
-    if (!cs.length) { var near = contractsFor(bd, sym, null); if (!near.length) return liqState(null, null, null);
-      var oi0 = Math.min.apply(null, near.map(function (c) { return c.oi || 0; })); var sp0 = Math.max.apply(null, near.map(function (c) { return c.spread_pct == null ? 99 : c.spread_pct; }));
-      return liqState(oi0, null, sp0); }
-    var worst = null;
-    (legs || []).forEach(function (l) {
-      var t = (l.type || '').toUpperCase();
-      var c = cs.filter(function (x) { return x.type === t && Math.abs((x.strike || 0) - (l.strike || 0)) < 0.6; })[0]
-        || cs.filter(function (x) { return x.type === t; }).sort(function (a, b) { return Math.abs(a.strike - l.strike) - Math.abs(b.strike - l.strike); })[0];
-      if (!c) return;
-      var st = liqState(c.oi, c.vol, c.spread_pct);
-      var rank = { excellente: 3, acceptable: 2, mediocre: 1, insuffisante: 0 };
-      if (worst == null || rank[st.key] < rank[worst.key]) worst = st;
-    });
-    return worst || liqState(null, null, null);
-  }
-
-  /* ── Interpolation P&L à l'échéance depuis la courbe payoff ── */
-  function pnlAt(payoff, px) {
-    if (!payoff || !payoff.length) return null;
-    if (px <= payoff[0].price) return payoff[0].pnl;
-    if (px >= payoff[payoff.length - 1].price) return payoff[payoff.length - 1].pnl;
-    for (var i = 1; i < payoff.length; i++) {
-      if (px <= payoff[i].price) {
-        var a = payoff[i - 1], b = payoff[i], t = (px - a.price) / (b.price - a.price);
-        return a.pnl + t * (b.pnl - a.pnl);
-      }
-    }
-    return payoff[payoff.length - 1].pnl;
-  }
-  function expectedMove(spot, ivDec, dte) {
-    if (!spot || !ivDec || !dte) return null;
-    return spot * ivDec * Math.sqrt(dte / 365);
-  }
-
-  /* ── Verdict analytique (LOT A) — jamais une probabilité inventée ── */
-  function computeVerdict(s, liq, spot, capital, gainExc) {
-    var asym = (capital > 0 && gainExc != null) ? (gainExc / capital) : null;
-    var expensive = (spot && capital) ? (capital / (spot * 100) > 0.12) : false;
-    if (liq.key === 'insuffisante') return { label: 'Liquidité insuffisante', tone: 'neg', why: 'liquidité insuffisante — aucun verdict positif possible', dominant: true };
-    if (asym == null) return { label: 'Données insuffisantes', tone: 'muted', why: 'asymétrie non calculable' };
-    if (asym >= 3) return { label: 'Asymétrie excellente', tone: 'pos', why: 'gain exceptionnel ≈ ' + num(asym, 1) + '× la perte max' };
-    if (asym >= 1.8) return expensive
-      ? { label: 'Structure intéressante mais chère', tone: 'warn', why: 'asymétrie ' + num(asym, 1) + '× mais prime élevée (>12 % du notionnel)' }
-      : { label: 'Structure intéressante', tone: 'muted', why: 'asymétrie ' + num(asym, 1) + '× — correcte sans être exceptionnelle' };
-    if (s.days_to_exp != null && s.days_to_exp < 20) return { label: 'Risque/temps médiocre', tone: 'warn', why: 'échéance courte (' + s.days_to_exp + ' j) pour cette asymétrie' };
-    if (asym < 1.2) return { label: 'Risque/temps médiocre', tone: 'warn', why: 'asymétrie faible (' + num(asym, 1) + '×)' };
-    return { label: 'Attendre une meilleure entrée', tone: 'muted', why: 'asymétrie moyenne — patienter est une décision valide' };
-  }
+  /* ── Liquidité, mouvement attendu, asymétrie, verdict, scénarios ──
+     Calculés par le SERVEUR (vertex/options/structure_verdict.py) et servis
+     dans `strategie.analyse` par /api/options/strategies/<sym>. Les fonctions
+     qui vivaient ici (liqState, strategyLiquidity, pnlAt, expectedMove,
+     computeVerdict) étaient un calcul financier dans l'interface : retirées,
+     la page PEINT. Scénarios et P&L à l'échéance (payoff) viennent du serveur.
+     Liquidité absente = « Insuffisante — non évaluable », jamais un zéro
+     (règle conservée côté serveur). ── */
+  function analyseDe(s) { return (s && s.analyse) || null; }
 
   /* ════════════════ VUE STRUCTURE ════════════════ */
+
+  /* La vue porte QUATRE hôtes de contenu. Mesure du 2026-09-06 : les branches
+     dégradées n'en remplissaient que deux — `vx-os-scenarios` et
+     `vx-os-compare` étaient vidés au chargement (l. 44) et jamais remplis,
+     donc littéralement vides et sans motif dans TOUS les états dégradés, y
+     compris la panne réseau où seul l'hôte du verdict était servi. Un hôte
+     vide ne distingue pas « rien à montrer » de « la lecture a échoué ».
+     Un seul endroit nomme donc l'absence, pour que le prochain état dégradé
+     ne puisse pas en oublier un. */
+  /* Le 3e champ dit si l'hôte doit fabriquer SA carte. MESURE du 2026-09-06
+     (Chromium 1600 px, `/options?view=structure`) : le gabarit encadre
+     `vx-os-payoff` et `vx-os-greeks` dans une `<section class="vx-card">`,
+     mais pas `vx-os-scenarios` ni `vx-os-compare` — dont les rendus NOMINAUX,
+     eux, fabriquent la leur (`renderScenarios`, `renderCompare`). Leur motif
+     d'absence flottait donc en texte nu entre deux cartes : mesuré à 44,75 px
+     et 76,75 px, `closest('.vx-card')` nul et zéro carte à l'intérieur, contre
+     84,5 px dans une carte pour le verdict voisin. C'est la règle que la vue
+     Positionnement applique depuis HOTES_GEX ; elle manquait ici, et le
+     nouveau motif de `renderCompare` la manquait avec elle. */
+  var HOTES_STRUCTURE = [
+    ['vx-os-scenarios', 'Pas de scénarios', true],
+    ['vx-os-compare', 'Pas de comparaison de structures', true],
+    ['vx-os-payoff', 'Pas de courbe de P&amp;L', false],
+    ['vx-os-greeks', 'Pas de greeks de position', false],
+  ];
+  /* Encadre le contenu quand le gabarit ne le fait pas — un seul endroit, pour
+     que l'absence, le chargement et la panne tiennent le même rang visuel. */
+  function peindreStructure(hote, dedans) {
+    /* Accepte l'entrée de la liste ou son seul identifiant : un appelant qui
+       désignerait un hôte par son RANG casserait au premier réordonnancement. */
+    var h = (typeof hote === 'string')
+      ? (HOTES_STRUCTURE.filter(function (x) { return x[0] === hote; })[0] || [hote, '', false])
+      : hote;
+    var el = $(h[0]); if (!el) return;
+    el.innerHTML = h[2] ? ('<section class="vx-card">' + dedans + '</section>') : dedans;
+  }
+  function nommerAbsenceStructure(motif, enPanne) {
+    HOTES_STRUCTURE.forEach(function (h) {
+      /*  Le motif servi par le moteur finit souvent déjà par un point
+          (« aucun contrat pour ce titre dans le board. ») : la phrase se
+          terminait alors par « board.. » — mesuré à l'écran le 2026-09-06.  */
+      var phrase = h[1] + ' : ' + motif + (/[.!?…]\s*$/.test(motif) ? '' : '.');
+      peindreStructure(h, enPanne ? VX.states.error(phrase)
+                                  : '<div class="vx-empty">' + phrase + '</div>');
+    });
+  }
+
+  var _structRetry = {};
   function loadStructure(sym) {
     try { if (window.VX && VX.store) VX.store.set('active_ticker', sym); } catch (e0) {}
     var vHost = $('vx-os-verdict'); if (!vHost) return;
     vHost.innerHTML = '<div class="vx-skeleton" style="height:150px"></div>';
-    ($('vx-os-scenarios')||{}).innerHTML = ''; ($('vx-os-compare')||{}).innerHTML = '';
-    ($('vx-os-payoff')||{}).innerHTML = '<div class="vx-empty">Calcul…</div>'; ($('vx-os-greeks')||{}).innerHTML = '';
+    /* Chargement : les quatre hôtes disent qu'ils travaillent. Deux d'entre
+       eux restaient à '' — indiscernable d'une carte qui n'a rien à dire. */
+    HOTES_STRUCTURE.forEach(function (h) {
+      peindreStructure(h, '<div class="vx-empty">Calcul…</div>');
+    });
     Promise.all([VX.fetch('/api/options/strategies/' + encodeURIComponent(sym), { ttl: 60000 }), board()])
       .then(function (r) {
         var d = r[0], bd = r[1];
+        /* Chaîne chargée en fond (serveur : en_cours) → réessai borné hors cache. */
+        if (d && d.en_cours && (_structRetry[sym] || 0) < 2) {
+          _structRetry[sym] = (_structRetry[sym] || 0) + 1;
+          setTimeout(function () {
+            try { VX.fetch.invalidate('/api/options/strategies/' + encodeURIComponent(sym)); } catch (e1) {}
+            loadStructure(sym);
+          }, ((d.retry_s || 8) * 1000));
+        }
         if (!d || !d.available || !(d.strategies || []).length) {
-          vHost.innerHTML = insufficientCard(sym, (d && d.reason) || 'aucune structure constructible depuis le board');
-          ($('vx-os-payoff')||{}).innerHTML = '<div class="vx-empty">—</div>'; return;
+          /* MESURE du 2026-09-06 : `vx-os-greeks` restait à '' (vidé l. 44 et
+             jamais rempli) et `vx-os-payoff` affichait un TIRET NU — deux
+             hôtes muets sur un écran dont la carte verdict, elle, nomme la
+             cause. Un tiret sans motif ne distingue pas l'absence de la
+             panne. On répète ICI le motif que la carte verdict possède,
+             plutôt que d'inventer un second vocabulaire. */
+          var motif = (d && d.reason) || 'aucune structure constructible depuis le board';
+          vHost.innerHTML = insufficientCard(sym, motif);
+          nommerAbsenceStructure(esc(motif), false);
+          return;
         }
         var s = d.strategies.filter(function (x) { return x.recommended; })[0] || d.strategies[0];
-        var ivDec = d.iv;                               // décimale (moteur corrigé PR n°6)
-        var spot = d.spot, dte = s.days_to_exp, capital = Math.abs(s.max_loss || 0);
-        var em = expectedMove(spot, ivDec, dte);
-        /* orienter le mouvement « favorable » par le biais : baissier → vers le bas. */
-        var dir = (d.bias === 'bearish') ? -1 : 1;
-        var pProb = em ? spot + dir * em : null, pExc = em ? spot + dir * 2 * em : null;
-        var gainProb = pProb != null ? pnlAt(s.payoff, pProb) : null;
-        var gainExc = s.max_profit_unbounded ? (pExc != null ? pnlAt(s.payoff, pExc) : null) : s.max_profit;
-        var liq = strategyLiquidity(bd, sym, d.exp, s.legs);
-        var verdict = computeVerdict(s, liq, spot, capital, gainExc);
-        var asym = (capital > 0 && gainExc != null) ? (gainExc / capital) : null;
-        var cs = contractsFor(bd, sym, d.exp);
-        var catContract = cs[0];
+        var a = analyseDe(s);
+        if (!a || !a.verdict) {
+          /* Second site du même défaut : ici la structure EXISTE mais son
+             analyse serveur manque — un état différent du précédent, et les
+             deux hôtes doivent le dire au lieu de rendre un tiret nu. */
+          var motifA = 'analyse serveur absente (structure_verdict)';
+          vHost.innerHTML = insufficientCard(sym, motifA);
+          nommerAbsenceStructure(esc(motifA), false);
+          return;
+        }
         vHost.innerHTML = verdictCard(d, s, {
-          spot: spot, dte: dte, capital: capital, gainProb: gainProb, gainExc: gainExc,
-          asym: asym, liq: liq, verdict: verdict, ivDec: ivDec, em: em
+          spot: a.spot, dte: a.dte, capital: a.capital, gainProb: a.gain_prob, gainExc: a.gain_exc,
+          asym: a.asym, liq: a.liquidite, verdict: a.verdict, ivDec: a.iv_dec, em: a.em
         });
-        renderScenarios(d, s, { spot: spot, em: em, capital: capital, dte: dte });
-        renderPayoff(d, s, { spot: spot, capital: capital });
-        renderGreeks(s, ivDec);
+        renderScenarios(d, s, a);
+        renderPayoff(d, s, { spot: a.spot, capital: a.capital });
+        renderGreeks(s, a.iv_dec);
         renderCompare(d, bd);
       })
-      .catch(function (e) { vHost.innerHTML = VX.states.error('Analyse indisponible : ' + esc(e.message)); });
+      .catch(function (e) {
+        /* Une lecture EN ÉCHEC n'est pas une absence : les quatre hôtes le
+           disent avec l'état d'erreur, pas avec un vide. */
+        var motifE = esc(e.message || 'lecture en échec');
+        vHost.innerHTML = VX.states.error('Analyse indisponible : ' + motifE);
+        nommerAbsenceStructure('la lecture a échoué (' + motifE + ')', true);
+      });
   }
 
   function insufficientCard(sym, reason) {
@@ -142,7 +158,7 @@
     var be = (s.breakevens && s.breakevens.length) ? s.breakevens.map(function (b) { return nd(b); }).join(' · ') : '—';
     var g = s.greeks || null;
     var cell = function (l, v, cls) { return '<div class="vx-kv"><span class="k">' + l + '</span><span class="v ' + (cls || '') + '">' + v + '</span></div>'; };
-    var fresh = '<span class="vx-freshness" data-state="' + (d.demo ? 'demo' : 'delayed') + '">' + (d.demo ? 'DÉMO' : 'DELAYED') + '</span>';
+    var fresh = '<span class="vx-freshness" data-state="' + (d.demo ? 'demo' : 'delayed') + '">' + (d.demo ? 'Démo' : 'Différé') + '</span>';
     return '<section class="vx-verdict-card vx-card" aria-label="Verdict de la structure">'
       + '<div class="vx-flex vx-wrap" style="justify-content:space-between;align-items:flex-start;gap:10px">'
       + '<div><div class="vx-flex" style="gap:8px;align-items:center"><span class="vx-eyebrow">Verdict</span>' + fresh
@@ -163,8 +179,8 @@
       + cell('Gain probable (+1σ, échéance)', m.gainProb != null ? ((m.gainProb >= 0 ? '+' : '') + price(m.gainProb)) : 'n/d', m.gainProb >= 0 ? 'vx-pos' : 'vx-neg')
       + cell('Gain exceptionnel', typeof m.gainExc === 'number' ? ('+' + price(m.gainExc)) : gmax, 'vx-pos')
       + cell('Breakeven(s)', be)
-      + cell('Delta global', g ? num(g.delta, 1) : 'Insufficient', g ? 'vx-violet' : 'vx-muted')
-      + cell('Theta global', g ? num(g.theta, 2) + ' $/j' : 'Insufficient', g ? 'vx-neg' : 'vx-muted')
+      + cell('Delta global', g ? num(g.delta, 1) : 'Insuffisant', g ? 'vx-violet' : 'vx-muted')
+      + cell('Theta global', g ? num(g.theta, 2) + ' $/j' : 'Insuffisant', g ? 'vx-neg' : 'vx-muted')
       + cell('IV', m.ivDec != null ? num(m.ivDec * 100, 1) + ' %' : 'n/d', m.ivDec != null ? 'vx-violet' : '')
       + '</div>'
       + '<div class="vx-card-foot vx-mt2"><span class="vx-meta">' + esc(s.model_note || '')
@@ -178,24 +194,19 @@
   }
 
   /* Carte-Scénario (LOT C) — valeurs À L'ÉCHÉANCE (distinctes de la valeur avant échéance). */
-  function renderScenarios(d, s, m) {
+  function renderScenarios(d, s, a) {
     var host = $('vx-os-scenarios'); if (!host) return;
-    if (!m.em) { host.innerHTML = '<section class="vx-card"><div class="vx-meta">Scénarios indisponibles : IV absente, mouvement attendu non calculable (aucune valeur inventée).</div></section>'; return; }
-    var up = (d.bias === 'bearish') ? -1 : 1;
-    var defs = [
-      { key: 'Pessimiste', px: m.spot - up * m.em, cond: 'mouvement contraire ~1σ', tone: 'neg' },
-      { key: 'Probable', px: m.spot + up * m.em, cond: 'mouvement attendu ~1σ (IV·√t)', tone: 'muted' },
-      { key: 'Exceptionnel', px: m.spot + up * 2 * m.em, cond: 'mouvement favorable ~2σ', tone: 'pos' }
-    ];
-    var cards = defs.map(function (x) {
-      var pnl = pnlAt(s.payoff, x.px);
-      var pct = m.capital > 0 ? (pnl / m.capital * 100) : null;
-      return '<div class="vx-scenario" data-kind="' + (x.key === 'Pessimiste' ? 'down' : x.key === 'Exceptionnel' ? 'up' : 'base') + '">'
-        + '<div class="vx-scenario-head"><b>' + x.key + '</b><span class="vx-meta">' + esc(x.cond) + '</span></div>'
+    var sc = (a && a.scenarios) || [];
+    if (!a || !a.em || !sc.length) { host.innerHTML = '<section class="vx-card"><div class="vx-meta">Scénarios indisponibles : IV absente, mouvement attendu non calculable (aucune valeur inventée).</div></section>'; return; }
+    /* Scénarios SERVIS (structure_verdict) : prix, P&L et % viennent du serveur. */
+    var cards = sc.map(function (x) {
+      var pnl = x.pnl, pct = x.pct;
+      return '<div class="vx-scenario" data-kind="' + esc(x.kind || 'base') + '">'
+        + '<div class="vx-scenario-head"><b>' + esc(x.cle) + '</b><span class="vx-meta">' + esc(x.cond) + '</span></div>'
         + '<div class="vx-kv"><span class="k">Sous-jacent</span><span class="v vx-mono">' + price(x.px) + '</span></div>'
-        + '<div class="vx-kv"><span class="k">P&L (échéance)</span><span class="v vx-mono ' + (pnl >= 0 ? 'vx-pos' : 'vx-neg') + '">' + (pnl >= 0 ? '+' : '') + price(pnl) + '</span></div>'
+        + '<div class="vx-kv"><span class="k">P&L (échéance)</span><span class="v vx-mono ' + (pnl >= 0 ? 'vx-pos' : 'vx-neg') + '">' + (pnl != null ? ((pnl >= 0 ? '+' : '') + price(pnl)) : 'n/d') + '</span></div>'
         + '<div class="vx-kv"><span class="k">P&L %</span><span class="v vx-mono ' + (pct >= 0 ? 'vx-pos' : 'vx-neg') + '">' + (pct != null ? (pct >= 0 ? '+' : '') + num(pct, 0) + ' %' : 'n/d') + '</span></div>'
-        + '<div class="vx-kv"><span class="k">Horizon</span><span class="v">' + (m.dte != null ? m.dte + ' j' : '—') + '</span></div>'
+        + '<div class="vx-kv"><span class="k">Horizon</span><span class="v">' + (x.horizon_j != null ? x.horizon_j + ' j' : '—') + '</span></div>'
         + '</div>';
     }).join('');
     host.innerHTML = '<section class="vx-card" aria-label="Scénarios de la structure">'
@@ -219,7 +230,7 @@
     VC.card('vx-os-payoff', {
       title: 'Payoff à l\'échéance — ' + esc(s.label), question: 'Où gagne / perd la structure ?',
       conclusion: concl, unit: 'P&L $ (1 structure)', timeframe: (d.dte != null ? d.dte + ' j' : ''),
-      source: d.demo ? 'multileg_lab (board démo)' : 'multileg_lab (board réel)', timestamp: Date.now(), mode: d.demo ? 'demo' : 'delayed',
+      source: d.demo ? 'multileg_lab (board démo)' : 'multileg_lab (board réel)', timestamp: (d && d.as_of) || null, mode: d.demo ? 'demo' : 'delayed',
       summary: 'Courbe de P&L à l\'échéance selon le cours du sous-jacent ; spot ' + price(m.spot)
         + ', breakeven(s) ' + ((s.breakevens || []).map(function (b) { return nd(b); }).join(', ') || '—')
         + ', perte max ' + price(m.capital) + ', ' + favorable + ' points sur ' + pts.length + ' en zone favorable.',
@@ -272,7 +283,7 @@
   /* Greeks interprétés (LOT E) — jamais un Greek sans interprétation. */
   function greekRow(label, val, unit, interp, tone) {
     return '<div class="vx-greek"><div class="vx-flex" style="justify-content:space-between"><b>' + label + '</b>'
-      + '<span class="vx-mono ' + (tone || '') + '">' + (val == null ? 'Insufficient' : num(val, 3) + (unit ? ' ' + unit : '')) + '</span></div>'
+      + '<span class="vx-mono ' + (tone || '') + '">' + (val == null ? 'Insuffisant' : num(val, 3) + (unit ? ' ' + unit : '')) + '</span></div>'
       + '<div class="vx-meta">' + esc(interp) + '</div></div>';
   }
   function renderGreeks(s, ivDec) {
@@ -292,20 +303,37 @@
     host.innerHTML = '<div class="vx-greeks">' + lvl1 + '</div>'
       + '<details class="vx-mt2"><summary class="vx-btn vx-btn-sm vx-btn-ghost">Greeks avancés</summary>'
       + '<div class="vx-greeks vx-mt2">' + lvl2 + '</div></details>'
-      + '<div class="vx-card-foot"><span class="vx-meta">Greeks de position (moteur). Agrégés seulement si IV fiable — sinon Insufficient.</span></div>';
+      + '<div class="vx-card-foot"><span class="vx-meta">Greeks de position (moteur). Agrégés seulement si IV fiable — sinon « Insuffisant ».</span></div>';
   }
 
   /* Comparaison de structures (LOT I) — matrice claire, pas un radar. */
   function renderCompare(d, bd) {
     var host = $('vx-os-compare'); if (!host) return;
-    var rows = d.strategies || []; if (rows.length < 2) { host.innerHTML = ''; return; }
+    var rows = d.strategies || [];
+    /* MESURE du 2026-09-06 (Chromium, `/options?view=structure`, NVDA
+       pré-sélectionné depuis le tableau) : le volet « Comparer les contrats et
+       voir la méthode » s'ouvrait sur 0 octet. Cause : `innerHTML = ''` dès que
+       le moteur rend moins de deux structures — un vide SANS motif, dans le
+       chemin NOMINAL cette fois, pas dans un état dégradé. Le volet promet une
+       comparaison ; s'il n'y a rien à comparer, il le dit et donne le compte. */
+    if (rows.length < 2) {
+      /*  Le rendu nominal ci-dessous fabrique sa `<section class="vx-card">` ;
+          ce motif-là partait sans, et flottait en texte nu (mesuré 76,75 px,
+          `closest('.vx-card')` nul). Même point d'encadrement que l'absence.  */
+      peindreStructure('vx-os-compare',
+        '<div class="vx-empty">Pas de comparaison de structures : le moteur n’en construit qu’'
+        + (rows.length === 1 ? 'une seule (' + esc(rows[0].label || 'structure') + ')' : 'aucune')
+        + ' depuis le tableau — une comparaison exige au moins deux structures, et aucune n’est inventée pour remplir la table.</div>');
+      return;
+    }
     var head = ['Structure', 'Coût/risque max', 'Gain max', 'Breakeven', 'Delta', 'Theta', 'Vega', 'PoP', 'DTE', 'Liquidité', 'Asymétrie', 'Adéquation'];
     var body = rows.map(function (s) {
-      var cap = Math.abs(s.max_loss || 0);
+      var an = analyseDe(s) || {};
+      var cap = an.capital != null ? an.capital : Math.abs(s.max_loss || 0);
       var gmax = s.max_profit_unbounded ? '∞' : (s.max_profit != null ? price(s.max_profit) : '—');
-      var asym = (cap > 0 && s.max_profit != null && !s.max_profit_unbounded) ? (s.max_profit / cap) : (s.max_profit_unbounded ? null : null);
+      var asym = an.asym_compare != null ? an.asym_compare : null;   // servi (max_profit / capital)
       var g = s.greeks || {};
-      var liq = strategyLiquidity(bd, d.sym, d.exp, s.legs);
+      var liq = an.liquidite || { key: 'insuffisante', label: 'Insuffisante', tone: 'neg' };
       return '<tr' + (s.recommended ? ' class="vx-row-hl"' : '') + '>'
         + '<td data-label="Structure">' + (s.recommended ? '★ ' : '') + esc(s.label) + '</td>'
         + '<td data-label="Risque max" class="vx-num vx-neg">' + price(cap) + '</td>'
@@ -341,8 +369,16 @@
     parts.push({ k: 'Échéance ' + (mo != null ? num(mo, 0) + ' mois' : 'n/d'), v: dDte, max: 25, ok: dDte >= 20 });
     var dOi = c.oi == null ? 0 : (c.oi >= 8000 ? 20 : c.oi >= 3000 ? 13 : c.oi >= 800 ? 6 : 2);
     parts.push({ k: 'OI ' + nd(c.oi), v: dOi, max: 20, ok: dOi >= 13 });
-    var dSp = c.spread_pct == null ? 0 : (c.spread_pct <= 3 ? 15 : c.spread_pct <= 6 ? 9 : c.spread_pct <= 10 ? 4 : 0);
-    parts.push({ k: 'Spread ' + (c.spread_pct != null ? num(c.spread_pct, 1) + ' %' : 'n/d'), v: dSp, max: 15, ok: dSp >= 9 });
+    /* Le board RÉEL publie `spread` (%) ; `spread_pct` est la clé du board de
+       DÉMO. Mesuré le 2026-09-06 : 30/30 cartes LEAPS affichaient « Spread n/d
+       · 0/15 » alors que /api/options servait la valeur (NVDA CALL 230
+       2027-03-19 : spread 1,0) — le pied de carte promet pourtant « Score
+       explicable = somme des composantes réelles ci-dessus ». Une composante
+       sur cinq valait zéro à cause d'un nom de champ : NVDA 61/100 (ambre) au
+       lieu de 76/100 (vert). Les deux clés absentes restent « n/d ». */
+    var sp = (c.spread_pct != null) ? c.spread_pct : c.spread;
+    var dSp = sp == null ? 0 : (sp <= 3 ? 15 : sp <= 6 ? 9 : sp <= 10 ? 4 : 0);
+    parts.push({ k: 'Spread ' + (sp != null ? num(sp, 1) + ' %' : 'n/d'), v: dSp, max: 15, ok: dSp >= 9 });
     var dIv = c.iv == null ? 0 : (c.iv <= 45 ? 10 : c.iv <= 70 ? 6 : 2);
     parts.push({ k: 'IV ' + (c.iv != null ? num(c.iv, 0) + ' %' : 'n/d'), v: dIv, max: 10, ok: dIv >= 6 });
     var total = parts.reduce(function (a, p) { return a + p.v; }, 0);

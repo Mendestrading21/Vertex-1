@@ -15,16 +15,25 @@
       return { '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c];
     });
   };
-  var num = function (v, d) { return (v == null || isNaN(v)) ? '—' : Number(v).toFixed(d == null ? 2 : d); };
+  /* Format fr-FR partagé (VX.fmt.num) : « 230,5 » et non « 230.5 » dans une table française. */
+  var num = function (v, d) {
+    if (v == null || isNaN(v)) return '—';
+    return (window.VX && VX.fmt) ? VX.fmt.num(v, d == null ? 2 : d) : Number(v).toFixed(d == null ? 2 : d);
+  };
 
   function mandateCell(c) {
-    if (c.mandate == null) return '<span class="vx-muted">n/a</span>';
-    if (!c.hors_mandat) return '<span class="vx-badge" data-tone="pos">conforme</span>';
-    var why = [];
-    if (c.mandate.delta_ok === false) why.push('delta hors 0,70-0,90');
-    if (c.mandate.oi_ok === false) why.push('OI insuffisant');
-    if (c.mandate.spread_ok === false) why.push('spread trop large');
-    return '<span class="vx-badge" data-tone="neg" title="' + esc(why.join(' · ')) + '">HORS MANDAT</span>';
+    if (c.mandate == null) return '<span class="vx2-absent">—</span>';
+    if (!c.hors_mandat) return '<span class="vx-badge" data-tone="pos">Conforme</span>';
+    /* Les raisons viennent du moteur (`mandate_reasons`) quand il les donne ;
+       elles se LISENT sous le badge, pas seulement au survol. */
+    var why = Array.isArray(c.mandate_reasons) ? c.mandate_reasons.slice() : [];
+    if (!why.length) {
+      if (c.mandate.delta_ok === false) why.push('delta hors 0,70-0,90');
+      if (c.mandate.oi_ok === false) why.push('OI insuffisant');
+      if (c.mandate.spread_ok === false) why.push('spread trop large');
+    }
+    return '<span class="vx-badge" data-tone="neg">Hors mandat</span>'
+      + (why.length ? '<span class="vx-meta" style="display:block;font-size:11px;white-space:normal;max-width:220px">' + esc(why.join(' · ')) + '</span>' : '');
   }
 
   function render(d) {
@@ -50,7 +59,7 @@
       + ' DTE · ' + d.n + ' contrat(s)' + (d.demo ? ' · <span class="vx-badge" data-tone="neutral">DÉMO</span>' : '') + '</div>'
       + '<div class="vx-table-wrap"><table class="vx-table"><thead><tr>'
       + '<th>Contrat</th><th class="vx-num">Strike</th><th class="vx-num">DTE</th><th class="vx-num">Delta</th>'
-      + '<th class="vx-num">IV</th><th class="vx-num">Qualité</th><th>Mandat</th><th></th>'
+      + '<th class="vx-num">IV</th><th class="vx-num">Qualité</th><th>Mandat</th><th><span class="vx2-sr-only">Détail</span></th>'
       + '</tr></thead><tbody>' + rows + '</tbody></table></div>'
       + '<div class="vx-meta" style="margin-top:.3rem">P(doubler) = P(valeur terminale ≥ 2× coût), '
       + 'modèle lognormal non calibré — estimation, pas une promesse · hors-mandat affiché, jamais filtré en silence.</div>';
@@ -72,8 +81,15 @@
     function openCandidate(index) {
       var c = candidates[index]; if (!c || !window.VX || !VX.shell) return;
       var dp = c.double_prob;
-      var probability = (dp && dp.available) ? num(dp.probability * 100, 1) + ' % · estimation' : 'n/d';
-      var mandate = c.mandate == null ? 'n/d' : (c.hors_mandat ? 'Hors mandat' : 'Conforme');
+      /* Lignage du cours : le board ne porte pas de `spot`, le serveur replie
+         sur le cours du scan (même source que /scenarios, /gex-radar, /chain).
+         Ce cours n'est PAS horodaté sur la cotation du contrat — le dire, sinon
+         le repli passerait pour une cotation du contrat. */
+      var spotSrc = (c.spot_source === 'scan.detail.price')
+        ? ' · cours du scan, pas de la cotation du contrat' : '';
+      var probability = (dp && dp.available) ? num(dp.probability * 100, 1) + ' % · estimation' + spotSrc
+        : ('non disponible' + (dp && dp.reason ? ' · ' + dp.reason : ''));
+      var mandate = c.mandate == null ? 'non disponible' : (c.hors_mandat ? 'Hors mandat' : 'Conforme');
       var body = '<div class="vx-section-stack">'
         + '<div class="vx-data-ledger"><span>' + esc(c.type || 'Contrat') + '</span><span>' + esc(c.dte) + ' jours</span>'
         + '<span>Lecture seule</span></div>'
@@ -116,6 +132,7 @@
       universe = b.getAttribute('data-universe');
       Array.prototype.forEach.call(tabs.querySelectorAll('[data-universe]'), function (x) {
         x.classList.toggle('vx-btn-ghost', x !== b);
+        x.setAttribute('aria-pressed', x === b ? 'true' : 'false');
       });
       run();
     });

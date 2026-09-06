@@ -228,3 +228,64 @@ def test_no_order_paths_in_module():
     src = inspect.getsource(ml).lower()
     for bad in ('place_order', 'placeorder', 'submit_order', 'reqmarketorder', 'buy(', 'sell('):
         assert bad not in src
+
+
+# ── Constat 44 : le carnet du board ne doit plus mourir entre le board et la jambe ──
+
+def _contrat_cote(typ, strike, cost, bid, ask, quoted=True):
+    """Ligne de board RÉELLE : `cost` est PAR CONTRAT, `bid`/`ask` PAR ACTION."""
+    return {'sym': 'NVDA', 'type': typ, 'strike': strike, 'exp': '2026-10-16',
+            'dte': 35, 'iv': 0.30, 'cost': cost, 'bid': bid, 'ask': ask,
+            'liquidity_coverage': {'quoted_bid_ask': quoted, 'volume_present': True}}
+
+
+def test_le_carnet_du_board_arrive_jusqu_a_la_jambe_et_chiffre_le_rempli_defavorable():
+    """MESURE : `/api/options/strategies/NVDA` servait
+    `bid_ask_coverage_pct: 0.0` et `net_premium_adverse: null` sur 100 % des
+    stratégies, avec la note « le rendement exécutable dépend du spread
+    bid/ask, non fourni ici » — alors que le board portait bid ET ask sur les
+    mêmes contrats. Le nœud `ref` de `strategies_for_symbol` ne transportait
+    que `strike` et la prime : le carnet mourait là, et l'honnêteté
+    d'exécution du moteur tombait sur une absence FABRIQUÉE par le câblage.
+
+    Attendu : call ATM bid 6,00 / ask 6,40, prime déclarée 6,20 (cost 620/100).
+    Achat à l'ask → 1 × 100 × 6,40 = 640,00 $ contre 620,00 $ déclarés."""
+    board = [_contrat_cote('CALL', 230, 620, 6.0, 6.4),
+             _contrat_cote('PUT', 230, 600, 5.8, 6.2)]
+    res = ml.strategies_for_symbol(board, 'NVDA', 230.0)
+    par_kind = {s['kind']: s for s in res['strategies']}
+
+    lc = par_kind['long_call']
+    assert lc['legs'][0]['bid'] == 6.0 and lc['legs'][0]['ask'] == 6.4
+    assert lc['input_coverage']['bid_ask_coverage_pct'] == 100.0
+    assert lc['execution']['spread_slippage_included'] is True
+    assert lc['execution']['net_premium_declared'] == 620.0
+    assert lc['execution']['net_premium_adverse'] == 640.0
+    #  PIÈGE D'UNITÉ : `premium` vient de cost/100, `bid`/`ask` sont déjà par
+    #  action. Une division de trop rendrait 6,40 $ au lieu de 640,00 $.
+    assert lc['execution']['net_premium_adverse'] == round(100 * 6.4, 2)
+
+    #  Deux jambes : achat à l'ask ET vente au bid dans le même chiffre.
+    st = par_kind['straddle']
+    assert st['execution']['net_premium_adverse'] == 1260.0     # 100 × (6,40 + 6,20)
+    assert st['input_coverage']['bid_ask_covered_option_legs'] == 2
+
+
+def test_un_contrat_non_cote_ne_fabrique_aucun_carnet():
+    """`legacy_engine._f(None)` rend 0.0 : un contrat sans carnet porte
+    `bid: 0.0, ask: 0.0` dans le board. Les recopier chiffrerait un rempli
+    défavorable de 0 $ sur un carnet inexistant — une donnée inventée, pire
+    que l'absence qu'elle remplacerait. L'absence reste une absence."""
+    board = [_contrat_cote('CALL', 230, 620, 0.0, 0.0, quoted=False),
+             _contrat_cote('PUT', 230, 600, 0.0, 0.0, quoted=False)]
+    res = ml.strategies_for_symbol(board, 'NVDA', 230.0)
+    lc = {s['kind']: s for s in res['strategies']}['long_call']
+    assert lc['legs'][0]['bid'] is None and lc['legs'][0]['ask'] is None
+    assert lc['input_coverage']['bid_ask_coverage_pct'] == 0.0
+    assert lc['execution']['net_premium_adverse'] is None
+    assert 'non fourni' in lc['execution']['note']
+    #  Un carnet CROISÉ (ask < bid) n'est pas un carnet non plus.
+    croise = [_contrat_cote('CALL', 230, 620, 6.4, 6.0),
+              _contrat_cote('PUT', 230, 600, 5.8, 6.2)]
+    lc2 = {s['kind']: s for s in ml.strategies_for_symbol(croise, 'NVDA', 230.0)['strategies']}['long_call']
+    assert lc2['legs'][0]['bid'] is None

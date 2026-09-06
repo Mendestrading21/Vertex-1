@@ -101,8 +101,24 @@ def test_command_exposes_unavailable_portfolio_controls_without_changing_decisio
 # ─── /api/portefeuille ───
 
 def test_portefeuille_empty_without_rows(client):
+    """Sans ligne de scan, la route ne CONSTRUIT rien — et le dit.
+
+    Ce banc épinglait `== {}`, c'est-à-dire exactement le défaut : une charge
+    vide dont personne ne peut dire si le portefeuille est vide ou si le calcul
+    n'a pas tourné. Mesuré le 2026-09-06 en exerçant les 184 règles du runtime.
+    Ce qui doit rester vrai, c'est qu'AUCUNE ligne de portefeuille n'est
+    fabriquée ; ce qui change, c'est que l'absence est nommée.
+    """
     scan_state['rows'] = []
-    assert client.get('/api/portefeuille').get_json() == {}
+    charge = client.get('/api/portefeuille').get_json()
+    assert charge.get('disponible') is False, charge
+    assert 'motif' in charge and len(charge['motif']) > 30, charge
+    assert charge.get('read_only') is True
+    #  Le capital demandé revient : l'appelant sait que sa requête a été lue.
+    assert isinstance(charge.get('capital'), int), charge
+    #  Et surtout : rien n'est construit.
+    for interdit in ('positions', 'lignes', 'allocation', 'total'):
+        assert interdit not in charge, (interdit, charge)
 
 
 def test_le_double_de_build_portfolio_SUIT_la_vraie_signature():
@@ -156,3 +172,98 @@ def test_terminal_registers_command_blueprint():
     import terminal
     rules = {r.rule for r in terminal.app.url_map.iter_rules()}
     assert '/api/command' in rules and '/api/portefeuille' in rules
+
+
+# ─── Le drapeau STRUCTUREL du panier, et la couverture du score ───
+
+def _detail_synthetique(symbols):
+    """Séries synthétiques déterministes (aucun réseau) : même amplitude et
+    même fréquence pour toutes les lignes — donc des poids inverse-vol égaux,
+    donc un drapeau STRUCTUREL et rien d'autre. Seule la phase change (120°),
+    ce qui écarte la corrélation du seuil."""
+    import math
+    return {s: {'series': {'close': [100 + 5 * math.sin(x / 4.0 + i * 2.09) + x * 0.1
+                                     for x in range(60)]},
+                'sector': ''}
+            for i, s in enumerate(symbols)}
+
+
+def test_le_drapeau_structurel_du_panier_est_DIT_sans_devenir_un_blocage(client):
+    """MESURE DU 2026-09-06 — la route n'ouvrait les alertes de risque que
+    derrière `risk['no_new_risk']`.
+
+    Or le moteur a séparé deux familles : `no_new_risk` ne suit plus que les
+    drapeaux BLOQUANTS (corrélation, concentration sectorielle), tandis que
+    `ligne_trop_grosse` est ARITHMÉTIQUE — avec un plafond de 15 % par ligne,
+    trois lignes valent 33,3 % chacune. Résultat servi avant correctif, mesuré
+    sur ce même panier : `flags == ['ligne_trop_grosse']`, `max_weight == 33.3`,
+    `limits.max_pos == 15`, et `alerts == []` — le seul drapeau armé du panier
+    n'atteignait plus aucun écran.
+
+    Il est DIT, pas transformé en blocage : pastille distincte de celles du
+    risque, texte qui nomme l'arithmétique, et la décision du jour ne change
+    pas (ajouter une ligne est le remède, pas la faute).
+    """
+    _set_market()
+    syms = ['NVDA', 'JPM', 'XOM']
+    scan_state['committee'] = {'decisions': [], 'counts': {}}
+    scan_state['rows'] = [{'symbol': s} for s in syms]
+    scan_state['detail'] = _detail_synthetique(syms)
+    j = client.get('/api/command').get_json()
+    assert j['risk']['flags_structurels'] == ['ligne_trop_grosse']
+    assert j['risk']['flags_bloquants'] == [] and j['risk']['no_new_risk'] is False
+    a = next((a for a in j['alerts'] if a[1] == 'RÉPARTITION'), None)
+    assert a is not None, ('le seul drapeau armé du panier ne produit aucune '
+                           'ligne à l’écran : %s' % j['alerts'])
+    assert '33.3 %' in a[2] and '15 %' in a[2], a[2]
+    assert "n'interdit pas d'ajouter" in a[2], a[2]
+    assert a[0] != '🔴', 'un fait arithmétique n’est pas une alerte rouge'
+    #  Pas de blocage : la décision du jour est celle du marché, pas du panier.
+    assert j['decision']['action'] != 'RÉDUIRE / DÉFENSIF'
+
+
+def test_une_concentration_subie_reste_bloquante_et_le_dit(client):
+    """La garde réelle n'est pas desserrée par le correctif ci-dessus : deux
+    titres sur trois dans le même secteur arment `no_new_risk` et gardent leur
+    alerte, avec la pastille du risque."""
+    _set_market()
+    syms = ['NVDA', 'AMD', 'XOM']          # deux Semiconducteurs sur trois
+    scan_state['committee'] = {'decisions': [], 'counts': {}}
+    scan_state['rows'] = [{'symbol': s} for s in syms]
+    scan_state['detail'] = _detail_synthetique(syms)
+    j = client.get('/api/command').get_json()
+    assert 'concentration_sectorielle' in j['risk']['flags_bloquants']
+    assert j['risk']['no_new_risk'] is True
+    assert any(a[1] == 'CONCENTRATION' and a[0] == '🟠' for a in j['alerts'])
+
+
+def test_le_score_de_marche_declare_quand_sa_largeur_n_est_pas_mesuree(client):
+    """MESURE DU 2026-09-06 — la route ne lisait que `climate()['score']`.
+
+    `market_lens.climate` substitue 50 % à une largeur ABSENTE (la composante
+    participation pèse 25 points sur 100) et pose alors `partiel`,
+    `breadth_status` et `note` dans le MÊME dictionnaire. La route les jetait :
+    une largeur mesurée à 50 % et une largeur absente servaient le même score,
+    au bit près, sans qu'aucun champ ne distingue la mesure de la substitution.
+
+    Ce banc mesure les deux états côte à côte : même nombre, déclaration
+    différente. La forme nominale ne change pas — les marqueurs n'existent que
+    dans le cas dégradé.
+    """
+    scan_state['market_ctx'] = {'roro': 'RISK-ON', 'spy_regime': 'TREND',
+                                'vix': 15, 'vix_band': 'calme', 'breadth': {}}
+    absente = client.get('/api/command').get_json()
+    scan_state['market_ctx'] = {'roro': 'RISK-ON', 'spy_regime': 'TREND',
+                                'vix': 15, 'vix_band': 'calme',
+                                'breadth': {'above50': 50}}
+    mesuree = client.get('/api/command').get_json()
+    assert absente['regime']['score'] == mesuree['regime']['score'], (
+        'la substitution rend bien le même nombre : c’est pourquoi elle doit '
+        'être DÉCLARÉE')
+    assert absente['regime']['score_partiel'] is True
+    assert absente['regime']['breadth_status'] == 'MISSING'
+    assert 'participation' in absente['regime']['score_note']
+    assert absente['decision']['score_partiel'] is True
+    assert 'PARTIEL' in absente['decision']['msg']
+    assert 'score_partiel' not in mesuree['regime'], 'forme nominale inchangée'
+    assert 'score_partiel' not in mesuree['decision']

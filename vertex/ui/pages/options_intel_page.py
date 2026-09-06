@@ -74,7 +74,7 @@ _HEADER = """
 <section class="vx-card vx-options-context vx-mt3" aria-label="Contexte du sous-jacent">
   <div class="vx-options-context__copy">
     <span class="vx-card-title">Sous-jacent actif</span>
-    <span class="vx-meta">Conservé entre les vues Structure, Positionnement, Scanner LEAPS, Volatilité et Événements.</span>
+    <span class="vx-meta">Conservé entre les vues Structure, Volatilité, Scénarios, Événements, Positionnement et Scanner LEAPS.</span>
   </div>
   <label class="vx-field vx-options-context__field"><span>Symbole</span>
     <input id="vx-options-symbol" class="vx-input" placeholder="ex. AAPL" maxlength="12" autocomplete="off" aria-label="Sous-jacent actif"></label>
@@ -86,7 +86,12 @@ _HEADER = """
 <div id="vx-demo-banner"></div>
 """
 
+#  Squelette à la hauteur RÉSERVÉE de chaque zone (CLS) : un seul gabarit de
+#  120 px faisait sauter la page quand une carte de 300 px arrivait.
 _LOADING = '<div class="vx-skeleton" style="height:120px"></div>'
+_LOADING_H = {200: '<div class="vx-skeleton" style="height:200px"></div>',
+              100: '<div class="vx-skeleton" style="height:100px"></div>',
+              280: '<div class="vx-skeleton" style="height:280px"></div>'}
 
 _VIEW_CONTENT = {
     'structure': """
@@ -134,8 +139,8 @@ _VIEW_CONTENT = {
     <div id="vx-gx-radar">%%LOADING%%</div>
   </section>
 </div>
-<div id="vx-gx-thesis" class="vx-mt3"></div>
-<div id="vx-gx-tiles" class="vx-mt3"></div>
+<div id="vx-gx-thesis" class="vx-mt3"><section class="vx-card"><div class="vx-empty">Thèse de positionnement : aucun sous-jacent choisi — clique une ligne du radar ci-dessus.</div></section></div>
+<div id="vx-gx-tiles" class="vx-mt3"><section class="vx-card"><div class="vx-empty">Synthèse GEX (net, régime, murs, bascule 0-gamma) : aucun sous-jacent choisi.</div></section></div>
 <div class="vx-hero-grid vx-mt3">
   <section class="vx-card vx-hero-main" aria-label="GEX par strike">
     <div class="vx-card-header"><span class="vx-card-title">GEX par strike</span>
@@ -145,7 +150,7 @@ _VIEW_CONTENT = {
   <aside class="vx-card vx-insight-rail" aria-label="Flux notable">
     <div class="vx-card-header"><span class="vx-card-title">Flux notable</span>
       <span class="vx-chart-question">Gros premium négocié du cycle (volume × prime) — pas un flux tick-par-tick.</span></div>
-    <div id="vx-gx-flow"><div class="vx-empty">—</div></div>
+    <div id="vx-gx-flow"><div class="vx-empty">Flux notable : aucun sous-jacent choisi — le gros premium du cycle se lit après l’analyse d’un titre.</div></div>
   </aside>
 </div>
 <details class="vx-disclosure vx-mt3">
@@ -163,7 +168,7 @@ _VIEW_CONTENT = {
       <label class="vx-field" style="max-width:100%"><span>Ta question</span>
         <input id="vx-cp-q" class="vx-input" placeholder="ex. Que dit le positionnement sur ce titre ?" maxlength="500" autocomplete="off"></label>
       <button class="vx-btn vx-btn-sm vx-btn-primary" id="vx-cp-go">Demander au copilote</button>
-      <div id="vx-cp-out" class="vx-mt2"></div>
+      <div id="vx-cp-out" class="vx-mt2"><div class="vx-empty">La réponse du copilote s’affichera ici, ancrée dans les chiffres du positionnement déjà lus — aucune question n’a encore été posée.</div></div>
     </div>
   </section>
   </div>
@@ -209,26 +214,34 @@ _VIEW_CONTENT = {
 </div>
 <div id="vx-op-body" class="vx-mt3">%%LOADING%%</div>
 """,
+    #  Progression synthèse → indicateurs clés → tableau détaillé (refonte
+    #  dashboards). Quatre cartes pleine largeur identiques devenaient : une
+    #  zone de décision (environnement 8 col + lecture dominante 4 col), une
+    #  bande de six indicateurs, puis la table des meilleurs contrats. Les IDs
+    #  `vx-opt-*-body` sont ceux que `options-intel.js` remplit : inchangés.
     'overview': """
 <div class="vx-grid vx-mt3">
-  <section class="vx-card vx-col-12 vx-opt-hero" id="vx-opt-hero" aria-label="Environnement options">
+  <section class="vx-card vx-col-8 vx-opt-hero" id="vx-opt-hero" aria-label="Environnement options">
     <div class="vx-card-header"><span class="vx-card-title">Environnement pour l'achat d'options</span>
-      <span class="vx-actions"><button class="vx-btn vx-btn-sm vx-btn-ghost" data-explain="environment">Comprendre ce graphique</button></span></div>
-    <div id="vx-opt-hero-body">%%LOADING%%</div>
+      <span class="vx-actions"><button class="vx-btn vx-btn-sm vx-btn-ghost" data-explain="environment">Comprendre ce score</button></span>
+      <span class="vx-chart-question">Le contexte est-il porteur pour un achat d'options, et sur quelle base ?</span></div>
+    <div id="vx-opt-hero-body">%%LOADING_200%%</div>
   </section>
-  <section class="vx-card vx-col-12" id="vx-opt-counters" aria-label="Compteurs options">
-    <div class="vx-card-header"><span class="vx-card-title">Tableau d'options — synthèse</span>
-      <span class="vx-actions"><button class="vx-btn vx-btn-sm vx-btn-ghost" data-explain="overview">Comprendre ce graphique</button></span></div>
-    <div id="vx-opt-counters-body">%%LOADING%%</div>
+  <section class="vx-card vx-col-4" id="vx-opt-verdict" aria-label="Lecture dominante">
+    <div class="vx-card-header"><span class="vx-card-title">Lecture dominante</span>
+      <span class="vx-actions"><button class="vx-btn vx-btn-sm vx-btn-ghost" data-explain="overview">Comprendre cette lecture</button></span></div>
+    <div id="vx-opt-verdict-body">%%LOADING_200%%</div>
   </section>
-  <section class="vx-card vx-col-12" id="vx-opt-verdict" aria-label="Lecture dominante">
-    <div class="vx-card-header"><span class="vx-card-title">Lecture dominante</span></div>
-    <div id="vx-opt-verdict-body">%%LOADING%%</div>
+  <section class="vx-card vx-col-12" id="vx-opt-counters" aria-label="Indicateurs du tableau d'options">
+    <div class="vx-card-header"><span class="vx-card-title">Tableau d'options — indicateurs clés</span>
+      <span class="vx-chart-question">Le tableau est-il assez large, cher et exploitable ?</span></div>
+    <div id="vx-opt-counters-body">%%LOADING_100%%</div>
   </section>
   <section class="vx-card vx-col-12" id="vx-opt-radar-lite" aria-label="Meilleurs contrats">
-    <div class="vx-card-header"><span class="vx-card-title">Meilleurs contrats (radar)</span>
-      <span class="vx-actions"><a class="vx-btn vx-btn-sm vx-btn-ghost" href="?view=radar">Tout voir →</a></span></div>
-    <div id="vx-opt-radar-lite-body">%%LOADING%%</div>
+    <div class="vx-card-header"><span class="vx-card-title">Meilleurs contrats</span>
+      <span class="vx-actions"><a class="vx-btn vx-btn-sm vx-btn-ghost" href="?view=radar">Voir le radar complet →</a></span>
+      <span class="vx-chart-question">Quels contrats méritent un dossier ?</span></div>
+    <div id="vx-opt-radar-lite-body">%%LOADING_280%%</div>
   </section>
 </div>
 """,
@@ -339,7 +352,11 @@ def render(view: str = 'structure') -> str:
     view = view if view in dict(_ALL_VIEWS) else 'structure'
     content = (_STYLE
                + _HEADER.replace('%%ENTETE%%', _entete()).replace('%%TABS%%', _tabs(view))
-               + _VIEW_CONTENT[view].replace('%%LOADING%%', _LOADING))
+               + _VIEW_CONTENT[view]
+               .replace('%%LOADING_200%%', _LOADING_H[200])
+               .replace('%%LOADING_100%%', _LOADING_H[100])
+               .replace('%%LOADING_280%%', _LOADING_H[280])
+               .replace('%%LOADING%%', _LOADING))
     return render_shell(
         title='Options Intelligence',
         active='options',                  # espace principal Options (5e des 8 entrées nav)

@@ -21,19 +21,65 @@ def test_three_scenarios_present():
     assert names == ['Haussier', 'Central', 'Baissier']
     for s in sc:
         assert s['trigger'] and s['invalidation']
-        assert s['likelihood'] in {'plausible', 'possible', 'peu probable'}
 
 
-def test_scenario_weights_sum_reasonably():
-    sc = reasoning.scenarios(_D, {'lean': 50}, 'WAIT')
-    total = sum(s['weight'] for s in sc)
-    assert 95 <= total <= 105  # ~100%, arrondis
+def test_aucune_probabilite_n_est_emise_sans_calibration():
+    """CONSTAT 39 — ces trois assertions REMPLACENT le gel du vocabulaire probabiliste.
+
+    Les tests précédents épinglaient le défaut : `likelihood ∈ {plausible,
+    possible, peu probable}` et des `weight` sommant à 100, dérivés du seul
+    `committee.lean`. MESURE de l'anti-calibration, par appel direct :
+    lean=10 → 15/25/60, lean=50 → 45/**9**/45, lean=90 → 60/25/15. Au comité
+    parfaitement partagé — incertitude MAXIMALE — le scénario « Central »
+    recevait le poids le plus faible possible, les deux extrêmes 45 chacun :
+    le résidu `base = max(0.1, 1 - bull - bear)` inversait le sens du mot.
+    Aucune source, aucune calibration, aucun marqueur ; l'invariant 7 interdit
+    d'inventer une probabilité, pas seulement de l'afficher. Le dépôt possédait
+    déjà la version honnête (skyler_core.scenarios : `probability: None` +
+    note + `model.calibrated False`) : ce module s'y aligne.
+    """
+    for lean in (10, 50, 80, 90):
+        for s in reasoning.scenarios(_D, {'lean': lean}, 'BUY'):
+            assert s['probability'] is None
+            assert 'non calibré' in s['probability_note']
+            assert 'weight' not in s and 'likelihood' not in s
+    assert not hasattr(reasoning, '_weights')
+    assert reasoning.build(_D, {'lean': 55}, 'BUY')['model'] == {
+        'type': 'plan_levels_deterministic', 'calibrated': False}
 
 
-def test_bull_lean_raises_bull_weight():
-    bull = reasoning.scenarios(_D, {'lean': 80}, 'BUY')[0]['weight']
-    bear = reasoning.scenarios(_D, {'lean': 20}, 'AVOID')[0]['weight']
-    assert bull > bear  # plus le comité penche haussier, plus le scénario haussier pèse
+def test_scenario_central_atteignable_sous_son_propre_declencheur():
+    """CONSTAT 39 — la cible du Central dépassait le plafond de sa propre zone.
+
+    MESURE 5/5 sur /api/decision : NVDA « Maintien de la zone $211.91–$234.76 »
+    → cible 267.26 ; AAPL 300.89–344.27 → 358.14 ; MSFT 473.3–517.78 → 552.51 ;
+    TSLA 315.91–406.59 → 430.42 ; AMD 421.3–574.2 → 590.12. La résistance est
+    le plus-haut 40 séances (analysis.py:267), la cible vaut `entry + 2×risque`
+    (analysis.py:264) : deux grandeurs indépendantes. Le scénario ne pouvait pas
+    atteindre sa cible SOUS sa propre condition. Les niveaux servis n'ont pas
+    changé — c'est la condition qui est désormais énoncée en deux temps.
+    """
+    central = reasoning.scenarios(_D, {'lean': 50}, 'BUY')[1]
+    assert central['target'] == 116                     # tp2, inchangé
+    assert 'Maintien de la zone' not in central['trigger']
+    assert '104' in central['trigger'] and '92' in central['trigger']
+    # la cible (116) est au-dessus de la résistance (104) : la condition le dit.
+    assert 'dépassement' in central['trigger']
+
+
+def test_scenario_baissier_n_a_pas_sa_cible_pour_declencheur():
+    """CONSTAT 39 — atteindre la cible ÉTAIT le déclencheur (100 % par construction).
+
+    MESURE 5/5 en réel : trigger « Clôture sous $stop » avec `target = stop`
+    (NVDA 211.91/211.91, AAPL 300.89/300.89, MSFT 473.3/473.3, TSLA
+    315.91/315.91, AMD 421.3/421.3), et 3/3 en appel direct du moteur. Le plan
+    moteur ne contient AUCUN objectif sous le stop : l'absence est déclarée au
+    lieu d'être comblée par le niveau d'invalidation déguisé en cible.
+    """
+    bear = reasoning.scenarios(_D, {'lean': 50}, 'BUY')[2]
+    assert bear['trigger'] == 'Clôture sous $92'
+    assert bear['target'] is None and bear['move_pct'] is None
+    assert 'invalidation' in bear['target_note'] and '92' in bear['target_note']
 
 
 def test_invalidations_include_stop():

@@ -112,6 +112,10 @@ def _backup_desk():
             pass
 
 POSQ_TTL_S = 45          # fraîcheur d'une cotation de trade perso
+#  Attente MAXIMALE d'une requête pour une clé jamais cotée : le worker IBKR
+#  répond d'ordinaire en moins d'une seconde ; au-delà, la requête rend le
+#  repli étiqueté et nomme les clés encore en cours (`en_attente`).
+POSQ_ATTENTE_S = float(os.environ.get('VERTEX_POSQ_ATTENTE_S', '1.5'))
 POSQ_MAX_POSITIONS = 24  # borne dure par requête
 
 
@@ -200,14 +204,34 @@ def _scan_fallback_quote(p):
                     and abs(float(c.get('strike') or 0) - want_strike) < 0.01
                     and (not want_exp or str(c.get('exp', '')).startswith(want_exp))):
                 q['mark'] = c.get('mid')
+                #  CONSTAT 22 — LA PROVENANCE DE LA MARQUE PARTAIT AVEC LE
+                #  CONTRAT. Cette branche ne transmettait QUE `mark` : le
+                #  bloc de provenance servi plus bas recalcule le milieu
+                #  depuis bid/ask, n'en trouvait aucun, et
+                #  `source_de_marque(6.20, mid=None)` rendait INDETERMINEE —
+                #  « convention non renseignée » à l'écran — alors que le
+                #  chiffre EST, par construction, le milieu de fourchette du
+                #  board. `spread_pct` restait null pour la même raison
+                #  (mesuré sur NVDA 2026-10-23 245 C, marché 6,00/6,40 :
+                #  milieu 6,20, spread 6,45 %). On transmet ce que le board
+                #  a RÉELLEMENT publié — jamais plus : un côté manquant
+                #  reste absent, aucun bid/ask n'est reconstruit.
+                if c.get('mid') is not None:
+                    q['mid'] = c.get('mid')
+                if c.get('bid') is not None:
+                    q['bid'] = c.get('bid')
+                if c.get('ask') is not None:
+                    q['ask'] = c.get('ask')
                 break
         if 'mark' not in q and want_strike is not None:
-            # Le board n'a que les « meilleurs » strikes — cote le contrat EXACT
-            # détenu via la chaîne (cache TTL 15 min dans on_demand).
+            # Le board n'a que les « meilleurs » strikes — marque du contrat
+            # EXACT détenu depuis le CACHE de chaîne (on_demand) ; une lecture
+            # manquante part en fond, jamais dans la requête utilisateur.
             try:
                 from vertex.options import on_demand as _od
                 mk = _od.contract_mark(sym, want_exp, want_strike,
-                                       'P' if right.startswith('P') else 'C')
+                                       'P' if right.startswith('P') else 'C',
+                                       reseau=False)
                 if mk is not None:
                     q['mark'] = mk
             except Exception:
@@ -426,15 +450,30 @@ def make_blueprint(*, opt_job, ibkr_enabled, cotation_repli=None):
                     if v is not None:
                         posq_cache[k] = (t2, v)
             threading.Thread(target=_rafraichir, daemon=True).start()
+        en_attente = []
         if todo and broker_actif:
-            #  Seule attente restante : une cle JAMAIS cotee. Bornee a 12 s —
-            #  au-dela, le repli honnete ci-dessous prend la main et le
-            #  prochain passage lira le cache que le worker aura rempli.
-            res = hooks['opt_job']('posq', (todo,), timeout=12) or {}
-            for k, v in res.items():
+            #  Une cle JAMAIS cotee part au worker EN FOND ; la requete n'attend
+            #  que POSQ_ATTENTE_S (mesure : 20/33/56 s de file au pire, avant).
+            #  Au-dela, le repli etiquete ci-dessous prend la main, `en_attente`
+            #  nomme les cles encore en cours et le prochain passage lit le
+            #  cache que le worker aura rempli. Aucun reseau lent dans la
+            #  requete utilisateur (contrat CLAUDE.md).
+            boite = {}
+
+            def _coter(lots=list(todo)):
+                res = hooks['opt_job']('posq', (lots,), timeout=45) or {}
+                t2 = time.time()
+                for k, v in res.items():
+                    if v is not None:
+                        posq_cache[k] = (t2, v)
+                boite.update(res)
+            th = threading.Thread(target=_coter, daemon=True)
+            th.start()
+            th.join(POSQ_ATTENTE_S)
+            for k, v in list(boite.items()):
                 if v is not None:
-                    posq_cache[k] = (now, v)
                     out[k] = v
+            en_attente = [p.get('key') for p in todo if p.get('key') not in out]
         #  INTEGRATION main + vertex-live. Les deux branches avaient ecrit un
         #  repli pour TWS ferme, et chacune tenait une moitie du probleme :
         #
@@ -478,6 +517,14 @@ def make_blueprint(*, opt_job, ibkr_enabled, cotation_repli=None):
                 continue
             _b, _a = _q.get('bid'), _q.get('ask')
             _mid = round((_b + _a) / 2, 4) if (_b and _a) else None
+            #  Un milieu DÉJÀ SERVI par le producteur fait foi : ce bloc ne le
+            #  recalculait que depuis bid/ask et ignorait `mid`, si bien qu'un
+            #  contrat du board (qui publie son milieu, pas toujours ses deux
+            #  côtés) repartait avec `mid=None` — donc une convention de marque
+            #  INDETERMINEE alors qu'elle est connue. On ne fabrique rien : on
+            #  cesse de jeter ce qui a été transmis.
+            if _mid is None:
+                _mid = _q.get('mid')
             #  Une cotation d'ACTION servie par le repli ne porte qu'un `px` :
             #  aucune convention de marque ne s'y applique. Lui coller une
             #  provenance « ABSENTE » serait doublement faux — le prix EXISTE, et
@@ -492,7 +539,14 @@ def make_blueprint(*, opt_job, ibkr_enabled, cotation_repli=None):
             #  Un marche large rend TOUTE convention de marque incertaine.
             _q['spread_pct'] = (round((_a - _b) / _mid * 100, 2)
                                 if (_mid and _b and _a) else None)
-        return jsonify({'results': out, 'live': bool(ibkr_enabled),
+        #  `live` disait « IBKR configuré » : un P&L sur clôture de la veille
+        #  passait pour du temps réel. Il dit désormais « des cotations IBKR
+        #  récentes ont été servies » (preuve `ibkr_live` posée par ibkr_state).
+        from vertex.app.state import scan_state as _etat_scan
+        return jsonify({'results': out,
+                        'en_attente': en_attente,
+                        'live': bool(ibkr_enabled and _etat_scan.get('ibkr_live')),
+                        'ibkr_configure': bool(ibkr_enabled),
                         'fallback_used': bool(combles), 'ts': int(now),
                         #  Lot 6 — les cles servies depuis un cache au-dela du
                         #  TTL : l'UI peut etiqueter « cote conservee » au lieu

@@ -155,6 +155,10 @@ _SECTIONS = """
      Le renderer n'a pas été touché : on lui rend son domicile. -->
 <div id="an-trace" class="vx-mt3">%%TRACE%%</div>
 <div id="an-verdict" class="vx-mt3"></div>
+<!-- Raisonnement du comité : le renderer de loadDecisionStack écrivait dans
+     `#an-committee`, qui n'existait dans aucune section (garde `if(CO)`
+     silencieuse). L'hôte lui est rendu. -->
+<div id="an-committee" class="vx-mt3"></div>
 
 <!-- Scores + radar : SORTIS du hero collant → la barre d'identité (titre/prix/décision)
      reste seule en haut au défilement, le reste de l'analyse défile librement. -->
@@ -192,6 +196,9 @@ _SECTIONS = """
   </section>
 
 <!-- 3. Graphique principal + sous-graphe RSII -->
+<!-- Bandeau catalyseur (résultats estimés) : rempli par loadChart, caché
+     sans échéance connue. L'hôte manquait ; le bandeau n'apparaissait jamais. -->
+<div id="an-catalyst-strip" class="vx-mb2" hidden></div>
 <div id="an-chart"></div>
 <div id="an-rsi" class="vx-mt2"></div>
 <div id="an-volume" class="vx-mt2"></div>
@@ -384,13 +391,20 @@ function analystRangeBar(an,price){
   const pos=(x)=>((x-a)/rng*100).toFixed(1);
   const fillL=pos(lo),fillR=pos(hi);
   const P=(v)=>'$'+VX.fmt.price(v);
+  /*  `.rb-lab` est CENTRÉ sur sa graduation (premium.css : translateX(-50%)).
+      Près d'un bord, la moitié du libellé sort du cadre. Mesuré dans Chromium
+      à 390 px sur /analysis/AAPL, carte « Sentiment » : `.vx-rangebar` rendait
+      scrollWidth 323 pour clientWidth 318 — « $400,00 » posé à 94,6 %
+      débordait de 5 px. Aux extrémités le libellé s'aligne donc sur le bord
+      (translateX(0) / -100%) ; entre les deux rien ne change. */
+  const anc=(x)=>{const q=+pos(x);return q<12?';transform:translateX(0)':q>88?';transform:translateX(-100%)':'';};
   let ticks=`<i class="rb-tick" style="left:${pos(lo)}%"></i><i class="rb-tick" style="left:${pos(hi)}%"></i>`
-    +`<span class="rb-lab" style="left:${pos(lo)}%">${P(lo)}<span class="rb-lab-sub">bas</span></span>`
-    +`<span class="rb-lab" style="left:${pos(hi)}%">${P(hi)}<span class="rb-lab-sub">haut</span></span>`;
+    +`<span class="rb-lab" style="left:${pos(lo)}%${anc(lo)}">${P(lo)}<span class="rb-lab-sub">bas</span></span>`
+    +`<span class="rb-lab" style="left:${pos(hi)}%${anc(hi)}">${P(hi)}<span class="rb-lab-sub">haut</span></span>`;
   if(mid!=null)ticks+=`<i class="rb-tick" data-kind="mean" style="left:${pos(mid)}%"></i>`
-    +`<span class="rb-lab" data-kind="mean" style="left:${pos(mid)}%">${P(mid)}<span class="rb-lab-sub">objectif</span></span>`;
+    +`<span class="rb-lab" data-kind="mean" style="left:${pos(mid)}%${anc(mid)}">${P(mid)}<span class="rb-lab-sub">objectif</span></span>`;
   if(price!=null)ticks+=`<i class="rb-tick" data-kind="price" style="left:${pos(price)}%"></i>`
-    +`<span class="rb-lab" data-kind="price" style="left:${pos(price)}%">${P(price)}<span class="rb-lab-sub">cours</span></span>`;
+    +`<span class="rb-lab" data-kind="price" style="left:${pos(price)}%${anc(price)}">${P(price)}<span class="rb-lab-sub">cours</span></span>`;
   return `<div class="vx-rangebar" role="img" aria-label="Fourchette d'objectifs ${P(lo)} à ${P(hi)}">`
     +`<span class="rb-fill" style="left:${fillL}%;right:${(100-fillR)}%"></span>${ticks}</div>`;
 }
@@ -418,6 +432,75 @@ function peersCompareBars(cf,peers,sm,opt){
 /* Valorisation vs secteur (radar) + Financials premium — données company réelles
    (cache serveur), jamais inventées. Le prix live peut manquer ; les
    fondamentaux/médianes sectorielles sont servis même sans flux temps réel. */
+/* -- PROVENANCE DU SCAN — mesuree UNE fois par chargement -----------------
+   Mesure du 06/09/2026, Chromium sur 127.0.0.1:5003, AAPL (cache chaud) :
+   SEPT pieds de cartes rendaient « Âge inconnu · scan Différé » — profil,
+   Monte-Carlo, physique du prix, Kelly, MTF, RSI, volume. Les sept lisaient
+   `detail.updated`, une cle que `/api/ticker/<sym>` NE SERT PAS : la charge
+   mesuree porte 58 cles dans `detail`, aucune nommee `updated`
+   (`ticker_api.api_ticker` rend `det_all.get(sym)`, le detail du scan).
+   L'horodatage existait pourtant : le graphique principal, dans la MEME
+   fonction, affichait « Il y a 17 min » avec `exec.as_of`
+   (2026-09-06T17:49:23Z = `/api/live/status` domains.prices.ts 1788716963 —
+   le meme instant, verifie). Sept cartes jetaient l'heure qu'elles tenaient.
+   Le mode etait en outre ecrit en dur (`'delayed'`) : sur l'instance a IBKR
+   branche, ou `/api/live/status` rend `mode:'live'`, ces sept cartes
+   auraient annonce « Differe » sur une donnee live.
+   Un seul proprietaire, renseigne par `loadDossier` — jamais un defaut. */
+let SCAN={ts:null,source:'scan',mode:'delayed'};
+
+/* -- PROVENANCE DES ANNEXES ENTREPRISE (company / peers / risk_map) -------
+   Meme defaut que le badge `an-fin-src`, une carte plus loin. Mesure du
+   06/09/2026 sur un titre a cache FROID (MRK, `meta.etat==='MISSING'`,
+   `rafraichissement_en_cours===true`, `company===null`) : le badge disait
+   « collecte en cours » pendant que, sur la MEME page, le radar de
+   valorisation, le quadrant et la croissance trimestrielle annoncaient
+   « company (cache) ». Rien n'etait en cache. Sur un titre chaud, les trois
+   pieds affichaient « Âge inconnu » alors que `meta.recu_a` porte l'instant
+   de reception reel (mesure : 1788718041.18 pour AAPL).
+   Le vocabulaire des cinq etats est celui du badge, a dessein : deux mots
+   pour un meme etat seraient deux autorites.
+   `cause` sert a poser SOUS un etat vide la raison mesuree — sans elle, la
+   carte impute au TITRE ce qui est un etat de la collecte. */
+/*  Le rafraichissement NE PRIME PAS sur la presence de la charge.
+    `snapshot.servir` a une branche RASSIS qui rend la valeur EN CACHE avec
+    `etat='STALE'` ET `rafraichissement_en_cours=true` : la collecte tourne en
+    fond, mais les chiffres a l'ecran sont bien ceux du dernier instantane.
+    `fraicheur_s` vaut 60 s sur `/api/ticker` — c'est donc l'etat NORMAL de
+    toute page rouverte apres une minute, pas un cas limite.
+    Mesure du 06/09/2026, Chromium sur 127.0.0.1:5003, /analysis/AAPL, charge
+    servie {etat:'STALE', qualite:'COMPLETE', rafraichissement_en_cours:true,
+    recu_a:1788719818.43} : les pieds `an-quarters` et `an-quadrant`
+    annoncaient « Il y a 66 s · company (collecte en cours) Secours » sur un
+    cache COMPLET, et la carte « 1 · Fondamental » — douze valeurs reelles,
+    un seul tiret — portait « un vide signifie pas encore recu ».
+    Un etat de la collecte n'est la CAUSE d'un vide que s'il n'y a rien a
+    montrer : `recu_a` mesure exactement cela. */
+function provAnnexes(fm,demo){
+  fm=fm||{};
+  const servi=(typeof fm.recu_a==='number');
+  const encours=!servi&&!!(fm.rafraichissement_en_cours||fm.etat==='MISSING');
+  const offline=!servi&&fm.etat==='OFFLINE';
+  //  Une charge servie PENDANT un rafraichissement : les deux faits sont dits.
+  const rafraichit=servi&&!!fm.rafraichissement_en_cours;
+  return {
+    encours:encours,offline:offline,rafraichit:rafraichit,
+    source:demo?'company (DÉMO)'
+      :encours?'company (collecte en cours)'
+      :offline?'company (source injoignable)'
+      :fm.etat==='STALE'?('company (scan précédent'+(rafraichit?' · rafraîchissement en cours':'')+')')
+      :fm.qualite==='PARTIELLE'?'company (cache partiel)'
+      :'company (cache)',
+    ts:servi?fm.recu_a:null,
+    mode:(demo||encours||offline)?'fallback':'delayed',
+    cause:demo?'Chiffres de démonstration — aucune valeur réelle.'
+      :encours?'Collecte des données entreprise en cours : un vide signifie « pas encore reçu », pas « inexistant ».'
+      :offline?'Source des données entreprise injoignable — l’absence vient de la collecte, pas du titre.'
+      :null,
+  };
+}
+let ANNEXES=provAnnexes(null,false);
+
 function paintValuation(t,cf){
   cf=cf||{};
   const sm=(t&&t.sector_median)||{};
@@ -438,7 +521,7 @@ function paintValuation(t,cf){
         {label:'Marge',value:marg,median:sm.median_margin,better:'high',fmt:v=>(+v).toFixed(1)+'%'},
         {label:'Rentab.',value:roe,median:sm.median_roe,better:'high',fmt:v=>(+v).toFixed(0)+'%'},
       ],
-      source:demo?'company (DÉMO)':'company (cache)',timestamp:Date.now(),mode:demo?'fallback':'delayed',
+      source:ANNEXES.source,timestamp:ANNEXES.ts,mode:ANNEXES.mode,
     });
   }
   /* ── Grille Financials premium ── */
@@ -479,7 +562,34 @@ function paintValuation(t,cf){
   const cmp=peersCompareBars(cf,peers,sm,{key:'pe',median:sm.median_pe,fmt:v=>'×'+(+v).toFixed(1)});
   const cmpBlock=cmp?`<div class="vx-mt3"><div class="vx-metric-k" style="margin-bottom:6px">P/E — ${SYM} vs pairs</div>${cmp}</div>`:'';
   body('an-financials',metricGrid(cells)+cmpBlock);
-  const srcEl=$('an-fin-src');if(srcEl)srcEl.textContent=demo?'DÉMO':'cache';
+  /* Le badge affirmait « cache » dans TOUS les états non-démo. MESURE du
+     2026-09-06 sur un titre jamais demandé (instance neuve, cache froid) :
+     les douze mesures affichaient « — » sous un badge « cache » — une
+     provenance annoncée alors que rien n'était en cache et que la collecte
+     était en vol. Absence, collecte en cours, instantané précédent et cache
+     sont quatre états DISTINCTS (invariant 5) ; la page connaît déjà le bon
+     dans `t.meta`, elle ne le lisait simplement pas ici. */
+  const srcEl=$('an-fin-src');
+  if(srcEl){
+    const fm=(t&&t.meta)||{};
+    srcEl.textContent=demo?'DÉMO'
+      :(fm.rafraichissement_en_cours||fm.etat==='MISSING')?'collecte en cours'
+      :fm.etat==='OFFLINE'?'source injoignable'
+      :fm.etat==='STALE'?'scan précédent'
+      :fm.qualite==='PARTIELLE'?'cache partiel'
+      :'cache';
+    srcEl.setAttribute('data-tone',
+      demo?'warn'
+      :(fm.rafraichissement_en_cours||fm.etat==='MISSING')?''
+      :(fm.etat==='OFFLINE')?'risk'
+      :(fm.etat==='STALE'||fm.qualite==='PARTIELLE')?'warn':'');
+    srcEl.title=demo?'chiffres de démonstration — aucune valeur réelle'
+      :(fm.rafraichissement_en_cours||fm.etat==='MISSING')
+        ?'les fondamentaux sont en cours de collecte : un tiret signifie « pas encore reçu », pas « zéro »'
+      :fm.etat==='OFFLINE'?'la source des fondamentaux est injoignable'
+      :fm.etat==='STALE'?'valeurs du scan précédent'
+      :'valeurs du dernier instantané collecté';
+  }
   paintQuarters(cf,demo);
   paintQuadrant(cf,sm,peers,demo);
   paintRiskMap(t&&t.risk_map);
@@ -500,7 +610,7 @@ function paintQuadrant(cf,sm,peers,demo){
   (peers||[]).forEach(function(p){if(p&&p.symbol!==SYM&&ok(p.rev_growth)&&ok(p.roe))P.push({x:+p.rev_growth*100,y:+p.roe*100,sym:p.symbol,self:0});});
   if(!P.length||!(window.VXCharts&&window.Chart)){
     _gardeSpan(host,'');host.innerHTML='<div class="vx-card"><div class="vx-card-header"><span class="vx-card-title">Croissance × rentabilité</span></div>'
-      +VX.states.empty('Comparables insuffisants pour positionner le titre.')+'</div>';return;
+      +VX.states.empty(ANNEXES.cause||'Comparables insuffisants pour positionner le titre.')+'</div>';return;
   }
   const cc=VXCharts.colors;
   const med=(ok(sm&&sm.median_growth)&&ok(sm&&sm.median_roe))?[{x:+sm.median_growth,y:+sm.median_roe,sym:'Médiane secteur',self:2}]:[];
@@ -519,7 +629,7 @@ function paintQuadrant(cf,sm,peers,demo){
     question:'Le titre allie-t-il croissance ET rentabilité ?',
     conclusion:(ok(cf.rev_growth)&&ok(cf.roe)&&sm)?((cf.rev_growth*100>=(sm.median_growth||0)&&cf.roe*100>=(sm.median_roe||0))?'Cadran qualité — croissance et rentabilité au-dessus du secteur':'Au moins un axe sous la médiane sectorielle'):'',
     height:320,legend:[{label:SYM,color:cc.brand},{label:'Pairs',color:cc.neutral},{label:'Médiane',color:cc.warning}],
-    source:demo?'company (DÉMO)':'company (cache)',timestamp:Date.now(),mode:'delayed',
+    source:ANNEXES.source,timestamp:ANNEXES.ts,mode:ANNEXES.mode,
     limits:'X = croissance du CA · Y = ROE (rentabilité des fonds propres)',
     render:function(cv){return VXCharts.mount(cv,cfg);}});
 }
@@ -529,7 +639,7 @@ function paintQuadrant(cf,sm,peers,demo){
 function paintRiskMap(rm){
   const el=document.querySelector('#an-riskmap [data-body]');if(!el)return;
   const risks=(rm&&rm.risks)||[];
-  if(!risks.length){el.innerHTML=VX.states.empty('Carte des risques indisponible pour ce titre.');return;}
+  if(!risks.length){el.innerHTML=VX.states.empty(ANNEXES.cause||'Carte des risques indisponible pour ce titre.');return;}
   const T={'FAIBLE':['var(--vx-positive)',30],'MODÉRÉ':['var(--vx-warning)',62],'MODERE':['var(--vx-warning)',62],
     'ÉLEVÉ':['var(--vx-negative)',95],'ELEVE':['var(--vx-negative)',95],'INCONNU':['var(--vx-steel-3)',10]};
   el.innerHTML='<div class="vx-wbars" style="margin-top:2px">'+risks.map(r=>{
@@ -549,7 +659,7 @@ function paintQuarters(cf,demo){
   if(qs.length<2){
     _gardeSpan(host,'');
     host.innerHTML='<div class="vx-card"><div class="vx-card-header"><span class="vx-card-title">Croissance trimestrielle</span></div>'
-      +VX.states.empty('Historique trimestriel indisponible pour ce titre (CA/résultat par trimestre servis via le flux de données du poste).')+'</div>';
+      +VX.states.empty(ANNEXES.cause||'Historique trimestriel indisponible pour ce titre (CA/résultat par trimestre servis via le flux de données du poste).')+'</div>';
     return;
   }
   if(!(window.VXCharts&&window.Chart))return;
@@ -577,7 +687,7 @@ function paintQuarters(cf,demo){
     conclusion:(function(){const r0=qs[0].rev,r1=qs[qs.length-1].rev;
       return (r0&&r1)?('CA '+(r1>=r0?'en hausse':'en baisse')+' sur '+qs.length+' trimestres'):(qs.length+' trimestres');})(),
     height:300,legend:[{label:'Chiffre d’affaires',color:cc.neutral},{label:'Résultat net',color:cc.positive},{label:'Marge nette',color:cc.brand}],
-    source:demo?'company (DÉMO)':'company (cache)',timestamp:Date.now(),mode:demo?'fallback':'delayed',
+    source:ANNEXES.source,timestamp:ANNEXES.ts,mode:ANNEXES.mode,
     limits:'CA & résultat net par trimestre · marge = résultat/CA',
     explain:{shows:'Le chiffre d’affaires et le résultat net des 8 derniers trimestres, plus la marge nette.',
       why:'La trajectoire trimestrielle révèle l’accélération ou l’essoufflement, invisibles sur un seul point annuel.',
@@ -632,7 +742,7 @@ async function paintProfile(d){
     +`<div class="vx-scorecard-side">${side||'<span class="vx-meta">Métriques de décision indisponibles.</span>'}</div>`
     +(perfHtml?`<div class="vx-scorecard-side" style="grid-column:1/-1"><span class="vx-metric-k" style="display:block;margin-bottom:2px">Performance</span><div class="vx-perfbars">${perfHtml}</div></div>`:'')
     +`</div>`
-    +`<div class="vx-card-footer">${VX.updateIndicator((TICKER&&TICKER.detail&&TICKER.detail.updated)||Date.now(),(window.__vxStatus&&window.__vxStatus.source)||'scan',(window.__vxStatus&&window.__vxStatus.demo)?'fallback':'delayed')}</div>`;
+    +`<div class="vx-card-footer">${VX.updateIndicator(SCAN.ts,SCAN.source,SCAN.mode)}</div>`;
 }
 
 VX.recentTickers.push(SYM);
@@ -673,7 +783,7 @@ function stCol(state){
   if(/MOYENNE|RETOUR|RANGE|NEUTRE|MIXTE|PRUDEN|DIVERG/.test(s))return cc.warning;
   return cc.neutral;
 }
-function physFoot(src,ts){return '<div class="vx-chart-foot">'+VX.updateIndicator(ts||Date.now(),src,'delayed')+'<span class="vx-meta">estimation moteur — lecture seule</span></div>';}
+function physFoot(src){return '<div class="vx-chart-foot">'+VX.updateIndicator(SCAN.ts,src,SCAN.mode)+'<span class="vx-meta">estimation moteur — lecture seule</span></div>';}
 function paintPhysics(d){
   if(!window.VXCharts||!d)return;
   var cc=VXCharts.colors,v=d.vertex||{},mc=v.mc||{},bs=v.bootstrap||{},kelly=v.kelly||{},ph=d.physics||{},mtf=d.mtf||{};
@@ -688,7 +798,7 @@ function paintPhysics(d){
         title:'Dispersion des rendements — Monte-Carlo & bootstrap',
         question:'Quelle fourchette de rendement l’horizon peut-il produire ?',
         conclusion:(p50!=null?'médian '+VX.fmt.pct(p50):'')+(bs.p_positive!=null?' · '+Math.round(bs.p_positive*100)+'% proba positive':''),
-        unit:'% horizon',height:232,source:'Monte-Carlo 1200 chemins (GBM) · bootstrap blocs',timestamp:d.updated||Date.now(),mode:'delayed',
+        unit:'% horizon',height:232,source:'Monte-Carlo 1200 chemins (GBM) · bootstrap blocs',timestamp:SCAN.ts,mode:SCAN.mode,
         limits:'MODEL_ESTIMATE · '+(bs.horizon||mc.days||'?')+' j'+(tp1f!=null?' · TP1 avant stop '+Math.round(tp1f*100)+'% vs stop '+Math.round((stopf||0)*100)+'%':''),
         render:function(cv){return VXCharts.mount(cv,{type:'bar',
           data:{labels:['Pessimiste P05','Médian P50','Optimiste P95'],datasets:[{data:[p05,p50,p95],backgroundColor:[cc.negative,cc.neutral,cc.positive],borderRadius:5,maxBarThickness:46}]},
@@ -725,7 +835,7 @@ function paintPhysics(d){
         +'<div id="an-physics-radar"></div>'
         +phRows
         +(ph.note?'<div class="vx-meta" style="margin-top:6px;line-height:1.5">'+esc(ph.note)+'</div>':'')
-        +physFoot('regime_features (Hurst · entropie · Kaufman · OU)',d.updated);
+        +physFoot('regime_features (Hurst · entropie · Kaufman · OU)');
       if(VXCharts.radar){VXCharts.radar('an-physics-radar',{axes:[
         {label:'Persistance',value:Math.max(0,Math.min(100,(ph.hurst||0)*100))},
         {label:'Efficience',value:Math.max(0,Math.min(100,(ph.efficiency||0)*100))},
@@ -742,7 +852,7 @@ function paintPhysics(d){
       kEl.innerHTML='<div class="vx-card-header"><span class="vx-card-title">Taille suggérée — critère de Kelly</span>'
         +'<span class="vx-chart-question">Quelle fraction du capital, au maximum ?</span></div><div id="an-kelly-g"></div>'
         +'<div class="vx-meta" style="text-align:center;margin-top:2px">'+esc(kelly.note||'demi-Kelly capé · jamais automatique')+'</div>'
-        +physFoot('quant_engine · Kelly',d.updated);
+        +physFoot('quant_engine · Kelly');
       if(VXCharts.gauge){VXCharts.gauge('an-kelly-g',{value:kelly.pct,min:0,max:15,unit:'%',label:'du capital',
         reading:'plafond prudent 12 %',bands:[{to:6,color:cc.neutral},{to:12,color:cc.brand},{to:15,color:cc.warning}]});}
     }
@@ -759,7 +869,7 @@ function paintPhysics(d){
         +'<span class="vx-badge" style="color:'+col2+';border-color:'+col2+'55">'+esc(mtf.state||'—')+'</span></div>'
         +'<div id="an-mtf-flow"></div>'
         +(mtf.note?'<div class="vx-meta" style="margin-top:4px">'+esc(mtf.note)+'</div>':'')
-        +physFoot('timeframes (journalier × hebdo)',d.updated);
+        +physFoot('timeframes (journalier × hebdo)');
       if(VXCharts.flow){VXCharts.flow('an-mtf-flow',{nodes:[
         {label:'Journalier',sub:(dailyUp?'haussier':'prudent'),tone:dailyUp?'active':'idle'},
         {label:'Hebdo',sub:(wUp?'haussier':'prudent'),tone:wUp?'active':'idle',count:(mtf.weekly_rsi!=null?Math.round(mtf.weekly_rsi):null)},
@@ -791,7 +901,7 @@ async function loadDossier(){
   ['/api/ticker/'+SYM,'/api/strategy/decision/'+SYM,'/api/anomalies/'+SYM,
    '/api/tradingview/signals?symbol='+SYM,'/api/options/chain/'+SYM]
     .forEach(function(u){try{VX.fetch(u).catch(function(){});}catch(e){}});
-  let t=null,exec=null,stale=false;
+  let t=null,exec=null,status=null,stale=false;
   try{t=await VX.fetch('/api/ticker/'+SYM,{ttl:60000});}catch(e){}
   try{exec=await VX.fetch('/api/strategy/decision/'+SYM,{ttl:60000});}catch(e){}
   try{status=status||await VX.fetch('/api/live/status',{ttl:60000});}catch(e){}
@@ -862,8 +972,24 @@ async function loadDossier(){
       `null` quand l'information manque : `VX.updateIndicator` sait rendre
       « n/d », alors qu'une date inventée se lirait comme une mesure.  */
   const scanTs=(exec&&exec.as_of)||null;
-  const scanMode=demo?'demo':((status&&status.mode)||'delayed');
-  const scanSource=(status&&status.ibkr)?'IBKR · scan':'scan';
+  /*  `'demo'` N'EST PAS un mode que le rendu sait nommer : `VX.updateIndicator`
+      ne connait que live / delayed / fallback / error, et `components.css` ne
+      colore que ces quatre-la. Mesure du 06/09/2026 sur le fichier servi :
+      `updateIndicator(ts,'scan','demo')` rend « … · scan » — AUCUN mot de
+      mode, point gris par defaut ; `…,'fallback')` rend « … · scan Secours ».
+      Le mode dit la DEGRADATION (secours), la source dit d'OU vient le
+      chiffre : c'est elle qui nomme la demo, comme `'company (DÉMO)'` deux
+      fonctions plus haut. Sans quoi une fiche entierement fabriquee se
+      presentait avec un pied indiscernable d'une fiche reelle. */
+  const scanMode=demo?'fallback':((status&&status.mode)||'delayed');
+  const scanSource=demo?'scan (DÉMO)':((status&&status.ibkr)?'IBKR · scan':'scan');
+  /*  Renseigné ICI, avant TOUT peintre : `paintPhysics`, `paintProfile` et
+      `paintValuation` sont appelés plus bas dans cette même fonction. */
+  SCAN={ts:scanTs,source:scanSource,mode:scanMode};
+  ANNEXES=provAnnexes((t&&t.meta)||null,demo);
+  /* Domaine « prix » de /api/live/status : porte l'âge réel (age_s) de la
+     dernière cotation servie. `null` quand la route ne l'a pas fourni. */
+  const priceDomain=(status&&status.domains&&status.domains.prices)||null;
 
   /* Hero */
   ($('an-name')||{}).textContent=(t&&t.company&&(t.company.name||t.company.shortName))||'';
@@ -884,7 +1010,12 @@ async function loadDossier(){
       }
     }
   }catch(e){}
-  const decision=(exec&&exec.final_decision)||'ATTENDRE';
+  /*  Hors scan (`available:false`) ou verdict absent, RIEN n'est fabriqué :
+      `decision` reste null et le rail dit « NON ÉVALUÉ » avec la raison du
+      serveur. Un « ATTENDRE » par défaut se lisait comme un verdict calculé. */
+  const horsScan=!exec||exec.available===false||!exec.final_decision;
+  const decision=horsScan?null:String(exec.final_decision);
+  const decisionAff=decision||'NON ÉVALUÉ';
   /*  Une écriture NUE de `textContent` sur `an-decision` vivait ici, et le
       nœud `#an-decision` n'existe plus : il appartenait à l'agencement
       précédent. (Le motif exact n'est pas recopié ci-dessus : le recensement
@@ -909,14 +1040,16 @@ async function loadDossier(){
     if(pl.rr!=null||pl.rr_res!=null)advice.push('R:R '+VX.fmt.num(pl.rr!=null?pl.rr:pl.rr_res,1)+'×');
     if(pl.stop!=null)advice.push('stop '+(pl.stop_type?esc(pl.stop_type)+' ':'')+VX.fmt.nd(pl.stop));
     railD.innerHTML=`<div class="vx-kpi vx-mb2">
-        <span class="vx-kpi-value" style="font-size:24px"><span class="vx-badge vx-badge-decision" data-decision="${decision.replace('É','E')}" style="font-size:14px;padding:5px 14px">${decision}</span></span>
-        <span class="vx-kpi-delta vx-muted">${exec&&exec.reason?esc(exec.reason):'moteur exécutif unique'}</span></div>`
+        <span class="vx-kpi-value" style="font-size:24px"><span class="vx-badge vx-badge-decision" data-decision="${decisionAff.replace(/É/g,'E').replace(' ','_')}" style="font-size:14px;padding:5px 14px">${esc(decisionAff)}</span></span>
+        <span class="vx-kpi-delta vx-muted">${horsScan
+          ?esc((exec&&(exec.reason||exec.error))||'titre hors scan courant — aucun verdict calculé')
+          :(exec&&exec.reason?esc(exec.reason):'moteur exécutif unique')}</span></div>`
       +(advice.length?`<div class="vx-flex vx-wrap vx-mb2" style="gap:.3rem">${advice.map(a=>`<span class="vx-badge">${a}</span>`).join('')}</div>`:'')
       +(d.thesis?`<div class="vx-insight vx-mb2" data-tone="ai" style="font-size:12px;line-height:1.5">${esc(String(d.thesis).split(/[.·]/)[0])}.</div>`:'')
       +(audit.length?`<details class="vx-mt1"><summary class="vx-meta" style="cursor:pointer">Audit trail (${audit.length})</summary>
         <ul style="margin:6px 0 0;padding-left:16px;font-size:11.5px" class="vx-dim">${audit.slice(0,8).map(a=>`<li>${esc(typeof a==='string'?a:JSON.stringify(a))}</li>`).join('')}</ul></details>`:'')
       +`<div class="vx-card-footer">${scanTs
-        ?VX.updateIndicator(scanTs,'ExecutiveEngine',demo?'fallback':scanMode)
+        ?VX.updateIndicator(scanTs,'ExecutiveEngine',scanMode)
         :'<span class="vx-update" data-mode="fallback"><span class="vx-dot"></span>ExecutiveEngine · fraîcheur n/d</span>'}</div>`;
   }
   const railR=$('an-rail-risks')&&$('an-rail-risks').querySelector('[data-body]');
@@ -1032,7 +1165,7 @@ async function loadDossier(){
       labels:cut.map((_,i)=>i-cut.length),bars:bars,closes:cut,overlays:overlays,plan:plan,events:[],
       dates:tail(S.dates),volume:tail(S.volume),
       height:Math.round(Math.min(460,Math.max(340,(window.innerWidth||1200)*0.30))),
-      source:scanSource,timestamp:scanTs||null,mode:demo?'demo':scanMode,
+      source:scanSource,timestamp:scanTs||null,mode:scanMode,
       limits:(bars.length?'bougies OHLC quotidiennes':'clôtures quotidiennes')+' du scan · MM = moyennes serveur · niveaux = plan moteur',
       explain:{shows:'Chandeliers (ou clôtures) du titre, moyennes mobiles 20/50/200 et niveaux du plan moteur : entrée, stop (invalidation), objectifs.',
         why:'Le plan chiffré discipline l’exécution : l’invalidation est définie AVANT d’engager du capital ; les MM situent la tendance.',
@@ -1055,7 +1188,7 @@ async function loadDossier(){
       VXCharts.card('an-rsi',{title:SYM+' — RSI (14)',height:118,unit:'RSI',
         question:'Momentum : suracheté (>70) ou survendu (<30) ?',
         conclusion:(d.rsi!=null?('RSI actuel '+VX.fmt.num(d.rsi,0)+(d.rsi>=70?' · suracheté':d.rsi<=30?' · survendu':' · neutre')):''),
-        source:'scan',timestamp:Date.now(),mode:demo?'fallback':'delayed',
+        source:scanSource,timestamp:scanTs,mode:scanMode,
         render:function(cv){return VXCharts.mount(cv,{type:'line',
           data:{labels:cut.map((_,i)=>i-cut.length),datasets:[{data:rsi,borderColor:VXCharts.colors.brand,borderWidth:1.5,pointRadius:0,tension:.25,fill:false}]},
           options:{scales:{x:{display:false},y:{min:0,max:100,position:'right',grid:{display:false},border:{display:false},ticks:{stepSize:20,font:{size:10},color:VXCharts.colors.muted,padding:6}}},
@@ -1069,7 +1202,7 @@ async function loadDossier(){
       const volCols=cut.map(function(c,i){return (i>0&&c<cut[i-1])?VXCharts.colors.negative:VXCharts.colors.positive;});
       VXCharts.card('an-volume',{title:SYM+' — Volume',height:96,unit:'titres',
         question:'Le mouvement est-il soutenu par le volume ?',
-        source:'scan',timestamp:Date.now(),mode:demo?'fallback':'delayed',
+        source:scanSource,timestamp:scanTs,mode:scanMode,
         render:function(cv){return VXCharts.mount(cv,{type:'bar',
           data:{labels:cut.map((_,i)=>i-cut.length),datasets:[{data:vol,
             backgroundColor:volCols.map(function(c){return (VXCharts.rgba&&VXCharts.rgba(c,.5))||c;}),
@@ -1116,7 +1249,14 @@ async function loadDossier(){
     +kv('Médiane sectorielle P/E',(t&&t.sector_median&&t.sector_median.median_pe!=null)?(+t.sector_median.median_pe).toFixed(1):null)
     +_kvif('Prochains résultats',cf.earnings_date)
     +(peers.length>1?`<div class="vx-meta vx-mt2">Pairs : ${peers.filter(p=>p.symbol!==SYM).slice(0,4).map(p=>
-      `<button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${p.symbol}">${p.symbol}</button>`).join('')}</div>`:''));
+      `<button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${p.symbol}">${p.symbol}</button>`).join('')}</div>`:'')
+    /*  Mesure du 06/09/2026, MRK a cache froid : cette carte alignait CINQ
+        tirets nus — croissance CA, marge, P/E, ROE, médiane sectorielle —
+        sans un mot, pendant que la carte voisine portait déjà le badge
+        « collecte en cours » sur la MÊME absence. Un tiret muet se lit
+        « la source n’a pas ce chiffre » ; le tiret est ici « pas encore
+        reçu ». La cause est mesurée, pas supposée. */
+    +(ANNEXES.cause?`<div class="vx-meta vx-mt2">${esc(ANNEXES.cause)}</div>`:''));
 
   /* 4-bis. Valorisation vs secteur (radar) + Financials premium — vraie donnée cachée */
   paintValuation(t,cf);
@@ -1358,14 +1498,21 @@ async function loadDossier(){
      delta/gamma/theta/vega, IV, OI, volume, prime, break-even, PoP, qualité) +
      colonnes calculées risque max & rendement. Composant partagé C.optionChainTable
      + bulle d'équilibre prime×DTE. Shortlist honnête, greeks = modèle. */
+  /*  `mode:ch.on_demand?'delayed':'delayed'` — les DEUX branches rendaient la
+      même chose : la distinction mesurée par le serveur était calculée puis
+      jetée. `on_demand` (mesuré `true` sur AAPL au 06/09/2026) dit que ces
+      contrats ne viennent PAS de la rotation du board mais d’une collecte
+      dédiée. Ce n’est pas un mode de fraîcheur, c’est une PROVENANCE : elle
+      est nommée là où le lecteur la lit. */
+  const _chSrc=(ch)=>(ch.source||'board options')+(ch.on_demand?' · à la demande':'');
   try{
     const ch=await VX.fetch('/api/options/chain/'+SYM,{ttl:180000});
     const arr=(ch&&ch.contracts)||[];
     if(arr.length&&window.VXCharts&&VXCharts.optionChainTable){
       VXCharts.optionChainTable('an-options-chain',{contracts:arr,spot:ch.spot,sym:SYM,
-        source:ch.source||'board options',timestamp:ch.as_of,mode:ch.on_demand?'delayed':'delayed'});
+        source:_chSrc(ch),timestamp:ch.as_of,mode:'delayed'});
       if(VXCharts.bestContractBubble)VXCharts.bestContractBubble('an-options-bubble',{contracts:arr,spot:ch.spot,
-        source:ch.source||'board options',timestamp:ch.as_of,mode:'delayed'});
+        source:_chSrc(ch),timestamp:ch.as_of,mode:'delayed'});
     }else{
       const host=document.getElementById('an-options-chain');
       if(host){_gardeSpan(host,'vx-card');host.innerHTML='<div class="vx-card-header"><span class="vx-card-title">Chaîne — meilleurs contrats</span></div>'
@@ -1406,10 +1553,21 @@ async function loadDossier(){
 
 /* Analystes PROFONDS (à la demande) : révisions BPA, surprises, notes, détention, initiés.
    Enrichit Catalyseurs + Sentiment sans bloquer le dossier principal. */
-async function loadAnalyst(){
+async function loadAnalyst(essai){
+  essai=essai||0;
   let a=null;
-  try{a=await VX.fetch('/api/analyst/'+SYM,{ttl:600000});}catch(e){}
-  if(!a||a.demo||a.error)return;
+  /* Le serveur ne fait plus de réseau dans la requête : EN_COURS = collecte
+     lancée en fond → réessai borné (3) après `retry_s`, hors cache client.
+     La page supplantée (VX.page._gen) ne repeint pas. */
+  try{a=await VX.fetch('/api/analyst/'+SYM,{ttl:essai?0:600000});}catch(e){}
+  if(a&&a.etat==='EN_COURS'){
+    if(essai<3)setTimeout(function(){
+      if(window.VX&&VX.page&&VX.page._gen!==_g)return;
+      loadAnalyst(essai+1);
+    },((a.retry_s||6)*1000));
+    return;
+  }
+  if(!a||a.demo||a.error||a.available===false)return;
   const $b=id=>document.querySelector('#'+id+' [data-body]');
   const price=(TICKER&&TICKER.detail&&TICKER.detail.price)||null;
   /* Catalyseurs : révisions BPA + surprises + notes datées */
@@ -1428,7 +1586,8 @@ async function loadAnalyst(){
       return `<div class="vx-kv"><span class="k">${esc(r.date)} · ${esc(r.firm)}</span><span class="v ${dir}">${esc(r.to||r.pt_action||r.action)}${tgt}</span></div>`;
     }).join('');
   }
-  if(cat){const el=$b('an-catalysts');if(el)el.innerHTML+=`<div class="vx-mt2" style="border-top:1px solid var(--vx-border,#30292B);padding-top:8px">${cat}</div>`;}
+  if(cat&&a.stale)cat+=`<div class="vx-meta vx-mt1">Données analystes périmées (&gt; 12 h), rafraîchissement en cours.</div>`;
+  if(cat)analystAjout('an-catalysts',cat);
   /* Sentiment : détention institutionnelle (13F) + initiés */
   let sen='';
   if(a.holders&&a.holders.length){
@@ -1440,7 +1599,15 @@ async function loadAnalyst(){
   if(a.insider){const ib=a.insider;
     sen+=kv('Initiés (récent)',`${ib.buys} achat(s) / ${ib.sells} vente(s)`,(ib.bias==='buy'?'vx-pos':ib.bias==='sell'?'vx-neg':''));
   }
-  if(sen){const el=$b('an-sentiment');if(el)el.innerHTML+=`<div class="vx-mt2" style="border-top:1px solid var(--vx-border,#30292B);padding-top:8px">${sen}</div>`;}
+  if(sen)analystAjout('an-sentiment',sen);
+}
+/* Ajout IDEMPOTENT : le corps de la carte est réécrit par loadDossier (rafraîchissement
+   180 s, deuxième passage du routeur) ; l'ancien `innerHTML+=` s'empilait ou
+   disparaissait selon l'ordre. Mesuré : bloc peint à 1 s, effacé à 2 s. */
+function analystAjout(id,html){
+  const el=document.querySelector('#'+id+' [data-body]');if(!el)return;
+  el.querySelectorAll('[data-analyst]').forEach(n=>n.remove());
+  el.insertAdjacentHTML('beforeend',`<div class="vx-mt2" data-analyst style="border-top:1px solid var(--vx-border,#30292B);padding-top:8px">${html}</div>`);
 }
 /* ── Carte-Verdict + Carte-Scénario + Raisonnement du comité (decision stack) ── */
 /* DecisionTrace du dossier : Donnée → Moteur → Décision → Portefeuille.
@@ -1504,7 +1671,24 @@ async function loadDecisionStack(){
       +'<div><b>Vertex ne tranche pas '+esc(SYM)+'.</b>'
       +'<div class="vx-insufficient-why">Données insuffisantes ('+esc(miss)+'). Aucune conviction affichée tant que le dossier n\'est pas complet.</div></div></div>'
       +'<div class="vx-mt3"><a class="vx-btn vx-btn-soft" href="/system?view=data">Prochaine action : vérifier les données →</a></div></section>';
-    if(SC)SC.innerHTML='';if(CO)CO.innerHTML='';
+    /* DEUX CARTES VIDÉES À NÉANT — mesuré le 2026-09-06 par l'audit
+       navigateur, sur /analysis/NVDA à 1600 px : « an-scenarios : carte vide ».
+       Les deux sections gardent leur en-tête (« Scénarios Bull / Base / Bear »,
+       « Comité ») et leur corps devient une chaîne VIDE. Le lecteur voit donc
+       une promesse suivie de rien, à côté d'une carte de verdict qui, elle,
+       explique très bien pourquoi elle ne tranche pas.
+       Une carte vide sans motif ne distingue pas « rien à montrer » de « le
+       rendu a échoué ». On répète ICI la cause que le verdict possède déjà,
+       plutôt que d'inventer un second vocabulaire. */
+    const _motif=VX.states.empty('Non calculé : '+esc(miss)
+      +'. Vertex ne construit ni scénario ni lecture de comité sur un dossier incomplet.');
+    /* `an-scenarios` EST une carte (en-tête servi par le gabarit) : on ne
+       remplit que son corps, sinon l'en-tête serait écrit deux fois.
+       `an-committee` est un simple conteneur, sans en-tête : on ne lui en
+       invente pas un, on y pose le motif tel quel. */
+    const _corps=SC&&SC.querySelector('[data-body]');
+    if(_corps)_corps.innerHTML=_motif;else if(SC)SC.innerHTML=_motif;
+    if(CO)CO.innerHTML='<div class="vx-card">'+_motif+'</div>';
     return;
   }
   DEC=dec;paintThesis();   // le brouillon de thèse se nourrit du dossier réel

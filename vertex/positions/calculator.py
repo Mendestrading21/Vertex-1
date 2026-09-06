@@ -64,6 +64,11 @@ MARQUE_DERNIER_ECHANGE = 'DERNIER_ECHANGE'
 MARQUE_MILIEU = 'MILIEU_FOURCHETTE'
 MARQUE_CLOTURE = 'CLOTURE_VEILLE'
 MARQUE_ABSENTE = 'ABSENTE'
+#: Une marque EXISTE mais aucune référence (dernier échange, clôture, milieu)
+#: n'a été fournie avec elle : la convention est INCONNUE, pas « le dernier
+#: échange ». Une provenance fausse est pire qu'une provenance absente — le
+#: client sait déjà écrire « convention non renseignée ».
+MARQUE_INDETERMINEE = 'INDETERMINEE'
 
 #: Au-delà de ce spread relatif, la valorisation est incertaine d'environ la
 #: moitié — afficher un P&L au centime donnerait une précision que la donnée
@@ -80,7 +85,15 @@ def source_de_marque(mark, *, last=None, close=None, mid=None) -> str:
 
     L'ordre du test suit celui de la production : `last` d'abord — c'est la
     priorité de `read_tk` —, puis la clôture, puis le milieu. Une marque qui
-    ne correspond à aucun des trois vient quand même d'un prix échangé.
+    ne correspond à AUCUN des trois, alors qu'au moins un a été fourni, vient
+    quand même d'un prix échangé.
+
+    MESURE : sur le repli scan d'une option, l'appelant ne transmettait NI
+    bid/ask, NI mid, NI last — juste `mark`. La branche finale affirmait alors
+    « dernier échange », et l'écran imprimait « Source de la marque : dernier
+    échange » pour un MILIEU de fourchette (NVDA 2026-10-23 245 C :
+    (6,00 + 6,40) / 2 = 6,20 ; GEN : 1,18 ; MPC : 23,95 — trois sur trois des
+    milieux du board). Sans aucune référence, la convention est INDÉTERMINÉE.
     """
     if mark is None:
         return MARQUE_MILIEU if mid is not None else MARQUE_ABSENTE
@@ -90,6 +103,8 @@ def source_de_marque(mark, *, last=None, close=None, mid=None) -> str:
         return MARQUE_CLOTURE
     if mid is not None and round(float(mark), 4) == round(float(mid), 4):
         return MARQUE_MILIEU
+    if last is None and close is None and mid is None:
+        return MARQUE_INDETERMINEE
     return MARQUE_DERNIER_ECHANGE
 
 
@@ -167,6 +182,21 @@ def enrich_option(p: dict, quote: dict | None, underlying_quote: dict | None = N
     g = greeks or {}
     p['greeks_source'] = g.get('source', 'UNAVAILABLE')
     issues = p['data_quality'].setdefault('issues', [])
+    #  Une échéance ILLISIBLE n'est pas une échéance absente. Mesuré sur le desk
+    #  réel : `expiration: '2027.01.15'` → `dte: None`, `issues: []`, donc
+    #  strictement indistinguable d'une ligne sans échéance — et les gates
+    #  EXPIRED / DTE_WARNING / THETA_WARNING (lifecycle.py) restaient désarmés
+    #  en silence, jusqu'au jour de l'expiration. On NOMME le défaut ; la
+    #  déclaration de l'utilisateur, elle, n'est jamais réécrite.
+    from vertex.positions.models import echeance_normalisee as _echeance
+    #  `not in issues` : mesuré, deux enrichissements du MÊME dict empilaient
+    #  'EXPIRATION_ILLISIBLE' deux fois, et `data_quality.issues` est publié tel
+    #  quel. Un défaut listé deux fois n'est pas deux défauts. (Le motif
+    #  `issues.append` sans dédoublonnage préexiste sur les drapeaux de signe ;
+    #  seul le drapeau ajouté au constat 29 est traité ici.)
+    if (p.get('expiration') and _echeance(p['expiration']) is None
+            and 'EXPIRATION_ILLISIBLE' not in issues):
+        issues.append('EXPIRATION_ILLISIBLE')
     for name in ('delta', 'gamma', 'theta', 'vega'):
         per = g.get(name)
         # Quantité inconnue → Greek positionnel INCONNU (None), jamais 0 fabriqué
@@ -192,11 +222,47 @@ def enrich_option(p: dict, quote: dict | None, underlying_quote: dict | None = N
         issues.append('VEGA_SIGN_INCONSISTENT')
 
     # Divergence broker/modèle (§12)
+    #
+    #  CE CONTRÔLE CROISÉ NE S'EXÉCUTE PAS, et il faut le DIRE plutôt que de
+    #  laisser son silence passer pour un accord. Mesuré le 2026-09-06 par
+    #  balayage des lectures et des écritures du dépôt : `broker_delta` et
+    #  `model_delta` ne sont écrits nulle part en production — seul
+    #  `tests/test_position_intelligence.py` les fabrique. Le producteur réel
+    #  (`recalculator`) construit `{'source': 'BROKER_GREEKS', 'delta', 'gamma',
+    #  'theta', 'vega'}` : un seul jeu de Greeks, celui du courtier.
+    #
+    #  Conséquence : `BROKER_MODEL_GREEK_DIVERGENCE` n'a jamais pu s'allumer.
+    #  Une garde muette se lit comme une garde satisfaite — c'est exactement
+    #  l'inverse. La couverture est donc publiée à côté du verdict (invariant 6),
+    #  et le jour où les deux deltas seront servis, la comparaison reprend sans
+    #  rien changer d'autre.
     bd, md = g.get('broker_delta'), g.get('model_delta')
-    if bd is not None and md is not None and abs(bd - md) >= 0.12:
-        issues.append('BROKER_MODEL_GREEK_DIVERGENCE')
+    if bd is not None and md is not None:
+        p['data_quality']['divergence_greeks'] = {
+            'evaluee': True, 'ecart_delta': round(abs(bd - md), 4), 'seuil': 0.12}
+        if abs(bd - md) >= 0.12:
+            issues.append('BROKER_MODEL_GREEK_DIVERGENCE')
+    else:
+        manquants = [n for n, v in (('broker_delta', bd), ('model_delta', md)) if v is None]
+        p['data_quality']['divergence_greeks'] = {
+            'evaluee': False, 'manquants': manquants,
+            'motif': 'un seul jeu de Greeks est servi (%s) : la comparaison '
+                     'broker/modèle n’a pas été exécutée'
+                     % (p.get('greeks_source') or 'UNAVAILABLE')}
 
-    p['data_quality']['overall'] = ('OK' if _n(mark) else 'MISSING_MARK')
+    #  UNE SYNTHÈSE QUI CONTREDIT SON PROPRE DÉTAIL. Mesuré sur une option à
+    #  échéance illisible avec marque 6,00 : `overall: 'OK'`,
+    #  `issues: ['EXPIRATION_ILLISIBLE']`, `dte: None` — le badge disait « OK »
+    #  pendant que la liste juste à côté nommait une échéance dont les gates de
+    #  cycle de vie ne s'armeront jamais. Un badge ne peut pas être plus propre
+    #  que ce qu'il résume. `DEGRADED` n'invente rien : il est VRAI dès qu'un
+    #  défaut est listé, et il disparaît dès que la liste est vide.
+    #  Ni `alerts.py` (== 'STALE') ni `thesis_health` (STALE/MISSING_*) ne lisent
+    #  cet état : l'ajout est additif, aucun seuil ne bouge.
+    if not _n(mark):
+        p['data_quality']['overall'] = 'MISSING_MARK'
+    else:
+        p['data_quality']['overall'] = 'DEGRADED' if issues else 'OK'
     if q.get('stale'):
         p['data_quality']['overall'] = 'STALE'
     return p

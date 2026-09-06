@@ -46,6 +46,48 @@ def _regime_fr(code):
     return _REGIME_FR.get(str(code or '').upper(), code)
 
 
+def _sans_actualite(fil_transmis: bool, news: dict) -> str:
+    """Ce que le brief SAIT quand aucun événement ne sort du pipeline.
+
+    ## La cause était inventée — mesure du 2026-09-06
+
+    Le texte servi affirmait « Flux d'actualités hors ligne dans cet
+    environnement ». Ce module ne mesure AUCUNE connectivité : il reçoit un
+    `news_state` déjà collecté et compte ce qui en sort. « Hors ligne » est
+    donc une cause fabriquée, et elle recouvrait trois états que l'invariant 5
+    exige de garder distincts :
+
+    * le fil n'a pas été transmis au brief (`news_state=None` — le cas de tous
+      les appels qui ne branchent pas le fil, dont les bancs) ;
+    * le fil a été transmis et il est VIDE (0 dépêche reçue : la boucle n'a pas
+      encore tourné, ou aucune source n'a rien rendu) ;
+    * des dépêches sont arrivées et le pipeline les a TOUTES écartées, parce
+      qu'il leur manque un titre, un publieur ou une date — un défaut de
+      collecte, pas une absence d'actualité, et le brief peut le nommer
+      puisque `collect()` rend le compte par cause.
+
+    Aucun des trois n'autorise à conclure sur la connexion : la phrase décrit
+    ce qui est compté, et rien de plus.
+    """
+    fin = ' — aucun événement affiché plutôt qu’un événement inventé.'
+    if not fil_transmis:
+        return ('Fil d’actualités non transmis à ce brief : ni flux ni cause '
+                'mesurés à cet endroit') + fin
+    brut = int(news.get('raw_count') or 0)
+    rejetes = int(news.get('rejected') or 0)
+    if brut <= 0:
+        return 'Fil d’actualités transmis mais vide : 0 dépêche reçue' + fin
+    marque = 's' if brut > 1 else ''
+    if rejetes >= brut:
+        causes = {c: n for c, n in (news.get('rejets_par_cause') or {}).items() if n}
+        detail = (' (' + ', '.join('%s : %d' % (c.replace('_', ' '), n)
+                                   for c, n in sorted(causes.items())) + ')') if causes else ''
+        return ('%d dépêche%s reçue%s, toutes écartées faute de titre, de '
+                'publieur ou de date%s' % (brut, marque, marque, detail)) + fin
+    return ('%d dépêche%s reçue%s, aucune retenue comme événement après '
+            'validation et déduplication' % (brut, marque, marque)) + fin
+
+
 def build_daily_brief(scan_state: dict, news_state: dict | None = None,
                       portfolio_syms: list[str] | None = None,
                       kind: str | None = None) -> dict:
@@ -65,7 +107,8 @@ def build_daily_brief(scan_state: dict, news_state: dict | None = None,
     demo = source == 'demo'
     syms = portfolio_syms or []
 
-    news = news_pipeline.collect(news_state or {}, syms) if news_state is not None \
+    fil_transmis = news_state is not None
+    news = news_pipeline.collect(news_state or {}, syms) if fil_transmis \
         else {'events': [], 'rejected': 0, 'raw_count': 0}
     top_events = news['events'][:4]
 
@@ -105,9 +148,9 @@ def build_daily_brief(scan_state: dict, news_state: dict | None = None,
                          f"{lead.get('title_fr') or lead['title']} "
                          f"({lead['source']}, impact {imp['direction'].lower().replace('_', ' ')})."))
     else:
-        sections.append(('Actualité dominante',
-                         'Flux d’actualités hors ligne dans cet environnement — '
-                         'aucun événement affiché plutôt qu’un événement inventé.'))
+        #  CAUSE NON MESURÉE (corrigé) : voir `_sans_actualite`. Le brief dit
+        #  ce qu'il COMPTE, il ne conclut pas sur la connexion.
+        sections.append(('Actualité dominante', _sans_actualite(fil_transmis, news)))
     # 5-6. Secteurs
     if sectors and isinstance(sectors[0], dict):
         sections.append(('Secteurs leaders',

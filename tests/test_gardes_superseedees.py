@@ -76,7 +76,13 @@ def sup():
 #  de la liste (la regle a ete portee, ils mesurent de nouveau quelque chose)
 #  et deux y sont entres pour la propriete deplacee de la courbe de resultats.
 #  Une liste qui DIMINUE est le signe qu'on la relit.
-TOTAL_ECARTES = 132
+#  130 depuis le 2026-09-06 : `test_fraicheur_garde_type::
+#  test_les_cinq_sites_appellent_bien_assess` est SORTIE du registre. Elle
+#  passe de nouveau — un lot a rétabli les cinq appels à `assess` qu'elle
+#  surveille. Laisser une garde écartée alors que sa couverture est revenue,
+#  c'est éteindre une protection sans que personne ne le sache : le registre
+#  doit rétrécir dès qu'il le peut.
+TOTAL_ECARTES = 130
 
 
 #  ═══════════  1. la liste ne grossit pas  ════════════════════════════════════

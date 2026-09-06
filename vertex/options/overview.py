@@ -11,6 +11,8 @@ from vertex.visualization.schemas import (
     interpretation, unknown, ST_FAVORABLE, ST_NEUTRE, ST_DEFAVORABLE,
 )
 
+from . import board_fields as _bf
+
 
 def _num(x):
     try:
@@ -43,8 +45,19 @@ def summarize(board, *, as_of=None, demo=False, source='', detail_by_sym=None):
     puts = [c for c in board if str(c.get('type', '')).upper() == 'PUT']
     ivs = [_num(c.get('iv')) for c in board]
     quals = [_num(c.get('quality')) for c in board]
-    spreads = [_num(c.get('spread_pct')) for c in board]
-    ois = [_num(c.get('oi')) for c in board]
+    #  `spread_pct` est la clé du board de DÉMO ; le board réel publie `spread`
+    #  (96/96 contre 0/96). D'où un `avg_spread_pct: null` et une carte
+    #  « SPREAD MOY. — non disponible sur ce scan » alors que la page
+    #  Opportunités imprimait « 6,5 % » pour le même contrat.
+    spreads = [_bf.spread_pct(c) for c in board]
+    #  MÊME CAUSE QUE LE SPREAD, UN CRAN PLUS LOIN : `oi` brut porte le zéro
+    #  imputé par `legacy_engine._i` quand le courtier ne reporte rien. Mesuré :
+    #  une moyenne d'intérêt ouvert calculée sur des zéros imputés tire la carte
+    #  « OI MOYEN » vers le bas sans qu'aucune ligne ne l'explique — un chiffre
+    #  faux là où l'absence était disponible (`open_interest_present`).
+    #  `_avg` ignore déjà les None : la moyenne porte donc sur les contrats
+    #  RÉELLEMENT reportés, et leur nombre est publié à côté d'elle.
+    ois = [_bf.open_interest(c) for c in board]
     avg_iv = _avg(ivs)
     avg_qual = _avg(quals)
     avg_spread = _avg(spreads)
@@ -60,12 +73,16 @@ def summarize(board, *, as_of=None, demo=False, source='', detail_by_sym=None):
         'quality_band': _quality_band(avg_qual),
         'avg_spread_pct': avg_spread,
         'avg_oi': _avg(ois),
+        #  Sans ce compte, une moyenne sur 3 contrats se lit comme une moyenne
+        #  sur 96 : la couverture fait partie de la mesure (invariant 6).
+        'oi_reported_count': sum(1 for v in ois if v is not None),
+        'oi_total_count': len(board),
     }
     radar = [{
         'sym': c.get('sym'), 'type': c.get('type'), 'bucket': c.get('bucket'),
         'strike': c.get('strike'), 'dte': c.get('dte'), 'iv': _num(c.get('iv')),
         'quality': _num(c.get('quality')), 'pop': _num(c.get('pop')),
-        'spread_pct': _num(c.get('spread_pct')), 'why': c.get('why'),
+        'spread_pct': _bf.spread_pct(c), 'why': c.get('why'),
         # pour « Suivre ce contrat » : coût (prime × 100) et échéance exacte.
         'cost': _num(c.get('cost')), 'exp': c.get('exp'),
     } for c in top]

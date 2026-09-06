@@ -5,6 +5,7 @@ porte source, provenance, qualité et `is_readonly: True` (invariant).
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, date
 
@@ -42,14 +43,57 @@ def _f(v):
         return None
 
 
+#: Formes acceptées d'une échéance déclarée : la saisie du desk est un champ
+#: LIBRE (placeholder « YYYY-MM-DD », enregistré brut), et le desk réel contient
+#: '2027.01.15' pendant que le board d'options ne sert que du 'YYYY-MM-DD'.
+_ECHEANCE_JOUR = re.compile(r'^(\d{4})[-./](\d{2})[-./](\d{2})$|^(\d{8})$')
+_ECHEANCE_MOIS = re.compile(r'^(\d{4})[-./](\d{2})$|^(\d{6})$')
+
+
+def echeance_normalisee(exp) -> str | None:
+    """'YYYY-MM-DD', 'YYYY-MM' — ou None si la date n'est pas RECONNUE.
+
+    Fonction PURE, sans effet de bord : elle ne réécrit jamais la déclaration
+    de l'utilisateur, elle sert au bord de LECTURE (comparaison de contrat,
+    calcul de DTE).
+
+    MESURE : `_dte('2027.01.15')` rendait None là où `_dte('2027-01-15')` rend
+    un nombre de jours — donc `EXPIRED`, `DTE_WARNING` et `THETA_WARNING`
+    (vertex/positions/lifecycle.py) ne pouvaient JAMAIS s'armer sur les deux
+    options réellement déclarées, y compris le jour de l'expiration.
+
+    Rien n'est deviné : '2027-1-5' ou 'demain' rendent None, jamais une date
+    plausible. Une date inventée serait pire que l'absence.
+    """
+    if exp is None:
+        return None
+    s = str(exp).strip().split('T')[0].split(' ')[0]
+    if not s:
+        return None
+    m = _ECHEANCE_JOUR.match(s)
+    if m:
+        y, mo, d = (m.group(1), m.group(2), m.group(3)) if m.group(1) else \
+                   (m.group(4)[:4], m.group(4)[4:6], m.group(4)[6:])
+        try:
+            return date(int(y), int(mo), int(d)).isoformat()
+        except ValueError:
+            return None            # 2027-02-31 : impossible, donc non reconnue
+    m = _ECHEANCE_MOIS.match(s)
+    if m:
+        y, mo = (m.group(1), m.group(2)) if m.group(1) else (m.group(3)[:4], m.group(3)[4:])
+        if 1 <= int(mo) <= 12:
+            return '%s-%s' % (y, mo)
+    return None
+
+
 def _dte(exp: str | None) -> int | None:
-    if not exp:
+    norme = echeance_normalisee(exp)
+    if not norme or len(norme) != 10:
+        #  Mois seul ('2026-10') : le JOUR est inconnu. Choisir le troisième
+        #  vendredi serait une supposition — DTE reste None, et c'est l'absence
+        #  d'échéance jour qui est nommée ailleurs, pas un compte à rebours faux.
         return None
-    try:
-        d = datetime.strptime(str(exp)[:10], '%Y-%m-%d').date()
-        return (d - date.today()).days
-    except ValueError:
-        return None
+    return (date.fromisoformat(norme) - date.today()).days
 
 
 def _holding_days(opened: str | None) -> int | None:
@@ -180,4 +224,4 @@ def option_position(trade: dict, source: str = 'MANUAL') -> dict:
 
 __all__ = ['SOURCES', 'SOURCE_PRIORITY', 'STOCK_STATUSES', 'OPTION_STATUSES',
            'ANALYTIC_ACTIONS', 'PRIORITIES', 'base_position',
-           'stock_position', 'option_position']
+           'stock_position', 'option_position', 'echeance_normalisee']

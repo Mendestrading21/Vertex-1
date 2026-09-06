@@ -8,8 +8,10 @@ résultat malhonnête, c'eût été un défaut réel à corriger.
 Branches figées : detail=None honnête · score non numérique → 0 (jamais
 un chiffre inventé) · bornes exactes 56/66/80 · verdict inconnu → WAIT ·
 frontière « rassis » à 900 s · règle CHOP (cassure en range → surveiller)
-· distribution cachée → surveiller · démo étiquetée · R:R absent ne
-dégrade pas · véhicule ACTION hors décisions acheteuses.
+· distribution cachée → surveiller · démo étiquetée · R:R absent NOMMÉ
+comme inconnu (et jamais lu comme un feu vert : la seule assertion de ce
+fichier corrigée depuis, voir son propre docstring) · véhicule ACTION
+hors décisions acheteuses.
 """
 from vertex.engines import decision_stack as ds
 
@@ -76,9 +78,35 @@ def test_demo_mode_is_always_labeled():
     assert 'données synthétiques (démo)' in r['risk_flags']
 
 
-def test_absent_rr_does_not_degrade():
-    r = ds.evaluate(_d(plan={'entry': 100, 'stop': 95}))
-    assert r['final_decision'] == 'BUY', 'R:R inconnu ≠ R:R mauvais'
+def test_absent_rr_reste_une_inconnue_nommee_et_ne_vaut_pas_un_feu_vert():
+    """Un R:R INCONNU n'est ni un mauvais R:R, ni un R:R conforme.
+
+    L'assertion précédente (« R:R absent → BUY ») figeait la CHAÎNE 'BUY' et
+    faisait donc de l'absence un feu vert : elle interdisait la correction que
+    les deux autres moteurs appliquaient déjà. Mesuré avant correctif, sur le
+    MÊME plan sans `rr_res` :
+
+        decide.decide(...)              -> ACHETER FORT, aucun « Hard gate »
+        executive_engine.decide(...)    -> asymétrie 0.0, branche ACHETER fermée
+        decision_stack.evaluate(...)    -> BUY  (seul moteur à laisser passer)
+
+    `decide.py` nomme déjà cette branche « R:R non confirmé (≥ 2:1 requis) ».
+    Ce test mesure désormais la PROPRIÉTÉ — l'inconnue reste distincte du
+    mauvais R:R et n'ouvre pas l'achat — au lieu d'un verdict figé.
+    """
+    absent = ds.evaluate(_d(plan={'entry': 100, 'stop': 95}))
+    mauvais = ds.evaluate(_d(plan={'entry': 100, 'stop': 95, 'rr_res': 0.4}))
+
+    # 1. L'absence n'autorise pas l'achat (garde dure jamais franchie par un supposé).
+    assert absent['final_decision'] not in ('STRONG_BUY', 'BUY'), absent['final_decision']
+
+    # 2. L'absence reste DISTINCTE d'un R:R mesuré mauvais : l'audit et le point
+    #    de bascule disent « non mesuré », jamais un chiffre.
+    assert any('non mesuré' in a for a in absent['audit_trail'])
+    assert any('MESURÉ' in t for t in absent['tipping_points'])
+    assert not any('0.4' in t for t in absent['tipping_points'])
+    assert any('0.4' in t for t in mauvais['tipping_points'])
+    assert not any('non mesuré' in a for a in mauvais['audit_trail'])
 
 
 def test_vehicle_is_action_outside_buyish_decisions():

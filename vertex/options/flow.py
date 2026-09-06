@@ -16,6 +16,8 @@ sans prime exploitable → ignoré ; jamais de « whale/sweep » affirmé sans p
 """
 from __future__ import annotations
 
+from . import board_fields as _bf
+
 CONTRACT_MULTIPLIER = 100
 
 
@@ -43,7 +45,14 @@ def _premium_per_contract(c):
 
 
 def _vol(c):
-    return _num(c.get('vol')) if c.get('vol') is not None else _num(c.get('volume'))
+    #  Alias dupliqué ici auparavant : un seul propriétaire de la forme du board
+    #  (board_fields), sinon les lecteurs redivergent du producteur.
+    #  ORDRE DES ALIAS : ce module lisait `vol` PUIS `volume`, l'accesseur lit
+    #  `volume` PUIS `vol`. Aucun producteur n'émet les deux (board réel `vol`
+    #  96/96, démo `vol`, fixtures `volume`), donc aucun contrat servi ne change
+    #  de valeur ; et l'accesseur refuse désormais un volume imputé AVANT de
+    #  choisir un alias, si bien que l'ordre ne décide plus d'aucune mesure.
+    return _bf.volume(c)
 
 
 def analyze(contracts, *, symbol=None, top=8):
@@ -61,7 +70,12 @@ def analyze(contracts, *, symbol=None, top=8):
         if vol is None or vol <= 0 or per is None or strike is None:
             continue
         notional = vol * per                          # premium négocié du cycle (réel)
-        oi = _num(c.get('oi'))
+        #  Accesseur honnête plutôt que champ brut : `_i(None) -> 0`. Ici le
+        #  zéro imputé était déjà écarté par la garde suivante, mais lire le
+        #  champ brut laisse croire que la garde protège d'un zéro RÉEL —
+        #  elle protégeait surtout d'une absence. Un seul accesseur pour tous
+        #  les lecteurs du dépôt, sinon le prochain oubli est invisible.
+        oi = _bf.open_interest(c)
         vol_oi = round(vol / oi, 2) if oi and oi > 0 else None
         is_call = str(c.get('type', '')).upper() != 'PUT'
         (call_prem, put_prem) = ((call_prem + notional, put_prem) if is_call

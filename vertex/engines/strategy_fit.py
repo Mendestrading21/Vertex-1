@@ -4,9 +4,12 @@ vertex/engines/strategy_fit.py — COUCHE STRATÉGIE (présentation, Ch. II).
 Re-pondère l'analyse déjà calculée selon le profil « offensif croissance » :
 choix du véhicule (ACTION vs OPTION), score stratégie, playbook, et tilt du
 climat de marché. NE TOUCHE JAMAIS les moteurs quant : lit uniquement des champs déjà
-présents sur les lignes (rows). Pur, sans état, sans dépendance externe.
+présents sur les lignes (rows). Pur, sans état, sans I/O.
 
-Extrait verbatim du monolithe. Analyse uniquement, aucune exécution.
+Extrait verbatim du monolithe, à une exception près : le climat n'est plus
+recalculé ici — `_strat_tilt` délègue score et bande à son propriétaire unique
+`vertex.engines.market_lens.climate` (constats 30 et 48). Analyse uniquement,
+aucune exécution.
 """
 
 
@@ -118,36 +121,89 @@ def _attach_strategy(rows, detail):
         r['playbook'] = _playbook_of(r)
         sym = r.get('symbol')
         plan = ((detail or {}).get(sym) or {}).get('plan') or {}
+        #  ERREUR D'UNITÉ, MESURÉE. Le repli `rr = r.get('vx_rr')` lisait
+        #  `vertex['rr']`, qui n'est PAS un ratio : `quant_engine.rr_score`
+        #  renvoie une NOTE /100 (`_clamp(rr_real * 32, 0, 100)`, son propre
+        #  commentaire dit « 2:1→64, 3:1→96 »). Mesuré le 6 sept. 2026 sur
+        #  /api/vertex/<sym> (5003) : NVDA 8, MSFT 22, AAPL 41, TSLA 44,
+        #  AMD 55, META 44, GOOGL 64, AMZN 55. Passées dans le repli, ces notes
+        #  donnaient `rr_ok = (note >= 2)` — VRAI sur 8/8, donc un drapeau
+        #  « R:R ≥ 2:1 respecté » allumé en permanence, y compris pour la note 8
+        #  qui encode le pire ratio réel (~0,25:1). Une garde toujours vraie ne
+        #  distingue plus rien.
+        #  Sans ratio MESURÉ (`plan['rr_res']`, seul rapport gain/risque du
+        #  produit), le champ reste None et le drapeau reste faux : une absence,
+        #  jamais un feu vert emprunté à une autre échelle.
         rr = plan.get('rr_res')
-        if rr is None:
-            rr = r.get('vx_rr')
         r['rr'] = rr
         r['rr_ok'] = bool(rr is not None and rr >= 2)
 
 
+#  Prescriptions par bande de climat. La BANDE vient du moteur canonique
+#  (`market_lens.climate`) ; ce module ne fait plus que choisir le ton.
+_TILT_BANDES = {
+    'FAVORABLE': {'call_size': 'normale → agressive',
+                  'emphasis': ['Momentum Breakout', 'Levier LEAPS', 'Repli sur tendance'],
+                  'note': "Marché porteur : ton profil offensif est dans son élément. "
+                          "Privilégie le momentum et le levier CALL long (LEAPS)."},
+    'NEUTRE': {'call_size': 'réduite (½ taille)',
+               'emphasis': ['Repli sur tendance', 'Qualité forte'],
+               'note': "Marché mitigé : sois sélectif. Repli sur tendance + qualité forte ; "
+                       "CALL en taille réduite et échéances plus longues."},
+    'DANGEREUX': {'call_size': 'minime / cash',
+                  'emphasis': ['Socle défensif', 'Qualité forte'],
+                  'note': "Marché dangereux : défense. Réduis le levier CALL, garde du cash, "
+                          "socle défensif seulement. Discipline > FOMO."},
+}
+
+
 def _strat_tilt(mctx):
-    """Oriente l'analyse selon le climat : quels playbooks pousser + taille de levier CALL."""
+    """Oriente l'analyse selon le climat : quels playbooks pousser + taille de levier CALL.
+
+    CONSTATS 30 et 48, second moteur. Ce corps RECOPIAIT verbatim la formule de
+    `market_lens.climate` (poids 35/18/6/14, 25/2/12, /100*25, 15/2/8) puis
+    ré-étiquetait la bande sur un `65` littéral : troisième propriétaire d'une
+    métrique qui n'en admet qu'un, et divergence prête à se rouvrir en silence à
+    la première modification de `CLIMAT_FAVORABLE_MIN`. Il portait surtout la
+    SUBSTITUTION non marquée du constat 30 : ``(a50 if a50 is not None else 50)``.
+    Mesuré avant correctif, mctx = {'spy_regime':'TREND','roro':'RISK-ON',
+    'vix_band':'stress'} : breadth {'above50': 50}, {} et {'above50': None}
+    rendaient tous ``score 74 / FAVORABLE / call_size « normale → agressive »``,
+    identiques au bit près — une participation JAMAIS mesurée poussait donc le
+    ton le plus offensif du produit (taille de CALL « agressive » contre
+    « réduite (½ taille) » au palier voisin), sans aucune marque.
+
+    Correctif : la bande et le score viennent du moteur canonique, qui marque
+    déjà la couverture (`partiel`, `breadth_status`, `note`). Tant que la largeur
+    manque, la PRESCRIPTION est plafonnée au palier NEUTRE — jamais plus
+    offensive qu'une donnée mesurée ne l'autorise — et le plafonnement est dit
+    (`call_size_plafonne`, `couverture_note`). Aucun seuil ne bouge : la formule,
+    les bornes (65/40) et les trois bandes restent celles du moteur.
+    """
     if not mctx:
         return None
-    br = mctx.get('breadth') or {}
-    reg = mctx.get('spy_regime'); roro = mctx.get('roro'); vb = mctx.get('vix_band')
-    s = 35 if reg == 'TREND' else 18 if reg == 'NEUTRAL' else 6 if reg == 'CHOP' else 14
-    s += 25 if roro == 'RISK-ON' else 2 if roro == 'RISK-OFF' else 12
-    a50 = br.get('above50')
-    s += round((a50 if a50 is not None else 50) / 100 * 25)
-    s += 15 if vb == 'calme' else 2 if vb == 'stress' else 8
-    s = int(max(0, min(100, round(s))))
-    if s >= 65:
-        return {'score': s, 'regime': 'FAVORABLE', 'col': '#22C55E', 'call_size': 'normale → agressive',
-                'emphasis': ['Momentum Breakout', 'Levier LEAPS', 'Repli sur tendance'],
-                'note': "Marché porteur : ton profil offensif est dans son élément. Privilégie le momentum et le levier CALL long (LEAPS)."}
-    if s >= 40:
-        return {'score': s, 'regime': 'NEUTRE', 'col': '#FFB23F', 'call_size': 'réduite (½ taille)',
-                'emphasis': ['Repli sur tendance', 'Qualité forte'],
-                'note': "Marché mitigé : sois sélectif. Repli sur tendance + qualité forte ; CALL en taille réduite et échéances plus longues."}
-    return {'score': s, 'regime': 'DANGEREUX', 'col': '#EF4444', 'call_size': 'minime / cash',
-            'emphasis': ['Socle défensif', 'Qualité forte'],
-            'note': "Marché dangereux : défense. Réduis le levier CALL, garde du cash, socle défensif seulement. Discipline > FOMO."}
+    from vertex.engines import market_lens
+    cl = market_lens.climate(mctx)
+    if not cl:                                   # aucun climat calculable : rien d'inventé
+        return None
+    label = cl['label']
+    prescription = label
+    out = {'score': cl['score'], 'regime': label, 'col': cl['col']}
+    if cl.get('partiel'):
+        out['partiel'] = True
+        out['breadth_status'] = cl.get('breadth_status')
+        out['couverture_note'] = cl.get('note')
+        if label == 'FAVORABLE':
+            prescription = 'NEUTRE'
+            out['call_size_plafonne'] = True
+    bande = _TILT_BANDES[prescription]
+    out['call_size'] = bande['call_size']
+    out['emphasis'] = list(bande['emphasis'])
+    out['note'] = bande['note']
+    if prescription != label:
+        out['note'] += (' Largeur de marché non mesurée : le ton reste plafonné au '
+                        'palier NEUTRE tant que la participation n’est pas connue.')
+    return out
 
 
 __all__ = ['vehicle_of', 'attach_vehicle', 'strat_score', 'playbook_of', 'attach_strategy', 'strat_tilt']

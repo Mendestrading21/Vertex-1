@@ -93,8 +93,19 @@ def _navigateur_dispo():
 
 def _serveur_repond():
     try:
-        with urllib.request.urlopen('http://127.0.0.1:5002/healthz', timeout=3) as r:
-            return r.status == 200
+        with urllib.request.urlopen(_mes.BASE_DEFAUT + '/healthz', timeout=3) as r:
+            if r.status != 200:
+                return False
+        #  Une instance derrière un code d'accès (VERTEX_CODE) servirait sa page
+        #  de connexion à la mesure : ce serait mesurer la mauvaise page en
+        #  silence (mesuré le 2026-09-06 : deux gardiens ont « mesuré » l'écran
+        #  de connexion de l'instance de travail). On exige une PAGE ouverte :
+        #  l'espace Marchés servi avec son attribut `data-space`, sans champ
+        #  de code. `VERTEX_MESURE_BASE` désigne l'instance QA (sans code).
+        with urllib.request.urlopen(_mes.BASE_DEFAUT + '/markets', timeout=5) as r:
+            corps = r.read().decode('utf-8', 'replace')
+        return (r.status == 200 and 'data-space="markets"' in corps
+                and 'name="code"' not in corps and 'type="password"' not in corps)
     except Exception:  # noqa: BLE001
         return False
 

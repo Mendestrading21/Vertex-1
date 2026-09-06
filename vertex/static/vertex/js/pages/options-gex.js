@@ -13,13 +13,48 @@
   var money = function (x) {
     if (typeof x !== 'number' || !isFinite(x)) return 'n/d';
     var a = Math.abs(x), s = x < 0 ? '−' : '';
-    if (a >= 1e9) return s + (a / 1e9).toFixed(2) + ' Md$';
-    if (a >= 1e6) return s + (a / 1e6).toFixed(2) + ' M$';
-    if (a >= 1e3) return s + (a / 1e3).toFixed(1) + ' k$';
-    return s + a.toFixed(0) + ' $';
+    /* Un seul formateur fr-FR : « 5,65 M$ », pas « 5.65 M$ » à côté de « 230,36 ». */
+    if (a >= 1e9) return s + f(a / 1e9, 2) + ' Md$';
+    if (a >= 1e6) return s + f(a / 1e6, 2) + ' M$';
+    if (a >= 1e3) return s + f(a / 1e3, 1) + ' k$';
+    return s + f(a, 0) + ' $';
   };
 
   function toneBias(b) { return b === 'haussier' ? 'pos' : b === 'baissier' ? 'neg' : 'neutral'; }
+
+  /* La vue Positionnement porte CINQ hôtes de contenu. MESURE du 2026-09-06
+     (Chromium sur l'instance de contrôle, `/options?view=positioning`) : à
+     l'ouverture, `vx-gx-thesis` et `vx-gx-tiles` rendaient 0 octet et 0 px —
+     vides SANS motif, parce que `load()` n'est appelé que si un ticker actif
+     traîne dans le store. Et après une lecture rendant `gex.empty`,
+     `renderTiles` remettait explicitement `innerHTML = ''` (l. 58) pendant que
+     la thèse et les barres, elles, NOMMAIENT l'absence : trois hôtes qui
+     parlent, deux qui se taisent, pour un seul et même état. Un hôte muet ne
+     distingue pas « rien à montrer » de « la lecture a échoué ».
+     Comme sur la vue Structure, un SEUL endroit nomme l'absence pour que le
+     prochain chemin dégradé ne puisse pas en oublier un.
+     Le 3e champ dit si l'hôte doit fabriquer SA carte : le gabarit encadre
+     déjà `bars`, `flow` et `daily` dans une `<section class="vx-card">`, mais
+     pas `thesis` ni `tiles` — dont le rendu nominal, lui, fabrique la sienne.
+     Sans ce champ, le motif d'absence de ces deux-là flottait en texte nu
+     entre deux cartes (mesuré à la capture 1600 px). */
+  var HOTES_GEX = [
+    ['vx-gx-thesis', 'Pas de thèse de positionnement', true],
+    ['vx-gx-tiles', 'Pas de synthèse GEX', true],
+    ['vx-gx-bars', 'Pas de GEX par strike', false],
+    ['vx-gx-flow', 'Pas de flux notable', false],
+    ['vx-gx-daily', 'Pas d’historique quotidien', false],
+  ];
+  function nommerAbsenceGex(motif, enPanne) {
+    HOTES_GEX.forEach(function (h) {
+      var el = $(h[0]); if (!el) return;
+      var dedans = enPanne
+        ? ((window.VX && VX.states) ? VX.states.error(esc(h[1] + ' : ' + motif))
+                                    : '<div class="vx-error-banner">' + esc(h[1] + ' : ' + motif) + '</div>')
+        : '<div class="vx-empty">' + esc(h[1] + ' : ' + motif) + '.</div>';
+      el.innerHTML = h[2] ? ('<section class="vx-card">' + dedans + '</section>') : dedans;
+    });
+  }
 
   function renderThesis(d) {
     var s = d.synthesis || {}, host = $('vx-gx-thesis');
@@ -54,7 +89,13 @@
   function renderTiles(d) {
     var g = d.gex || {}, host = $('vx-gx-tiles');
     if (!host) return;
-    if (g.empty) { host.innerHTML = ''; return; }
+    /* Vider est muet : le motif du moteur est le même que celui que la
+       thèse et les barres affichent déjà pour ce même état. */
+    if (g.empty) {
+      host.innerHTML = '<section class="vx-card"><div class="vx-empty">Pas de synthèse GEX : '
+        + esc((g.reason || (d.synthesis || {}).reason || 'aucun contrat avec OI + gamma exploitables')) + '.</div></section>';
+      return;
+    }
     var reg = g.regime === 'stabilisant' ? 'Stabilisant (pinning)'
       : g.regime === 'accelerateur' ? 'Accélérateur' : 'Neutre';
     host.innerHTML = '<section class="vx-card"><div class="vx-stats-row">'
@@ -137,30 +178,39 @@
       var rows = d.rows.map(function (r) {
         var regTone = r.regime === 'stabilisant' ? 'pos' : r.regime === 'accelerateur' ? 'neg' : 'neutral';
         var biasTone = r.bias === 'haussier' ? 'pos' : r.bias === 'baissier' ? 'neg' : 'neutral';
-        return '<tr data-gx-sym="' + esc(r.symbol) + '" style="cursor:pointer">'
-          + '<td><span class="vx-ticker">' + esc(r.symbol) + '</span></td>'
-          + '<td class="vx-num">' + f(r.spot) + '</td>'
-          + '<td class="vx-num ' + (r.net_gex > 0 ? 'vx-pos' : r.net_gex < 0 ? 'vx-neg' : '') + '">' + gexBar(r.net_gex) + '</td>'
-          + '<td><span class="vx-badge" data-tone="' + regTone + '">' + esc(r.regime || '—') + '</span></td>'
-          + '<td><span class="vx-badge" data-tone="' + biasTone + '">' + esc(r.bias || '—') + '</span></td>'
-          + '<td class="vx-num">' + f(r.zero_gamma) + '</td>'
-          + '<td class="vx-num">' + f(r.call_wall) + '</td>'
-          + '<td class="vx-num">' + f(r.put_wall) + '</td>'
-          + '<td class="vx-num">' + f(r.max_pain) + '</td></tr>';
+        /* Ligne activable au clavier (Entrée/Espace) et nommée : une ligne
+           « cliquable » au pointeur seul excluait le clavier et le lecteur d'écran. */
+        return '<tr data-gx-sym="' + esc(r.symbol) + '" data-clickable tabindex="0" aria-label="Analyser le positionnement de ' + esc(r.symbol) + '">'
+          + '<td data-label="Titre"><span class="vx-ticker">' + esc(r.symbol) + '</span></td>'
+          + '<td data-label="Spot" class="vx-num">' + f(r.spot) + '</td>'
+          + '<td data-label="Net GEX" class="vx-num ' + (r.net_gex > 0 ? 'vx-pos' : r.net_gex < 0 ? 'vx-neg' : '') + '">' + gexBar(r.net_gex) + '</td>'
+          + '<td data-label="Régime"><span class="vx-badge" data-tone="' + regTone + '">' + esc(r.regime || '—') + '</span></td>'
+          + '<td data-label="Biais"><span class="vx-badge" data-tone="' + biasTone + '">' + esc(r.bias || '—') + '</span></td>'
+          + '<td data-label="Bascule 0-γ" class="vx-num">' + f(r.zero_gamma) + '</td>'
+          + '<td data-label="Mur call" class="vx-num">' + f(r.call_wall) + '</td>'
+          + '<td data-label="Mur put" class="vx-num">' + f(r.put_wall) + '</td>'
+          + '<td data-label="Max pain" class="vx-num">' + f(r.max_pain) + '</td>'
+          + '<td data-label="Détail"><span class="vx-row-open">Analyser</span></td></tr>';
       }).join('');
       host.innerHTML =
         (d.climate ? '<div class="vx-muted" style="margin-bottom:.4rem">Climat : ' + esc(d.climate)
           + ' · ' + d.symbols_usable + '/' + d.symbols_scanned + ' titres exploitables.</div>' : '')
         + '<div class="vx-table-wrap vx-table-cards"><table class="vx-table"><thead><tr>'
-        + '<th>Titre</th><th class="vx-num">Spot</th><th class="vx-num">Net GEX</th><th>Régime</th>'
-        + '<th>Biais</th><th class="vx-num">Bascule 0-γ</th><th class="vx-num">Mur call</th><th class="vx-num">Mur put</th><th class="vx-num">Max pain</th>'
-        + '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+        + '<th scope="col">Titre</th><th scope="col" class="vx-num">Spot</th><th scope="col" class="vx-num">Net GEX <span class="vx2-th-unit">($)</span></th><th scope="col">Régime</th>'
+        + '<th scope="col">Biais</th><th scope="col" class="vx-num">Bascule 0-γ</th><th scope="col" class="vx-num">Mur call</th><th scope="col" class="vx-num">Mur put</th><th scope="col" class="vx-num">Max pain</th>'
+        + '<th scope="col"><span class="vx2-sr-only">Détail</span></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
       host.querySelectorAll('[data-gx-sym]').forEach(function (tr) {
-        tr.addEventListener('click', function () {
+        var open = function () {
           var s = tr.getAttribute('data-gx-sym');
           if ($('vx-gx-sym')) $('vx-gx-sym').value = s;
           load(s);
-          var th = $('vx-gx-thesis'); if (th && th.scrollIntoView) th.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          var th = $('vx-gx-thesis');
+          var doux = !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+          if (th && th.scrollIntoView) th.scrollIntoView({ behavior: doux ? 'smooth' : 'auto', block: 'start' });
+        };
+        tr.addEventListener('click', open);
+        tr.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(); }
         });
       });
     }).catch(function (e) {
@@ -197,7 +247,10 @@
       priv.className = 'vx-meta';
       priv.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:.35rem;cursor:pointer';
       priv.innerHTML = '<input type="checkbox" id="vx-cp-pos"> Inclure mes positions déclarées (exclues par défaut)';
-      (q.parentElement || out.parentElement).insertBefore(priv, out);
+      /* `q` vit dans un <label class="vx-field"> qui n'est PAS le parent de
+         `out` : insertBefore levait NotFoundError (erreur console sur toute la
+         vue Positionnement, mesurée en QA). Le parent de `out` est le bon. */
+      out.parentNode.insertBefore(priv, out);
     }
     /* Questions suggérées (1 clic) — remplissent et envoient. */
     var sug = document.createElement('div');
@@ -255,10 +308,10 @@
       if (i === iPut && pw > 0.5) svg.push(chip(mid - pw - 4, y, money(r.put_gex), neg, false));
       svg.push('<text x="' + (mid + 4) + '" y="' + (y + rowH - 9) + '" font-size="9.5" fill="var(--vx-text-muted,#989092)">' + f(r.strike, 0) + '</text>');
     });
-    if (spotY != null) svg.push('<line x1="10" y1="' + spotY + '" x2="' + (W - 10) + '" y2="' + spotY + '" stroke="var(--vx-orange-500,#D28A54)" stroke-dasharray="3 3"/>');
+    if (spotY != null) svg.push('<line x1="10" y1="' + spotY + '" x2="' + (W - 10) + '" y2="' + spotY + '" stroke="var(--vx-analysis-light,#65d8e8)" stroke-dasharray="3 3"/>');
     svg.push('</svg>');
     host.innerHTML = svg.join('')
-      + '<div class="vx-muted" style="margin-top:.3rem">Vert = call GEX (+) · rouge = put GEX (−) · pointillé orange = spot ' + f(g.spot) + '. '
+      + '<div class="vx-muted" style="margin-top:.3rem">Vert = call GEX (+) · rouge = put GEX (−) · pointillé cyan = spot ' + f(g.spot) + '. '
       + esc(d.coverage || '') + '.</div>';
   }
 
@@ -287,12 +340,19 @@
     sym = (sym || '').trim().toUpperCase();
     if (!/^[A-Z.\-]{1,12}$/.test(sym)) { VX.toast && VX.toast('Ticker invalide', 'error'); return; }
     try { if (VX.store) VX.store.set('active_ticker', sym); } catch (e0) {}
-    ($('vx-gx-thesis')||{}).innerHTML = '<section class="vx-card"><div class="vx-empty">Analyse du positionnement de ' + esc(sym) + '…</div></section>';
+    HOTES_GEX.forEach(function (h) {
+      var el = $(h[0]); if (!el) return;
+      var dedans = '<div class="vx-empty">Analyse du positionnement de ' + esc(sym) + '…</div>';
+      el.innerHTML = h[2] ? ('<section class="vx-card">' + dedans + '</section>') : dedans;
+    });
     VX.fetch('/api/options/gex/' + encodeURIComponent(sym), { ttl: 120000 }).then(function (d) {
       renderThesis(d); renderTiles(d); renderBars(d); renderFlow(d); renderDaily(d);
       try { VX.context && VX.context.save && VX.context.save({ selectedSymbol: sym }); } catch (e) {}
     }).catch(function (e) {
-      ($('vx-gx-thesis')||{}).innerHTML = '<section class="vx-card"><div class="vx-error-banner">Chargement impossible : ' + esc(e.message) + '</div></section>';
+      /* Seule la thèse était rafraîchie : les quatre autres hôtes gardaient les
+         chiffres du symbole PRÉCÉDENT sous le titre du nouveau — une valeur
+         fausse, pas une absence. Les cinq disent la panne. */
+      nommerAbsenceGex('la lecture a échoué (' + (e.message || 'erreur inconnue') + ')', true);
     });
   }
 
@@ -307,4 +367,6 @@
   var pre = '';
   try { pre = (VX.store && VX.store.get && VX.store.get('active_ticker')) || ''; } catch (e) {}
   if (pre && inp) { inp.value = pre; load(pre); }
+  else nommerAbsenceGex('aucun sous-jacent choisi — clique une ligne du radar ci-dessus, '
+                        + 'ou saisis un symbole dans la barre de contexte', false);
 })();

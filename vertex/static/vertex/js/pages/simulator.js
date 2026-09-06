@@ -64,6 +64,70 @@
     return '<span class="vx2-mono' + cls + '">' + esc(txt) + unite + '</span>';
   }
 
+  /* Provenance : une valeur absente se DIT, elle ne se réduit pas à un tiret
+     nu. `num(null)` porte déjà `title="Donnée indisponible"` ; les champs
+     textuels de l'estampille n'avaient, eux, aucun équivalent.
+     MESURE DU 06/09/2026 (VEEV C 280, 180 j, mid 15, sur 5003) : l'estampille
+     servie était « Modèle FALLBACK_ESTIMATE · Contrat VEEV C 280 · Échéance —
+     · Taux 0,0380 », et zéro élément de cette estampille portait d'attribut
+     `title` : le tiret d'échéance était muet. */
+  function texteOuAbsent(v) {
+    if (v === null || v === undefined || v === '') {
+      return '<span class="vx2-absent" title="Donnée indisponible — non servie '
+        + 'par le moteur">' + ABSENT + '</span>';
+    }
+    return '<b>' + esc(v) + '</b>';
+  }
+
+  /* Le jeton du moteur n'est pas un texte d'interface. `model_source` ne prend
+     que deux valeurs (`vertex/options/models.py`) et la distinction compte :
+     FALLBACK_ESTIMATE signifie qu'AUCUNE volatilité n'était cotée et qu'elle a
+     été réinversée depuis le prix — toute la matrice repose alors sur une
+     entrée reconstruite. La page servait le jeton brut, en anglais, sans ton
+     ni explication : l'utilisateur ne pouvait pas voir cette différence.
+     Les limitations servies restent affichées telles quelles par ailleurs. */
+  var MODELES = {
+    MODEL_ESTIMATE: { mot: 'Black-Scholes, IV cotée', etat: 'delayed',
+      note: 'valeur théorique calculée sur la volatilité implicite cotée' },
+    FALLBACK_ESTIMATE: { mot: 'Black-Scholes, IV reconstruite', etat: 'stale',
+      note: 'aucune IV cotée : la volatilité a été réinversée depuis le prix mid' },
+    lognormal_risk_neutral: { mot: 'Lognormal risque-neutre', etat: 'delayed',
+      note: 'distribution risque-neutre — estimation, pas une fréquence observée' }
+  };
+  function modele(jeton) {
+    if (!jeton) return texteOuAbsent(null);
+    var m = MODELES[jeton];
+    if (!m) return '<b>' + esc(jeton) + '</b>';   // jeton inconnu : jamais masqué
+    return '<span class="vx2-badge" data-state="' + m.etat + '" title="'
+      + esc(m.note) + '">' + esc(m.mot) + '</span>';
+  }
+
+  //: Base des primes servie par le moteur multi-jambes.
+  var BASES = { declared: 'déclarée', mid: 'au mid', mark: 'au mark',
+                last: 'au dernier' };
+
+  /* CONTRÔLE ADVERSE du 06/09/2026 — un ZÉRO à la place d'une ABSENCE.
+     MESURE (Chromium, /simulator classe Actions, VEEV × 10, réponse réelle de
+     `POST /api/options/analyze`) : l'estampille servait « Dividende 0,0000 »
+     alors que la MÊME réponse portait
+     `entrees.dividende = {rendement: null, applique: false,
+      motif: "rendement du dividende inconnu pour ce titre — non applique"}`.
+     Le moteur prend soin de ne JAMAIS rendre 0.0 pour un rendement inconnu
+     (`vertex/options/entrees_mesurees.py:130` — « la confondre ferait passer
+     "je ne sais pas" pour "ce titre ne verse rien" ») ; `model.q` retombe à
+     0.0 pour le calcul, et la page publiait ce 0.0 comme une mesure à quatre
+     décimales. Sur un titre distributeur, c'est aussi le sens de la
+     limitation servie : la prime d'un call est alors SURESTIMÉE.
+     La valeur affichée vient donc désormais de la PROVENANCE, seule à
+     distinguer « nul » de « inconnu ». */
+  function dividendeMesure(entrees) {
+    var dv = (entrees || {}).dividende;
+    if (dv && dv.rendement != null) return num(dv.rendement, { dec: 4 });
+    return '<span class="vx2-absent" title="' + esc((dv && dv.motif)
+      || 'rendement du dividende non qualifié par le moteur — non appliqué')
+      + '">' + ABSENT + '</span>';
+  }
+
   function etat(titre, cause, kind) {
     return '<div class="vx2-state" data-kind="' + esc(kind || 'empty') + '" role="status">'
       + '<span class="vx2-state-ghost" aria-hidden="true"><i></i><i></i><i></i><i></i></span>'
@@ -198,14 +262,16 @@
     }
 
     var provenance = '<div class="vx2-stamp">'
-      + '<span>Modèle <b>' + esc(sim.model_source || ABSENT) + '</b></span>'
+      + '<span>Modèle ' + modele(sim.model_source) + '</span>'
       + '<span aria-hidden="true">·</span>'
-      + '<span>Contrat <b>' + esc(c.symbol || ABSENT) + ' ' + esc(c.right || '') + ' '
-      + esc(c.strike == null ? ABSENT : c.strike) + '</b></span>'
+      + '<span>Contrat ' + texteOuAbsent(
+          c.symbol ? (c.symbol + ' ' + (c.right || '')
+                      + ' ' + (c.strike == null ? '' : c.strike)).trim() : null) + '</span>'
       + '<span aria-hidden="true">·</span>'
-      + '<span>Échéance ' + esc(c.expiry || ABSENT) + '</span>'
+      + '<span>Échéance ' + texteOuAbsent(c.expiry) + '</span>'
       + '<span aria-hidden="true">·</span>'
-      + '<span>Taux ' + (sim.rate && sim.rate.rate != null ? num(sim.rate.rate, { dec: 4 }) : ABSENT) + '</span>'
+      + '<span>Taux ' + num(sim.rate && sim.rate.rate != null ? sim.rate.rate : null,
+                            { dec: 4 }) + '</span>'
       + '</div>';
 
     return { bande: bande, corps: matrice, avance: avance, provenance: provenance,
@@ -232,7 +298,9 @@
           ? '<span class="vx2-mono vx2-neg">Non bornée</span>'
           : num(d.max_loss, { unite: 'USD', signe: true, directionnel: true }), 'théorique')
       + metric('Probabilité de gain', num(d.probability_of_profit, { unite: '%', dec: 1 }),
-               'risque-neutre, pas une fréquence observée')
+               d.probability_of_profit == null
+                 ? 'non calculable sans volatilité implicite cotée'
+                 : 'risque-neutre, pas une fréquence observée')
       + '</div>';
 
     var be = (d.breakevens || []);
@@ -272,13 +340,15 @@
 
     var m = d.model || {};
     var provenance = '<div class="vx2-stamp">'
-      + '<span>Modèle <b>' + esc(m.type || ABSENT) + '</b></span>'
+      + '<span>Modèle ' + modele(m.type) + '</span>'
       + '<span aria-hidden="true">·</span>'
       + '<span>Taux ' + num(m.r, { dec: 4 }) + '</span>'
       + '<span aria-hidden="true">·</span>'
-      + '<span>Dividende ' + num(m.q, { dec: 4 }) + '</span>'
+      + '<span>Dividende ' + dividendeMesure(d.entrees) + '</span>'
       + '<span aria-hidden="true">·</span>'
-      + '<span>Base des primes ' + esc(m.premium_basis || ABSENT) + '</span></div>';
+      + '<span>Base des primes '
+      + texteOuAbsent(m.premium_basis ? (BASES[m.premium_basis] || m.premium_basis) : null)
+      + '</span></div>';
 
     var lim = [];
     if (m.note) lim.push(m.note);
@@ -392,7 +462,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             legs: [{ type: 'stock', strike: 0, premium: ref, qty: qte }],
-            spot: ref, days: Number(p.dte) || 90, iv: 0.25,
+            //  Aucune IV inventée : sans volatilité cotée, le moteur rend
+            //  probabilité de gain et sensibilités ABSENTES (jamais un chiffre
+            //  fabriqué sur une constante). Le payoff, lui, n'en a pas besoin.
+            spot: ref, days: Number(p.dte) || 90, iv: null,
             sym: p.sym, name: p.sym + ' — position en actions ('
               + (refSource === 'scan' ? 'prix du scan courant' : 'prix saisi')
               + ' : ' + ref + ' $)'
@@ -441,12 +514,22 @@
   }
 
   // ── Comparaison — trois au maximum ─────────────────────────────────────
+  /* `comparaisons` vit dans la portée de ce module, donc dans la mémoire de la
+     page ouverte : une navigation la vide. C'est voulu — la page ne possède
+     aucun store de simulations et n'a pas le droit d'en créer un.
+     MESURE DU 06/09/2026 : l'état vide rendu ici prescrivait « Lance une
+     simulation depuis Simple ou Avancé, puis Ajouter à la comparaison » sur la
+     vue « Comparer », c'est-à-dire précisément ce que l'utilisateur venait de
+     faire avant d'y arriver — et qui ne pouvait pas y survivre. Chaque hôte
+     porte désormais la cause de SON vide (`data-sim-heritable`), et l'état
+     servi par le module reste en place quand rien n'est à ajouter. */
   function rendreComparaison() {
     var zone = $('#vx-sim-compare-zone');
     if (!zone) return;
     if (!comparaisons.length) {
-      zone.innerHTML = etat('Aucune simulation à comparer',
-        'Lance une simulation depuis Simple ou Avancé, puis « Ajouter à la comparaison ».', 'empty');
+      //  Rien à afficher : on laisse l'état SERVI, qui dit déjà pourquoi cet
+      //  hôte-là est vide. L'écraser par un message générique effaçait la
+      //  seule explication honnête de la vue « Comparer ».
       return;
     }
     zone.innerHTML = '<div class="vx2-grid">' + comparaisons.map(function (c, i) {
@@ -458,7 +541,9 @@
     }).join('') + '</div>'
       + '<div class="vx2-banner" data-kind="caution"><span>Les trois colonnes partagent la '
       + 'même base de date et la même devise. Ce sont des <b>scénarios théoriques</b>, '
-      + 'jamais des prévisions.</span></div>';
+      + 'jamais des prévisions. Cette comparaison <b>n’est pas enregistrée</b> : '
+      + 'elle vit dans la page ouverte et disparaît si tu changes de sous-vue ou '
+      + 'recharges.</span></div>';
   }
 
   /* Parcours du blueprint : « Options -> Simuler le contrat ». Le contexte

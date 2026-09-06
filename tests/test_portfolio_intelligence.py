@@ -41,6 +41,36 @@ def test_context_weights_and_hhi_hand_computed():
     assert ctx['top_weight_pct'] == pytest.approx(2500 / 4400 * 100, abs=0.01)
 
 
+def test_les_deux_hhi_du_produit_portent_chacun_sa_base():
+    """CONSTAT 24 — deux « HHI » cohabitent et ne mesurent pas la même chose.
+
+    MESURE : sur KO (88,07 $) + 25 000 $ de cash, `risk_engine` rend 1.0
+    (compartiment actions renormalisé) pendant que `portfolio_context` rend
+    1.0 sur une base différente (toutes les lignes valorisées, cash absent du
+    dénominateur parce qu'il n'est pas une ligne). Les deux sont affichés sous
+    le même libellé avec des seuils différents (0,33/0,66 contre 0,18/0,25) :
+    seule la base publiée permet de savoir lequel répond à quoi. `risk_engine`
+    la publiait déjà ; `portfolio_context` ne la publiait pas.
+    """
+    from vertex.portfolio.risk_engine import portfolio_risk
+    from vertex.portfolio.models import Position, PortfolioSnapshot
+
+    class _P:
+        max_stock_weight_pct = 15.0
+        portfolio_max_drawdown_pct = -25.0
+        stock_max_drawdown_pct = -20.0
+        max_simultaneous_options = 3
+
+    ctx = PC.build(_positions(), quotes=_quotes())
+    assert 'toutes les lignes valorisées' in ctx['hhi_basis']
+    assert 'cash' in ctx['hhi_basis']
+    risque = portfolio_risk(PortfolioSnapshot(
+        positions=[Position('KO', 1, avg_cost=88.07, last_price=88.07)],
+        cash=25000.0, provenance='REAL'), _P())
+    #  Deux bases DIFFÉRENTES, donc deux phrases différentes : c'est le point.
+    assert risque['hhi_basis'] != ctx['hhi_basis']
+
+
 def test_bounds_from_profile_8_15():
     ctx = PC.build(_positions(), quotes=_quotes())
     assert ctx['bounds']['min'] == 8 and ctx['bounds']['max'] == 15

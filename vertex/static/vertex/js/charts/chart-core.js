@@ -462,24 +462,30 @@
     let valArc = '', needle = '', valColor = C.colors.neutral;
     if (v != null) {
       for (const b of bands) { if (v <= b.to) { valColor = b.color; break; } valColor = b.color; }
-      valArc = `<path d="${arc(ang(min), ang(v))}" stroke="${valColor}" stroke-width="9" fill="none" stroke-linecap="round" style="filter:drop-shadow(0 0 6px ${valColor})"/>`;
+      /* Aucun halo permanent (design system) : l'arc porte sa couleur, pas une lueur. */
+      valArc = `<path d="${arc(ang(min), ang(v))}" stroke="${valColor}" stroke-width="9" fill="none" stroke-linecap="round"/>`;
       const [nx, ny] = pt(ang(v), r);
       // Bille lumineuse blanche (réf. visuelle) : halo teinté → bille blanche → cœur teinté
-      needle = `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="10" fill="${valColor}" opacity=".20"/>`
-        + `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="5.4" fill="#fff" style="filter:drop-shadow(0 0 5px ${valColor})"/>`
+      needle = `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="9" fill="${valColor}" opacity=".16"/>`
+        + `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="5.2" fill="var(--vx-ink,#f5f7fa)"/>`
         + `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="2.3" fill="${valColor}"/>`;
     }
     const disp = v == null ? '—' : (Number.isInteger(v) ? v : (+v).toFixed(1));
     const aria = `${o.label || 'jauge'} : ${v == null ? 'donnée indisponible' : disp + (o.unit || '')}${o.reading ? ' — ' + o.reading : ''}`;
-    el.innerHTML = `
+    /*  L'unite est DEJA peinte sous le cadran : la repasser au pied donnerait
+        « % · confiance » puis « unité : % » a deux centimetres d'ecart, le
+        doublon que `piedPrimitive` evite deja pour la source.  */
+    const tete = tetePrimitive(o), pied = piedPrimitive(Object.assign({}, o, { unit: null }));
+    _libereHauteur(el, tete, pied);
+    el.innerHTML = tete + `
       <div class="vx-gauge" role="img" aria-label="${aria.replace(/"/g, '&quot;')}">
         <svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:230px;display:block;margin:0 auto">
           ${track}${valArc}${needle}
           <text x="${cx}" y="${cy - 20}" text-anchor="middle" fill="${valColor}" font-size="30" font-weight="700" style="font-variant-numeric:tabular-nums">${disp}</text>
-          <text x="${cx}" y="${cy - 3}" text-anchor="middle" fill="var(--vx-text-muted,#817d77)" font-size="10" letter-spacing=".5">${(o.unit || '') + (o.label ? ' · ' + o.label : '')}</text>
+          <text x="${cx}" y="${cy - 3}" text-anchor="middle" fill="var(--vx-text-muted,#828892)" font-size="10" letter-spacing=".5">${(o.unit || '') + (o.label ? ' · ' + o.label : '')}</text>
         </svg>
         ${o.reading ? `<div class="vx-meta" style="text-align:center;margin-top:4px">${o.reading}</div>` : ''}
-      </div>`;
+      </div>` + pied;
     return el;
   };
 
@@ -515,6 +521,17 @@
     return '<div class="vx-chart-foot vx-primitive-foot">'
       + age + (bouts.length ? '<span class="vx-meta">' + bouts.join(' · ') + '</span>' : '')
       + '</div>';
+  }
+
+  /*  Le meme pied pose dans un hote FIGE (`style="height:260px"`, dimensionne
+      pour le SVG seul) saigne sur le bloc suivant : c'est la mesure du lot 33
+      sur le treemap (294 px de contenu dans 260 px). `treemap` et `waterfall`
+      liberent donc la hauteur ; les cinq primitives qui recoivent tete et pied
+      ici doivent la liberer AUSSI, sinon on deplace le defaut au lieu de le
+      corriger. On ne libere QUE si on ajoute quelque chose : une primitive
+      appelee sans legende garde exactement la boite qu'elle avait.  */
+  function _libereHauteur(el, tete, pied) {
+    if ((tete || pied) && el.style.height) el.style.height = '';
   }
 
   /* ── Treemap (SVG squarifié) — poids relatif : portefeuille, segments, secteurs ──
@@ -632,10 +649,103 @@
     const el = typeof host === 'string' ? document.getElementById(host) : host;
     if (!el) return null;
     const o = opts || {};
-    const axes = (o.axes || []).filter(a => a && a.label != null);
-    if (axes.length < 3) { el.innerHTML = o.emptyHtml || ''; return null; }
+    /*  Un axe SANS valeur n'est pas un axe A ZERO.
+        Mesure du 06/09/2026, fichier servi par 127.0.0.1:5003, appel
+        `C.radar(h,{axes:[{label:'Alpha'},{label:'Beta',value:null},
+        {label:'Gamma',value:50}]})` :
+          aria-label rendu   → « radar : Alpha 0, Beta 0, Gamma 50 »
+          sommets du polygone → « 130.0,120.0 130.0,120.0 89.3,143.5 »
+        soit deux sommets confondus EXACTEMENT au centre (130,120) du cadre
+        260x240 — la lecture « note nulle », alors que la mesure dit « pas de
+        note ». Le coupable est `clamp(v) = (v || 0) / max`, qui imputait un
+        zero a `null`, `undefined` et `''` (invariant 4 : absence et zero
+        restent des etats distincts).
+        Les axes sans valeur finie sortent donc du trace — la meme regle que
+        `rings`, `funnel`, `waterfall` et `treemap`, qui filtrent deja — et
+        ils sont NOMMES sous le graphique : un axe retire en silence ferait
+        croire que la scorecard n'a jamais eu cette dimension.  */
+    const _fini = (v) => v !== null && v !== undefined && v !== ''
+      && isFinite(Number(v));
+    const tous = (o.axes || []).filter(a => a && a.label != null);
+    const axes = tous.filter(a => _fini(a.value));
+    const absents = tous.filter(a => !_fini(a.value)).map(a => String(a.label));
+    /*  Moins de trois axes mesures : un polygone n'a pas de forme, on ne le
+        trace pas. Mais rendre le vide ferait DEUX pertes que le filtre
+        ci-dessus etait cense empecher.
+        Mesure du 06/09/2026, `C.radar(h,{axes:[{label:'Alpha'},{label:'Beta'},
+        {label:'Gam'},{label:'Del',value:30},{label:'Eps',value:10}]})` :
+          avant le filtre → radar complet, aria « Alpha 0, Beta 0, Gam 0,
+                            Del 30, Eps 10 » (trois zeros imputes : faux)
+          apres le filtre → `innerHTML` de 0 caractere
+        soit une carte BLANCHE : les deux valeurs REELLEMENT mesurees (30 et
+        10) sont jetees, et les trois absences ne sont nommees nulle part —
+        exactement le « retire en silence » que ce lot dit corriger, pousse
+        de l'axe a la carte entiere (invariants 4 et 6).
+        Aucune page n'atteint ce chemin aujourd'hui, parce que `analysis_page`
+        et `intelligence_page` imputent leurs zeros EN AMONT (`a[1]||0`,
+        `s.conviction??0`). Le jour ou ces imputations tombent — c'est le
+        correctif que ce lot recommande — ce chemin devient le cas courant
+        d'une scorecard partielle. */
+    if (axes.length < 3) {
+      const secours =
+        (axes.length ? '<p class="vx-meta">' + axes.map(a =>
+            a.label + ' : ' + Math.round(Number(a.value))).join(' · ') + '</p>' : '')
+        + (absents.length ? '<p class="vx-meta vx-primitive-absents">Sans donnée : '
+            + absents.join(', ') + '</p>' : '');
+      _libereHauteur(el, '', secours);
+      el.innerHTML = (o.emptyHtml || '') + secours;
+      return null;
+    }
     const max = o.max || 100, N = axes.length, W = o.width || 260, H = o.height || 240;
-    const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 26;
+    /*  Le cadre ne reservait aucune place aux LIBELLES d'axes : ancres posees
+        a `R + 13` du centre, texte etale vers l'exterieur, `viewBox` arrete a
+        `W`. Mesure du 06/09/2026 sur /system/design-system (viewBox 0 0 260
+        240, cinq axes) via `getBBox()` :
+          « Tendance »  → x va jusqu'a 274.2 pour un cadre de 260 (14.2 coupes)
+          « Volatilite » → x commence a -10.5 (10.5 coupes)
+        A l'ecran : « Tendar » et « latilite ». Le libelle est la SEULE chose
+        qui nomme la dimension notee — coupe, la note ne veut plus rien dire,
+        et le defaut touche la scorecard d'Analyse, les Scores du dossier de
+        Vertex IA et les Greeks d'Options.
+        On elargit donc le cadre horizontalement, sans toucher au rayon.
+
+        La marge est le DEBORDEMENT REELLEMENT MESURE, axe par axe, dans la
+        geometrie du rendu — pas la longueur du plus long libelle. La nuance
+        n'est pas cosmetique : le `viewBox` s'etire, mais le SVG est servi en
+        `width:100%`, donc dans une carte plus etroite que `VW` c'est TOUT le
+        dessin qui rapetisse, libelles compris.
+        Mesure du 06/09/2026, cinq axes « Momentum / Tendance / Qualite /
+        Valorisation / Volatilite », cadre 260x240 :
+          debordement reel      → 43,8 px (« Volatilite », ancre a gauche)
+          marge par plus-long-libelle → 85 px, soit 2,2x le besoin
+          `viewBox` qui en resulte    → 430 au lieu de 352
+        et sur /system/design-system a 390 px, ou la carte rend 298 px de
+        large, la fonte des libelles tombait a 6,58 px (9,5 px avant le lot).
+        Le libelle cessait d'etre coupe pour devenir illisible : on deplacait
+        le defaut. Avec la marge geometrique, la meme carte rend 8,04 px.
+
+        La largeur d'un libelle reste une ESTIMATION — on ne peut pas mesurer
+        un texte qui n'est pas encore dans le DOM. La constante est le pire
+        cas MESURE sur les libellés du produit et leurs variantes majuscules
+        (« MOMENTUM » : 57,63 px de boite pour 8 signes a 9,5 px de fonte,
+        soit 7,2 px/signe ; « Volatilite » n'en fait que 3,47). L'ancienne
+        constante de 6,4 passait donc SOUS le pire cas majuscule qu'elle
+        pretendait couvrir. Bornee a 90 px : un libelle aberrant ne doit pas
+        faire exploser la carte — il sera coupe, et c'est dit ici. */
+    const PXSIGNE = 7.2;
+    const _angPad = (i) => -Math.PI / 2 + i * 2 * Math.PI / axes.length;
+    let _deb = 0;
+    axes.forEach((a, i) => {
+      const lx = W / 2 + (Math.min(W, H) / 2 - 26 + 13) * Math.cos(_angPad(i));
+      const lw = PXSIGNE * String(a.label).length;
+      //  Meme regle d'ancrage que la boucle des libelles, plus bas : le
+      //  decalage du centre par PADX est commun aux deux, donc invariant.
+      const x0 = Math.abs(lx - W / 2) < 6 ? lx - lw / 2 : (lx > W / 2 ? lx : lx - lw);
+      _deb = Math.max(_deb, -x0, x0 + lw - W);
+    });
+    const PADX = Math.max(0, Math.min(90, Math.ceil(_deb) + 2));
+    const VW = W + 2 * PADX;
+    const cx = VW / 2, cy = H / 2, R = Math.min(W, H) / 2 - 26;
     const ang = (i) => -Math.PI / 2 + i * 2 * Math.PI / N;
     const pt = (i, r) => [cx + r * Math.cos(ang(i)), cy + r * Math.sin(ang(i))];
     let grid = '';
@@ -650,13 +760,21 @@
       const anchor = Math.abs(lx - cx) < 6 ? 'middle' : (lx > cx ? 'start' : 'end');
       labels += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="9.5" fill="var(--vx-text-muted,#817d77)">${a.label}</text>`;
     });
-    const clamp = (v) => Math.max(0, Math.min(1, (v || 0) / max));
+    const clamp = (v) => Math.max(0, Math.min(1, Number(v) / max));
     const vpts = axes.map((a, i) => pt(i, R * clamp(a.value)).map(n => n.toFixed(1)).join(',')).join(' ');
     const col = o.color || C.colors.brand;
     const dots = axes.map((a, i) => { const [px, py] = pt(i, R * clamp(a.value)); return `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="2.6" fill="${col}"/>`; }).join('');
-    const aria = (o.ariaLabel || 'radar') + ' : ' + axes.map(a => a.label + ' ' + Math.round(a.value || 0)).join(', ');
-    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px;display:block;margin:0 auto" role="img" aria-label="${aria.replace(/"/g, '&quot;')}">
-      ${grid}${spokes}<polygon points="${vpts}" fill="${col}" fill-opacity=".20" stroke="${col}" stroke-width="1.8" style="filter:drop-shadow(0 0 4px ${col})"/>${dots}${labels}</svg>`;
+    const aria = (o.ariaLabel || 'radar') + ' : ' + axes.map(a => a.label + ' ' + Math.round(Number(a.value))).join(', ')
+      + (absents.length ? ' — sans donnée : ' + absents.join(', ') : '');
+    /*  L'absence est ecrite A L'ECRAN, pas seulement dans l'aria-label : un
+        lecteur voyant qui compte cinq dimensions attendues et quatre branches
+        tracees doit lire POURQUOI, sans ouvrir l'inspecteur.  */
+    const note = absents.length
+      ? '<p class="vx-meta vx-primitive-absents">Sans donnée : ' + absents.join(', ') + '</p>' : '';
+    const tete = tetePrimitive(o), pied = piedPrimitive(o);
+    _libereHauteur(el, tete, pied || note);
+    el.innerHTML = tete + `<svg viewBox="0 0 ${VW} ${H}" width="100%" style="max-width:${VW}px;display:block;margin:0 auto" role="img" aria-label="${aria.replace(/"/g, '&quot;')}">
+      ${grid}${spokes}<polygon points="${vpts}" fill="${col}" fill-opacity=".20" stroke="${col}" stroke-width="1.8" style="filter:drop-shadow(0 0 4px ${col})"/>${dots}${labels}</svg>` + note + pied;
     return el;
   };
 
@@ -671,7 +789,9 @@
     if (!nodes.length) { el.innerHTML = o.emptyHtml || ''; return null; }
     const toneCol = { active: C.colors.positive, idle: C.colors.neutral, warn: C.colors.warning, err: C.colors.negative };
     const aria = (o.ariaLabel || 'diagramme de flux') + ' : ' + nodes.map(n => n.label + (n.count != null ? ' ' + n.count : '')).join(' → ');
-    el.innerHTML = '<div role="img" aria-label="' + aria.replace(/"/g, '&quot;') + '" style="display:flex;align-items:stretch;overflow-x:auto;padding:4px 0">'
+    const tete = tetePrimitive(o), pied = piedPrimitive(o);
+    _libereHauteur(el, tete, pied);
+    el.innerHTML = tete + '<div role="img" aria-label="' + aria.replace(/"/g, '&quot;') + '" style="display:flex;align-items:stretch;overflow-x:auto;padding:4px 0">'
       + nodes.map((n, i) => {
         const col = n.color || toneCol[n.tone] || C.colors.neutral;
         const active = n.tone === 'active' || (n.count > 0);
@@ -682,7 +802,7 @@
           + (n.count != null ? '<div style="font-size:15px;font-weight:700;color:' + col + ';font-variant-numeric:tabular-nums">' + n.count + '</div>' : '')
           + (n.sub ? '<div style="font-size:9px;letter-spacing:.04em;text-transform:uppercase;color:var(--vx-text-muted,#817d77)">' + n.sub + '</div>' : '')
           + '</div>' + arrow;
-      }).join('') + '</div>';
+      }).join('') + '</div>' + pied;
     return el;
   };
 
@@ -719,9 +839,13 @@
          ${o.centerLabel ? `<text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="9.5" fill="var(--vx-text-muted,#817d77)">${o.centerLabel}</text>` : ''}`
       : '';
     const aria = (o.ariaLabel || 'anneaux') + ' : ' + items.map(d => d.label + ' ' + Math.round(d.value)).join(', ');
-    el.innerHTML = `<div class="vx-flex vx-wrap" style="gap:14px;align-items:center;justify-content:center">
+    /*  Comme la jauge : l'unite est deja collee a chaque valeur de la legende,
+        elle ne repasse pas au pied.  */
+    const tete = tetePrimitive(o), pied = piedPrimitive(Object.assign({}, o, { unit: null }));
+    _libereHauteur(el, tete, pied);
+    el.innerHTML = tete + `<div class="vx-flex vx-wrap" style="gap:14px;align-items:center;justify-content:center">
       <svg viewBox="0 0 ${S} ${S}" width="${S}" style="max-width:${S}px;flex:0 0 auto" role="img" aria-label="${aria.replace(/"/g, '&quot;')}">${rings}${center}</svg>
-      <div style="flex:1;min-width:140px;display:flex;flex-direction:column;gap:6px">${legend}</div></div>`;
+      <div style="flex:1;min-width:140px;display:flex;flex-direction:column;gap:6px">${legend}</div></div>` + pied;
     return el;
   };
 
@@ -756,7 +880,9 @@
     const aria = (o.ariaLabel || 'entonnoir') + ' : ' + stages.map(s => s.label + ' ' + fmt(s.value)).join(' → ');
     /* max-width : évite que l'entonnoir ne s'étire grotesquement sur une carte
        large (le viewBox 320px scalé à 100% gonflait tout ×4). Centré. */
-    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;max-width:${o.maxWidth || 460}px;margin:0 auto" role="img" aria-label="${aria.replace(/"/g, '&quot;')}">${rows}</svg>`;
+    const tete = tetePrimitive(o), pied = piedPrimitive(o);
+    _libereHauteur(el, tete, pied);
+    el.innerHTML = tete + `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block;max-width:${o.maxWidth || 460}px;margin:0 auto" role="img" aria-label="${aria.replace(/"/g, '&quot;')}">${rows}</svg>` + pied;
     return el;
   };
 

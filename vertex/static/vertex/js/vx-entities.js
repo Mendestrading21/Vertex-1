@@ -512,7 +512,16 @@
       const n = (id) => { const x = v(id); return x === '' || x === undefined ? null : Number(x); };
       if (dest === 'favorite') { if (!E.isFavorite(sym)) E.toggleFavorite(sym); }
       else if (dest === 'watchlist') E.addToWatchlist(sym, { priority: v('f-priority'), zone: v('f-zone'), thesis: v('f-thesis'), catalyst: v('f-catalyst') });
-      else if (dest === 'follow') E.followStock(sym, { entry_spot: n('f-entry'), stop: n('f-stop'), tgt: n('f-tgt') });
+      else if (dest === 'follow') {
+        /* Même discipline que le chemin « alerte » deux lignes plus bas : un
+           plan PARTIEL (deux niveaux sur trois) est ensuite dessiné comme un
+           plan complet par la barre stop/entrée/objectif du Portefeuille, le
+           niveau manquant se lisant 0,00. Soit les trois, soit aucun. */
+        const niv = [n('f-entry'), n('f-stop'), n('f-tgt')];
+        const saisis = niv.filter((x) => x !== null).length;
+        if (saisis && saisis < 3) { VX.toast('Plan incomplet : entrée, stop ET objectif — ou aucun des trois', 'error'); return; }
+        E.followStock(sym, { entry_spot: niv[0], stop: niv[1], tgt: niv[2] });
+      }
       else if (dest === 'alert') {
         if (n('f-level') === null) { VX.toast('Niveau requis', 'error'); return; }
         E.addAlert(sym, v('f-cond'), n('f-level'), v('f-note'));

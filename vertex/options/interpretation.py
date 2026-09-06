@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from vertex.visualization.schemas import (
     interpretation, unknown, ST_FAVORABLE, ST_NEUTRE, ST_DEFAVORABLE,
+    ST_INCONNU,
 )
 from . import volatility as vol
 from . import event_risk as ev
@@ -17,6 +18,48 @@ _VOL_LIMITS = [
     'IV rank/percentile dépendent de la profondeur d\'historique disponible',
     'vol réalisée close-to-close : ne capture pas le risque intra-journalier',
 ]
+
+#  UN SEUL propriétaire de la phrase de prime IV/RV : les deux chemins (verdict
+#  classable et cherté non classable) la formulent ici, sinon ils redivergent.
+#  Mais la phrase a DEUX moitiés de nature différente — une MESURE et sa
+#  QUALIFICATION — et les deux chemins n'ont pas droit à la même.
+def _mesure_prime(prem):
+    """La prime IV/RV telle qu'elle est MESURÉE, sans aucune qualification.
+
+    Ne dit QUE ce que le calcul rend : le sens de l'écart et sa taille. Aucun
+    mot de cherté, aucun verdict — c'est la forme servie par le chemin où
+    précisément aucun verdict de cherté n'est possible."""
+    if prem is None:
+        return None
+    return ('IV au-dessus de la vol réalisée : prime +%.2f' % prem if prem > 0
+            else 'IV sous la vol réalisée : prime %.2f' % prem)
+
+
+def _phrase_prime(prem):
+    """La mesure ET sa qualification de cherté — réservée au chemin CLASSABLE.
+
+    RÉGRESSION INTRODUITE AU TOUR 2, MESURÉE ET CORRIGÉE ICI (2026-09-06).
+    En donnant un propriétaire unique à la phrase, la queue normative
+    (« premium payé cher » / « premium relativement bon marché ») a été
+    transportée telle quelle sur le chemin INCONNU. Mesure de l'appel
+    (IV 0,415, 21 clôtures, vol réalisée 0,2237, prime +0,1913) :
+
+      dominant_reading  « Cherté non classable : ni IV rank ni IV percentile
+                          ne sont mesurés ici… »
+      negative_evidence ['IV au-dessus de la vol réalisée (prime +0.19) :
+                          premium payé cher']
+
+    La carte niait tout verdict de cherté dans sa lecture dominante et en
+    rendait un dans son unique preuve. La prime, elle, est bien mesurée
+    (aucun chiffre inventé) : c'est la QUALIFICATION qui était de trop, parce
+    que « cher » se lit sur le rank — la grandeur justement absente.
+
+    La queue reste ici, sur le chemin où le rank la porte."""
+    mesure = _mesure_prime(prem)
+    if mesure is None:
+        return None
+    return mesure + (' — premium payé cher' if prem > 0
+                     else ' — premium relativement bon marché')
 
 
 def interpret_volatility(symbol, current_iv, iv_low, iv_high, iv_history=None,
@@ -30,18 +73,43 @@ def interpret_volatility(symbol, current_iv, iv_low, iv_high, iv_history=None,
     prem = vol.iv_rv_premium(current_iv, rv)
     regime = vol.vol_regime(rank)
     if rank is None and pctl is None:
-        return unknown(cid, q, reason='IV rank/percentile indisponibles',
-                       source=source, limitations=_VOL_LIMITS)
+        #  RÉGRESSION CORRIGÉE (mesure du 2026-09-06) : la sortie anticipée
+        #  jetait la prime IV/RV AVANT de l'avoir regardée. Sur NVDA
+        #  (IV médiane 41,5 %, 21 clôtures réelles du scan, vol réalisée
+        #  44,7 %) l'appel rendait positive_evidence [] et negative_evidence []
+        #  — la SEULE grandeur réellement mesurée de la carte disparaissait de
+        #  l'écran parce qu'une AUTRE grandeur (l'IV rank, sans historique d'IV
+        #  câblé) manquait. Le verdict de cherté reste INCONNU (il se lit sur le
+        #  rank, pas sur la prime) ; la mesure, elle, est servie et nommée.
+        #  La MESURE NUE, jamais sa qualification : cette carte déclare qu'aucun
+        #  verdict de cherté n'est possible ici (cf. `_phrase_prime`).
+        phrase = _mesure_prime(prem)
+        if phrase is None:
+            return unknown(cid, q, reason='IV rank/percentile indisponibles',
+                           source=source, limitations=_VOL_LIMITS)
+        return interpretation(
+            cid, q,
+            'Cherté non classable : ni IV rank ni IV percentile ne sont mesurés '
+            'ici. Seule la prime IV/RV, calculée sur les clôtures réelles, est '
+            'disponible.',
+            ST_INCONNU,
+            confidence=None,                     # non mesurable : jamais gonflée
+            positive_evidence=([phrase] if prem <= 0 else []),
+            negative_evidence=([phrase] if prem > 0 else []),
+            uncertainties=['IV rank/percentile indisponibles — aucune série d\'IV '
+                           'historique n\'est câblée : le verdict cher/bon marché '
+                           'reste inconnu'],
+            strategy_impact='Aucun verdict de cherté : la prime IV/RV est la seule '
+                            'mesure disponible, elle ne suffit pas à trancher seule.',
+            source=source, as_of=as_of, limitations=_VOL_LIMITS)
     pos, neg, unc = [], [], []
     ref = rank if rank is not None else pctl
     label = 'IV rank' if rank is not None else 'IV percentile'
     if regime:
         pos.append('Régime de volatilité : %s (%s %.0f)' % (regime, label, ref))
-    if prem is not None:
-        if prem > 0:
-            neg.append('IV au-dessus de la vol réalisée (prime +%.2f) : premium payé cher' % prem)
-        else:
-            pos.append('IV sous la vol réalisée (%.2f) : premium relativement bon marché' % prem)
+    phrase = _phrase_prime(prem)
+    if phrase is not None:
+        (neg if prem > 0 else pos).append(phrase)
     else:
         unc.append('Vol réalisée indisponible — prime IV/RV non calculable')
     # Verdict pour un ACHETEUR d'options (le desk n'achète que) : IV basse = favorable.

@@ -46,6 +46,78 @@ def test_ring_buffer_drops_oldest_beyond_capacity():
     assert b.stats() == {'clients': 0, 'buffered': 3, 'last_id': 5}
 
 
+def test_un_canal_bavard_n_evince_pas_le_rejeu_des_autres():
+    """MESURE (6 sept. 2026, instance de contrôle) : composition du tampon de
+    rejeu au moment du rejeu à la connexion → 200/200 événements `jobs`, dont
+    187 `POSITION_REFRESH`. Aucun `market`, `positions`, `portfolio`, `alerts`
+    ni `connections` ne survivait : le client qui se reconnectait avec
+    `Last-Event-ID` rejouait 93 % de bruit et avait perdu EN SILENCE tous les
+    vrais changements d'état, alors que ce module annonce « rejouer après
+    reconnexion ». Le tampon est désormais par canal : un canal bavard ne peut
+    plus affamer les autres.
+    """
+    b = _Broker(ring=3)
+    vrai = b.publish('market', {'scan_ts': 1})
+    for i in range(50):                     # le canal bavard, comme mesuré
+        b.publish('jobs', {'i': i})
+    rejeu = b.replay_since(0)
+    assert [e['id'] for e in rejeu] == sorted(e['id'] for e in rejeu), (
+        'le rejeu doit rester chronologique après refusion des canaux')
+    marches = [e for e in rejeu if e['channel'] == 'market']
+    assert [e['id'] for e in marches] == [vrai], (
+        'le vrai changement d’état a été évincé par 50 battements de jobs')
+    #  4 -> 3. Le premier correctif donnait `ring` événements À CHAQUE canal :
+    #  le total montait à `ring × canaux` (200 → 2 000 sur le broker servi),
+    #  soit 10× la mémoire et 10× la rafale de rejeu annoncées, sans que
+    #  `stats()['buffered']` le dise. `ring` est de nouveau la capacité TOTALE ;
+    #  le canal muet garde son événement parce que le bavard dépasse son quota,
+    #  pas parce que le tampon a grossi.
+    assert b.stats()['buffered'] == 3, (
+        'le tampon dépasse la capacité demandée : %s' % b.stats())
+    assert len(rejeu) == 3                  # 1 `market` + les 2 `jobs` récents
+
+
+def test_la_capacite_totale_ne_depend_pas_du_nombre_de_canaux():
+    """RÉGRESSION DU LOT PRÉCÉDENT, mesurée sur le broker servi.
+
+    Avec un anneau de `ring` PAR canal, `_Broker(ring=200)` gardait jusqu'à
+    200 × 10 = 2 000 événements et en rejouait autant d'un coup à un client
+    revenu avec un `Last-Event-ID` ancien :
+
+    ```text
+    anneau par canal (avant) : 10 canaux × 30 → buffered = 300 · maximum 2 000
+    capacité totale  (après) : 10 canaux × 30 → buffered = 200 · maximum   200
+    ```
+
+    La promesse de l'en-tête du module (« tampon circulaire ») porte sur UNE
+    capacité, pas sur une capacité multipliée par le nombre de canaux ouverts.
+    Le quota garanti (`ring // canaux`) reste la protection anti-famine.
+    """
+    b = _Broker(ring=200)
+    for canal in CHANNELS:
+        for i in range(30):                 # 10 canaux × 30 = 300 > 200
+            b.publish(canal, {'i': i})
+    assert b.stats()['buffered'] == 200, (
+        'la borne du tampon suit le nombre de canaux : %s' % b.stats())
+    assert len(b.replay_since(0)) == 200, (
+        'un client qui se reconnecte reçoit une rafale plus grande que la '
+        'capacité annoncée')
+    présents = {e['channel'] for e in b.replay_since(0)}
+    assert présents == set(CHANNELS), (
+        'un canal a été entièrement affamé malgré son quota : %s' % sorted(présents))
+
+
+def test_un_canal_seul_occupe_toute_la_capacite():
+    """Le quota est un PLANCHER, pas un plafond : sans voisin bavard, un canal
+    isolé garde les `ring` derniers événements — comportement d'avant les deux
+    correctifs, préservé."""
+    b = _Broker(ring=200)
+    for i in range(500):
+        b.publish('market', {'i': i})
+    assert b.stats()['buffered'] == 200
+    assert [e['id'] for e in b.replay_since(0)][0] == 301   # 500 - 200 + 1
+
+
 def test_slow_client_never_blocks_publisher():
     b = _Broker()
     q = b.subscribe()

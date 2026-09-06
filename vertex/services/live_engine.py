@@ -38,6 +38,17 @@ _LAST_REPORT = {'ts': None, 'requested': [], 'lines': []}
 _FORCE = {}                                   # domaine -> threading.Event (forçage de cycle)
 
 
+#: Domaine -> (instant du dernier passage en attente, timeout demandé).
+#: LA SEULE PREUVE qu'un exécutant existe dans CE processus pour ce domaine.
+#: Voir `boucle_a_l_ecoute` : le rapport de synchronisation s'en sert au lieu
+#: d'affirmer qu'un cycle a été déclenché.
+_ECOUTES: dict = {}
+#: Marge au-delà du timeout annoncé avant de considérer le signal périmé : une
+#: boucle qui redemande `wait_force(domain, 60)` toutes les 60 s reste vue comme
+#: vivante, une boucle morte cesse d'être comptée peu après son échéance.
+_ECOUTE_MARGE_S = 30.0
+
+
 def force_event(domain):
     """L'événement de forçage d'un domaine (créé au premier accès)."""
     ev = _FORCE.get(domain)
@@ -48,12 +59,32 @@ def force_event(domain):
 
 def wait_force(domain, timeout):
     """Attente interruptible pour les boucles : dort `timeout` s OU se réveille
-    immédiatement si le Sync Center force le domaine. Renvoie True si forcé."""
+    immédiatement si le Sync Center force le domaine. Renvoie True si forcé.
+
+    Le passage est NOTÉ (`_ECOUTES`) : c'est ici, et nulle part ailleurs, qu'un
+    exécutant se manifeste. Sans cette note, `refresh()` ne peut que supposer.
+    """
     ev = force_event(domain)
+    _ECOUTES[domain] = (time.time(), float(timeout or 0))
     forced = ev.wait(timeout)
     if forced:
         ev.clear()
     return forced
+
+
+def boucle_a_l_ecoute(domain, maintenant=None) -> bool:
+    """Une boucle attend-elle RÉELLEMENT un forçage sur ce domaine, ici ?
+
+    Mesure, jamais supposition : `wait_force` note son passage et le timeout
+    qu'elle a demandé ; le signal vaut jusqu'à cette échéance plus une marge.
+    Une boucle qui n'existe pas dans cette configuration — ou qui est morte —
+    ne note rien, et `refresh()` cesse alors de promettre un cycle.
+    """
+    vu = _ECOUTES.get(domain)
+    if not vu:
+        return False
+    quand, timeout = vu
+    return ((maintenant or time.time()) - quand) <= (timeout + _ECOUTE_MARGE_S)
 
 # seuils de fraîcheur par domaine (secondes) : (frais, rassis) — au-delà : hors ligne
 _THRESH = {
@@ -167,9 +198,14 @@ def _domains():
     # téléchargement daily (yfinance/stooq) même en mode IBKR — le live IBKR
     # alimente l'overlay /quotes et les options. On affiche la vraie chaîne.
     scan_src = st.get('source')
+    #  « temps réel » n'est écrit que sur PREUVE de socket (`ibkr_state.sync`
+    #  pose `ibkr_live` quand un tick récent arrive en type 1) — plus jamais
+    #  depuis le seul drapeau de configuration `ibkr_enabled`.
+    ibkr_live = bool(st.get('ibkr_live'))
     src = ('démo (synthétique)' if _CFG['demo']
-           else ('scan %s + cotations IBKR temps réel' % scan_src) if (_CFG['ibkr_enabled'] and scan_src and scan_src != 'demo')
-           else 'IBKR live (TWS)' if _CFG['ibkr_enabled'] else 'yfinance (delayed ~15 min)')
+           else ('scan %s + cotations IBKR temps réel' % scan_src) if (ibkr_live and scan_src and scan_src != 'demo')
+           else ('scan %s (IBKR configuré, socket sans tick récent)' % scan_src) if (_CFG['ibkr_enabled'] and scan_src and scan_src != 'demo')
+           else 'IBKR configuré — aucune cotation reçue' if _CFG['ibkr_enabled'] else 'yfinance (delayed ~15 min)')
     sources = {
         'prices': src, 'options': ('démo' if _CFG['demo'] else 'chaînes IBKR/yfinance'),
         'companies': 'yfinance + cache hebdo',
@@ -197,7 +233,8 @@ def mode():
         return 'offline'
     if _CFG['demo']:
         return 'demo'
-    return 'live' if _CFG['ibkr_enabled'] else 'delayed'
+    #  Preuve de socket, pas configuration : sans tick récent, c'est du différé.
+    return 'live' if (_CFG['ibkr_enabled'] and st.get('ibkr_live')) else 'delayed'
 
 
 def status():
@@ -229,12 +266,38 @@ def refresh(domains=None):
     recommandations → analyses (brief/comité recalculés à la lecture).
     Les domaines à boucle propre (options réelles, news, calendrier) se
     resynchronisent à leur prochain cycle — le rapport le dit clairement.
+
+    ## Ce que ce rapport n'a plus le droit d'affirmer (mesuré le 6 sept. 2026)
+
+    Le rapport annonçait une action, jamais un fait. Sur un processus où
+    `configure(rescan_event=None)` — aucune boucle de scan câblée :
+
+    ```text
+    kicked = False                      <- RIEN n'a été déclenché
+    prices   → « relancé — recalcul complet en cours (≈10-30 s) »
+    weekly   → « relancé — recalcul complet en cours (≈10-30 s) »
+    ai       → « relancé — recalcul complet en cours (≈10-30 s) »
+    news     → « cycle forcé — nouvelles fraîches sous ≈60 s »
+    calendar → « cycle forcé — la boucle earnings se réveille immédiatement »
+    ```
+
+    Trois promesses de recalcul « en cours » sans exécutant, et deux cycles
+    « forcés » vers des boucles dont rien n'atteste l'existence : poser un
+    `threading.Event` réussit toujours, y compris quand personne ne l'attend.
+    C'est l'invariant 6 — une capacité sans exécuteur réel se nomme, elle ne se
+    déguise pas en automatisation en attente.
+
+    Chaque ligne porte donc `executant`, et la phrase suit la mesure :
+    `evenement_de_scan` (l'objet est câblé), `boucle_a_l_ecoute` (une boucle a
+    signalé son attente via `wait_force`), `aucun_executant_observe`, `demo`
+    ou `non_applicable`.
     """
     asked = [d for d in (domains or ['all']) if d]
     all_ = 'all' in asked
     doms = _domains()
     lines = []
     kicked = False
+    scan_cable = _CFG['rescan_event'] is not None
     for k, d in doms.items():
         if not all_ and k not in asked:
             continue
@@ -245,27 +308,38 @@ def refresh(domains=None):
                 ev.set()
                 kicked = True
         if k in ('prices', 'ai', 'weekly'):
-            action = 'relancé — recalcul complet en cours (≈10-30 s)'
+            executant = 'evenement_de_scan' if scan_cable else 'aucun_executant_observe'
+            action = ('relancé — recalcul complet en cours (≈10-30 s)' if scan_cable
+                      else 'NON_IMPLÉMENTÉ ici — aucune boucle de scan n\'est câblée '
+                           'dans ce processus : rien n\'a été relancé')
         elif k == 'options':
+            executant = ('demo' if _CFG['demo']
+                         else 'boucle_a_l_ecoute' if boucle_a_l_ecoute('options')
+                         else 'aucun_executant_observe')
             action = ('relancé avec le scan (démo)' if _CFG['demo']
                       else 'planifié au prochain cycle options (≤5 min, chaînes réelles)')
-        elif k == 'news':
+        elif k in ('news', 'calendar'):
             if _CFG['demo']:
-                action = 'indisponible en démo (aucun réseau)'
+                executant, action = 'demo', 'indisponible en démo (aucun réseau)'
             else:
-                force_event('news').set()
-                action = 'cycle forcé — nouvelles fraîches sous ≈60 s'
-        elif k == 'calendar':
-            if _CFG['demo']:
-                action = 'indisponible en démo (aucun réseau)'
-            else:
-                force_event('calendar').set()
-                action = 'cycle forcé — la boucle earnings se réveille immédiatement'
+                force_event(k).set()
+                ecoute = boucle_a_l_ecoute(k)
+                executant = 'boucle_a_l_ecoute' if ecoute else 'aucun_executant_observe'
+                if ecoute:
+                    action = ('cycle forcé — nouvelles fraîches sous ≈60 s' if k == 'news'
+                              else 'cycle forcé — la boucle earnings se réveille immédiatement')
+                else:
+                    #  Le signal EST posé (c'est mesuré) ; ce qui ne l'est pas,
+                    #  c'est qu'un exécutant le consomme. On dit les deux.
+                    action = ('signal posé, mais aucune boucle %s n\'a signalé '
+                              'qu\'elle écoute dans ce processus : rien ne sera '
+                              'forcé tant qu\'elle ne tourne pas' % k)
         else:
+            executant = 'non_applicable'
             action = 'cache hebdo — se régénère à l\'ouverture des fiches'
         lines.append({'domain': k, 'icon': d['icon'], 'label': d['label'],
                       'count': d['count'], 'before': before, 'action': action,
-                      'state': d['state']})
+                      'state': d['state'], 'executant': executant})
     _LAST_REPORT.update({'ts': round(time.time()), 'requested': asked, 'lines': lines})
     return {'ok': True, 'kicked': kicked, 'requested': asked, 'report': _LAST_REPORT}
 
@@ -276,4 +350,4 @@ def report():
 
 
 __all__ = ['configure', 'status', 'refresh', 'report', 'mode', 'calculate_freshness',
-           'force_event', 'wait_force']
+           'force_event', 'wait_force', 'boucle_a_l_ecoute']

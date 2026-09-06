@@ -287,8 +287,20 @@ def expected_value(d, p_win):
         loss = (entry - stop) / entry * 100
         p = max(0.0, min(1.0, _f(p_win, 0.5)))
         ev = p * gain - (1 - p) * loss
+        #  `rr` ici est une TAUTOLOGIE, pas une mesure du titre : le plan pose
+        #  `tp2 = entrée + 2 × risque` (analysis.py:264), donc `gain / loss` vaut
+        #  2.0 par construction. Mesuré le 6 sept. 2026 sur /api/vertex/<sym>
+        #  (5003) : `ev.rr = 2.0` sur 8/8 titres (AAPL MSFT NVDA TSLA AMD META
+        #  GOOGL AMZN), pendant que le R:R réellement mesuré de ces mêmes titres
+        #  (`plan['rr_res']`, vers la résistance) allait de 0.2 à 2.3. Le chiffre
+        #  reste servi tel quel — il décrit fidèlement le couple gain/perte de CE
+        #  calcul d'espérance — mais il porte désormais sa base, pour qu'aucune
+        #  lecture n'en fasse le rapport gain/risque du dossier.
         return {'gain_pct': round(gain, 1), 'loss_pct': round(loss, 1),
                 'ev_pct': round(ev, 2), 'rr': round(gain / loss, 1) if loss > 0 else None,
+                'rr_basis': 'TP2/stop du plan — constant par construction '
+                            '(tp2 = entrée + 2 × risque) ; le R:R mesuré du '
+                            'dossier est plan.rr_res',
                 'positive': ev > 0}
     except Exception:
         return None

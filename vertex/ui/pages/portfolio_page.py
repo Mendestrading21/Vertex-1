@@ -100,19 +100,69 @@ async function quotesFor(pos){
     const r=await fetch('/api/pos-quotes',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({positions:body})});
     const d=await r.json();window.__pfLive=!!d.live;
+    /* `fallback_used` est servi par /api/pos-quotes et n'était lu NULLE PART
+       (constat 27) : le repli ACTION ne pose pas `delayed` sur la cote, si
+       bien qu'un portefeuille valorisé au prix de scan s'annonçait
+       « marques live/desk ». Un témoin de plus, aucun calcul de plus. */
+    window.__pfFallback=!!d.fallback_used;
     //  L'instant ou la donnee EST ARRIVEE, pas celui ou on la dessine.
     //  Les pieds de carte affichaient `Date.now()` : ils promettaient
     //  « mis a jour maintenant » a chaque re-rendu, y compris dix minutes
     //  plus tard sur une charge qui n'avait pas bouge. Un age faux est
     //  pire qu'un age absent — il empeche de se mefier.
-    window.__pfTs=(d.ts!=null?d.ts:Date.now());
+    window.__pfTs=(d.ts!=null?d.ts:null);
     const res=d.results||{};const byId={};
     pos.forEach(t=>{const key=[String(t.sym).toUpperCase(),t.exp||'',
       (t.strike!==null&&t.strike!==undefined)?t.strike:'',
       (t.right||'').toUpperCase()].join('|');
       if(res[key])byId[t.id]=res[key];});
     return byId;
-  }catch(e){return{};}
+  }catch(e){
+    /* Rien mesuré : on efface les témoins au lieu de laisser ceux de l'appel
+       précédent parler pour celui-ci (un état « live » périmé est un état faux).
+       `__pfTs` faisait exception et le commentaire mentait donc sur lui-même :
+       mesure du 06/09/2026 — après un /api/pos-quotes en échec, les neuf pieds
+       du Portefeuille affichaient « Il y a N min », l'âge de la charge
+       PRÉCÉDENTE, juste au-dessus de « provenance des marques non mesurée ».
+       Un âge périmé est un âge faux : il éteint la méfiance au moment précis
+       où elle est justifiée. Les trois témoins tombent ensemble. */
+    window.__pfLive=null;window.__pfFallback=null;window.__pfTs=null;return{};}
+}
+/* Cause de l'ABSENCE de marque — mesurée, jamais devinée.
+   Constat 25 du 06/09/2026 : la tuile P&L écrivait « IBKR hors ligne » en dur
+   dans la branche `pl===null`, sans jamais tester l'état du courtier. Repro
+   avec socket vivante (`live:true`, `ibkr_configure:true`, contrats absents du
+   board) : l'écran envoyait vérifier TWS alors que la vraie cause était
+   « contrat non coté ». `window.__pfLive` est posé par quotesFor() AVANT tout
+   rendu ; `null` = non mesuré, et on se tait alors sur le courtier. */
+function pfCauseMarques(sansMarque){
+  /* `sansMarque===0` n'affirme plus « marques indisponibles » : les quatre
+     appelants ne passent 0 que dans des cas où la cause est AUTRE (aucune
+     position déclarée, module graphique absent), et la phrase désignait alors
+     une panne de cotation qui n'existait pas. Branche gardée — elle ne ment
+     plus, elle avoue. */
+  const base=sansMarque>0?(sansMarque+' position(s) sans marque'):'cause non mesurée';
+  return base+(window.__pfLive===false?' · IBKR hors ligne':'');
+}
+/* ── PROVENANCE ET MODE DES MARQUES : une seule autorité pour la page ──────
+   Correctif du constat 27, second tour. `fallback_used` était bien LU (posé par
+   quotesFor) mais consommé à DEUX endroits sur dix-sept ; les quinze autres
+   pieds de carte lisaient encore le seul témoin `live` pour choisir à la fois
+   leur étiquette de source et leur mode. Or /api/pos-quotes peut répondre
+   `live:true` ET `fallback_used:true` en même temps (routes/desk.py :
+   `fallback_used = bool(combles)`, combles = les ACTIONS comblées au prix de
+   scan) : ces quinze pieds annonçaient « IBKR/desk · Live » au-dessus de prix
+   de scan. `__pfLive===null` = jamais mesuré (fetch en échec) : on ne nomme
+   alors ni source ni mode — updateIndicator n'écrit aucun mot pour ''. */
+function pfSourceMarques(){
+  if(window.__pfLive===null||window.__pfLive===undefined)return 'provenance des marques non mesurée';
+  if(window.__pfFallback===true)return window.__pfLive===true?'IBKR/desk · repli scan utilisé':'desk (repli)';
+  return window.__pfLive===true?'IBKR/desk':'desk (repli)';
+}
+function pfModeMarques(){
+  if(window.__pfLive===null||window.__pfLive===undefined)return '';
+  if(window.__pfFallback===true)return 'fallback';
+  return window.__pfLive===true?'live':'fallback';
 }
 function enrich(pos,quotes){
   /* Schéma desk : t.cost = TOTAL investi. Cotes serveur : spot (actions,
@@ -130,8 +180,165 @@ function enrich(pos,quotes){
     const value=mark!==null?(isOpt?mark*100*t.qty:mark*t.qty):null;
     const invested=t.cost||0;
     const pl=value!==null&&invested?((value-invested)/invested*100):null;
-    return Object.assign({},t,{mark,underSpot,value,invested,pl,delayed:!!q.delayed});
+    /* P&L latent ABSOLU : la carte « Contribution » l'attendait (t.plAbs) et
+       personne ne le produisait — elle restait vide même avec des marques. */
+    const plAbs=value!==null?(value-invested):null;
+    /* `q.delayed` seul ratait le repli ACTION : celui-ci ne pose pas ce drapeau,
+       il pose `mode:'DELAYED'` et `fallback_used:true` (cotation_unifiee
+       .en_charge_client). Le différé redevient donc lisible POSITION PAR
+       POSITION — le témoin de carte `__pfFallback` ne disait, lui, que « au
+       moins une ». Règle partagée avec le Briefing : VX.quotes.differee. */
+    return Object.assign({},t,{mark,underSpot,value,invested,pl,plAbs,delayed:VX.quotes.differee(q)});
   });
+}
+/* ── DEUX TIRETS MUETS, MESURÉS LE 06/09/2026 ─────────────────────────────
+   Les deux KPI ci-dessous rendaient « — » sans jamais dire POURQUOI, si bien
+   qu'« aucun risque » et « je ne sais pas » s'écrivaient pareil. Les deux
+   fonctions sont PURES (aucun accès réseau, aucun DOM) : le banc les exécute
+   avec des entrées synthétiques et prouve chaque branche.
+
+   1. Risque événementiel (/portfolio?view=options). Le test lisait
+      `t.entrySnap.earnings_dte` — un champ qu'AUCUN producteur n'écrit : le
+      formulaire de déclaration pose `entrySnap {stop, tgt, date}`
+      (vx-entities.js:545) et rien d'autre. Le KPI valait donc `false` par
+      construction et affichait « — » sur 100 % des portefeuilles, avec un
+      sous-titre « earnings par position ci-dessous » qui promettait une
+      colonne absente du tableau (en-têtes mesurés : Contrat, Qté, Coût,
+      Marque, P&L, DTE, Stop sous-jacent).
+
+      CONTRÔLE ADVERSE DU 06/09/2026 — la première réparation a remplacé ce
+      champ mort par une LECTURE de /api/positions/state (`days_to_earnings`),
+      supposée servir la date. Mesure : elle ne la sert pas pour un CONTRAT.
+      `days_to_earnings` naît à `None` dans models.option_position (ligne 216)
+      et n'a qu'un seul écrivain dans tout le dépôt — calculator.py ligne 50,
+      À L'INTÉRIEUR de `enrich_stock` (lignes 15-53) ; `enrich_option`
+      (111-268) ne l'écrit jamais. Mesuré en appelant `recalculate_all` sur un
+      desk AAPL {1 CALL + 10 actions} avec un scan qui publie
+      `earnings_dte: 5` : l'ACTION reçoit `days_to_earnings 5`, le CONTRAT
+      reçoit `None`. Sur l'instance QA, 2 contrats sur 2 : `None`.
+      Le champ mort avait donc été remplacé par une lecture morte.
+
+      Et cette lecture n'était pas gratuite : `/api/positions/state` fait
+      coter TOUT le desk par le worker `posq` (positions_api.py `_quotes`,
+      `timeout=45`), sur un panier DIFFÉRENT de celui de /api/pos-quotes déjà
+      demandé ici — donc hors du memo de 15 s, donc un SECOND aller-retour
+      courtier ajouté au rendu de cette vue. Le « ~10 ms » certifié par la
+      première réparation a été relevé sous NO_IBKR=1, c'est-à-dire dans la
+      seule configuration où `_quotes` rend `{}` d'emblée (le fichier le dit
+      lui-même, positions_api.py lignes 103-108) ; le coût mesuré par ce même
+      fichier avec IBKR actif est « 27 s puis 19 s sur une seule page ».
+      L'aller-retour est donc retiré, et la capacité nommée pour ce qu'elle
+      est : NON_IMPLÉMENTÉE côté producteur.
+
+   2. Bêta (/portfolio?view=risk). `risk.beta` valait `null` et le KPI rendait
+      « — · pondéré ». La MÊME réponse /api/portfolio/team sert pourtant
+      `risk.beta_coverage` — mesuré ce jour :
+      {known_positions:0, total_positions:1, coverage_pct:0.0,
+       missing_symbols:['KO'], partial:true} — que la page n'a jamais lue.
+      Un bêta absent parce que le titre n'en déclare pas n'est pas un bêta
+      absent parce qu'aucune position n'est déclarée.
+
+   Aucun chiffre n'est inventé : ces fonctions ne font que NOMMER l'état de la
+   donnée servie. */
+
+/* Chevauchement résultats × durée de vie du contrat. `contrats` : liste de
+   {dte, earningsDte} déjà extraite du serveur (aucune estimation locale).
+   Convention alignée sur engines/earnings_option_overlap : des résultats
+   tombent dans la vie du contrat si earningsDte <= dte. */
+function pfEtatEvenementiel(contrats){
+  const list=Array.isArray(contrats)?contrats:[];
+  if(!list.length)return{valeur:'n/d',sous:'aucun contrat ouvert',cls:'vx-muted'};
+  /* Le producteur ne publie AUCUNE date de résultats pour un contrat (mesuré :
+     `enrich_option` n'écrit jamais `days_to_earnings`). « Le calendrier n'est
+     pas encore arrivé » serait une automatisation en attente ; ce n'en est pas
+     une, c'est une capacité qui n'existe pas. */
+  if(list.some(c=>c&&c.nonPublie))
+    return{valeur:'NON_IMPLÉMENTÉ',
+           sous:`aucune date de résultats publiée par contrat (${list.length} ouvert(s))`,
+           cls:'vx-muted'};
+  if(list.some(c=>c&&c.indisponible))
+    return{valeur:'non mesuré',sous:'état des positions injoignable — échéances non lues',cls:'vx-muted'};
+  const connus=list.filter(c=>c&&c.earningsDte!=null);
+  const inconnus=list.length-connus.length;
+  const manque=inconnus?` · ${inconnus} contrat(s) sans date de résultats`:'';
+  if(!connus.length)
+    return{valeur:'date inconnue',
+           sous:`calendrier de résultats non servi pour ${list.length} contrat(s)`,
+           cls:'vx-muted'};
+  const couvrants=connus.filter(c=>c.dte!=null&&c.earningsDte<=c.dte);
+  if(couvrants.length){
+    const plus=Math.min.apply(null,couvrants.map(c=>c.earningsDte));
+    return{valeur:'à vérifier',
+           sous:`${couvrants.length} contrat(s) couvrant des résultats · au plus tôt dans ${plus} j${manque}`,
+           cls:'vx-warn'};
+  }
+  return{valeur:'aucun chevauchement',
+         sous:`résultats connus hors de la vie des contrats${manque}`,
+         cls:'vx-muted'};
+}
+
+/* HHI : même faute que le Bêta, mesurée le 06/09/2026 sur une instance QA
+   dont le compartiment actions est vide (`weights` = {KO: 0.0, _CASH: 100.0},
+   `invested_pct` 0.0). Le moteur rend alors `hhi: null` — et le KPI affichait
+   « — » SOUS un sous-titre qui décrit la base du calcul (« compartiment
+   actions, poids renormalisés à 100 % »), c'est-à-dire qui affirme une
+   méthode pour un calcul qui n'a pas eu lieu. La base n'a de sens qu'avec un
+   indice ; sans lui, c'est la CAUSE qu'il faut servir. */
+function pfEtatHhi(hhi,base,poids){
+  if(hhi!=null)
+    return{valeur:hhi,sous:base?('indice · '+base):'indice · base non servie'};
+  const p=poids||{};
+  const actions=Object.keys(p).filter(k=>k!=='_CASH');
+  const investies=actions.filter(k=>+p[k]>0);
+  if(!actions.length)
+    return{valeur:'n/d',sous:'aucune position action déclarée — indice non défini'};
+  if(!investies.length)
+    return{valeur:'n/d',
+           sous:`aucune position action valorisée (${actions.length} titre(s) à poids nul) — indice non défini`};
+  return{valeur:'n/d',sous:'indice non servi par le moteur de risque'};
+}
+
+/* Drawdown portefeuille — MÊME FAUTE, MÊME INSTRUCTION, laissée intacte par la
+   première réparation : `_rk('Drawdown', … 'n/d', 'pic')`. Le sous-titre récite
+   la BASE d'un calcul qui n'a pas lieu, exactement le défaut nommé pour le HHI
+   deux lignes plus haut.
+
+   Mesuré le 06/09/2026 sur le payload EXACT que cette page envoie
+   (`{positions, option_positions, cash, simulated}`) : la réponse rend
+   `drawdown_pct: null`. Ce n'est pas une donnée en retard : la page n'envoie
+   JAMAIS `peak_equity`, et `PortfolioSnapshot.drawdown_pct` (models.py ligne
+   66-70) rend None sans pic. L'absence est donc structurelle et à 100 % des
+   rendus — et sa cause est connue de l'appelant lui-même, qui sait ce qu'il a
+   transmis. `recalculator.py` la nomme déjà côté serveur (« trésorerie et pic
+   d'équité non déclarés ») ; l'écran, lui, disait « pic ». */
+function pfEtatDrawdown(dd,picTransmis){
+  if(dd!=null)return{valeur:dd+' %',sous:'depuis le pic d’équité déclaré',cls:'vx-muted'};
+  if(!picTransmis)
+    return{valeur:'n/d',
+           sous:'pic d’équité non déclaré — le drawdown portefeuille n’est pas évaluable',
+           cls:'vx-muted'};
+  return{valeur:'n/d',sous:'drawdown non servi par le moteur de risque',cls:'vx-muted'};
+}
+
+/* Bêta pondéré : la valeur ET sa couverture, toutes deux servies par
+   risk_engine.portfolio_risk. */
+function pfEtatBeta(beta,couverture){
+  const c=couverture||null;
+  if(beta!=null){
+    if(c&&c.partial&&(c.missing_symbols||[]).length)
+      return{valeur:beta,
+             sous:`pondéré · partiel : ${c.known_positions}/${c.total_positions} titre(s) — sans bêta : ${(c.missing_symbols||[]).join(', ')}`,
+             cls:'vx-warn'};
+    return{valeur:beta,
+           sous:c?`pondéré · ${c.known_positions}/${c.total_positions} titre(s)`:'pondéré',
+           cls:'vx-muted'};
+  }
+  if(!c)return{valeur:'n/d',sous:'couverture bêta non servie par le moteur',cls:'vx-muted'};
+  if(!c.total_positions)
+    return{valeur:'n/d',sous:'aucune position action déclarée',cls:'vx-muted'};
+  return{valeur:'n/d',
+         sous:`incalculable — bêta non déclaré pour ${(c.missing_symbols||[]).join(', ')||c.total_positions+' titre(s)'}`,
+         cls:'vx-muted'};
 }
 /* Trois conventions coexistent chez le courtier lui-meme et ne donnent pas le
    meme chiffre. Le libelle dit LAQUELLE a servi — sans lui, un prix affiche est
@@ -252,8 +459,8 @@ function openOptionDrawer(t){
     +'</div>'+marqueNote(t)
     +'<div class="vx-card-footer">'
     +VX.updateIndicator(window.__pfTs||null,
-        window.__pfLive?'IBKR/desk':'desk (repli)',
-        window.__pfLive?'live':'fallback')
+        pfSourceMarques(),
+        pfModeMarques())
     /*  Apostrophe française dans une chaîne JS : le piège du dépôt. On écrit
         « aucun ordre préparé » plutôt que « aucune préparation d'ordre » —
         contourner vaut mieux qu'échapper, un échappement se reperd. */
@@ -301,9 +508,27 @@ function corrHeatmap(hostId,corr){
   const el=$(hostId);if(!el)return;
   const syms=(corr&&corr.symbols_covered)||[];const pairs=(corr&&corr.pairs)||{};
   if(syms.length<2||!Object.keys(pairs).length){
+    /* PROMESSE MENSONGÈRE, mesurée le 06/09/2026 (constat 28 A). La carte
+       écrivait en dur « … nécessitent un historique de prix (≥ 30 séances par
+       titre, disponible avec le flux live) » et n'ouvrait JAMAIS `corr.reason`,
+       que les deux routes servent pourtant :
+         · /api/portfolio/team → « NON_IMPLÉMENTÉ sur /api/portfolio/team —
+           cette route ne fournit aucune série de rendements au moteur ; les
+           corrélations mesurées sont servies par /api/portfolio/context (vue
+           Allocation) » ;
+         · /api/portfolio/context → « séries datées insuffisantes pour au moins
+           deux positions ».
+       Aucune des deux causes n'est réparée par « le flux live » : la première
+       est une capacité non branchée sur la route, la seconde un manque
+       d'historique daté. La phrase envoyait donc le lecteur ouvrir TWS pour
+       débloquer une carte que TWS ne débloque pas (invariant 8). La cause
+       affichée est désormais celle que le moteur MESURE ; sans `reason` servi,
+       on dit qu'aucune cause n'a été servie plutôt que d'en fabriquer une. */
+    const cause=(corr&&corr.reason)?String(corr.reason)
+      :'cause non servie par la route — corrélations indisponibles';
     el.className='vx-col-12';
     el.innerHTML='<div class="vx-card"><div class="vx-card-header"><span class="vx-card-title">Corrélations du portefeuille</span></div>'
-      +VX.states.empty('Corrélations indisponibles — nécessitent un historique de prix (≥ 30 séances par titre, disponible avec le flux live).')+'</div>';
+      +VX.states.empty('Corrélations indisponibles — '+esc(cause))+'</div>';
     return;
   }
   const raw=(a,b)=>a===b?1:((pairs[a+'/'+b]!=null)?pairs[a+'/'+b]:(pairs[b+'/'+a]!=null?pairs[b+'/'+a]:null));
@@ -313,7 +538,23 @@ function corrHeatmap(hostId,corr){
   VXCharts.heatmapCard(hostId,{title:'Corrélations du portefeuille',unit:'coefficient',
     question:'La diversification est-elle réelle ou illusoire ?',
     conclusion:(corr.average!=null?('corrélation moyenne '+(+corr.average).toFixed(2)):'')+(corr.warning?' — '+corr.warning:''),
-    columns:syms,rows:rows,min:-1,max:1,source:('risk_engine · rendements '+(window.__pfLive?'réels':'de repli')),timestamp:window.__pfTs||null,mode:(window.__pfLive?'live':'fallback'),
+    /* La matrice ne vient PAS des cotations de position : risk_engine la calcule
+       sur l'historique de clôtures du scan (/api/risk → portfolio_risk.build sur
+       scan_state['detail']). Le libellé « rendements réels / de repli » et le
+       mode se déduisaient pourtant de `window.__pfLive`, un témoin de socket
+       courtier qui ne dit rien de cet historique : une corrélation sur clôtures
+       ne devient pas « Live » parce que TWS est ouvert. */
+    /* HORODATAGE : `__pfTs` date la charge /api/pos-quotes, pas cette matrice.
+       Mesuré le 06/09/2026 sur les deux appelants : /api/portfolio/team rend
+       `risk.as_of` VIDE (le snapshot construit par la route n'en porte pas) et
+       /api/portfolio/context rend `as_of: null` — aucune des deux ne date ses
+       corrélations. Emprunter l'horloge des cotations donnait à une matrice
+       calculée sur des clôtures la fraîcheur d'un appel de cotation. Sans
+       horodatage servi, on l'avoue au lieu de l'emprunter. */
+    columns:syms,rows:rows,min:-1,max:1,
+    source:'risk_engine · corrélations sur l’historique du scan'
+      +((corr&&corr.as_of)?'':' · horodatage non servi'),
+    timestamp:(corr&&corr.as_of)||null,mode:(corr&&corr.as_of)?'delayed':'',
     limits:'corail = fortement corrélé (risque de concentration) · émeraude = décorrélé (diversification réelle)'});
 }
 /* Composition du capital : Actions / Options / Cash en barre empilée + légende.
@@ -370,13 +611,32 @@ function renderSummary(rich){
   const tile=(label,val,sub,tone)=>`<div class="vx-stat" data-tone="${tone||''}">
     <div class="vx-stat-k">${label}</div><div class="vx-stat-v" style="font-size:19px">${val}</div>
     ${sub?`<div class="vx-stat-sub">${sub}</div>`:''}</div>`;
+  /* Trois causes DISTINCTES d'un P&L absent (invariant 5) : marque manquante,
+     coût déclaré nul, panne courtier. La ligne 382 les fusionnait toutes dans
+     « IBKR hors ligne » — un fait sur le courtier que la page n'avait jamais
+     mesuré. Vocabulaire déjà employé par pfCommandStrip (« marques indispo. »). */
+  const sansMarque=rich.length-marked.length;
+  /* `plSub` n'est LU que lorsque `pl===null` (tuile P&L latent). Or
+     `pl = value!==null && invested ? … : null` : avec sansMarque===0, `value`
+     n'est jamais nul, donc `pl===null` implique `!invested`. La troisième
+     branche (`pfCauseMarques(0)` → « marques indisponibles ») était donc
+     inatteignable, et elle aurait nommé une panne de cotation pour un
+     portefeuille au coût déclaré nul. Deux causes réelles, deux branches. */
+  const plSub=sansMarque>0?pfCauseMarques(sansMarque)
+             :'coût déclaré nul — aucun pourcentage calculable';
+  /* `delayed` seul ne suffit pas : le repli ACTION ne le porte pas (constat 27).
+     `window.__pfFallback` vient du `fallback_used` servi par la route. */
+  const differe=rich.some(t=>t.delayed)||window.__pfFallback===true;
+  const marqueLib=differe?'marques différées (scan)'
+                 :(window.__pfLive===true?'marques live/desk'
+                   :window.__pfLive===false?'marques desk — IBKR hors ligne':'marques de provenance non mesurée');
   host.innerHTML=`<div class="vx-card vx-col-12 vx-card--premium">
     <div class="vx-scorecard" style="grid-template-columns:${gauge?'auto minmax(0,1fr)':'minmax(0,1fr)'}">
       ${gauge?`<div class="vx-gaugecluster" style="flex-direction:column">${gauge}</div>`:''}
       <div class="vx-scorecard-side">
         <div class="vx-statrow">
-          ${tile('Valeur',value!==null?VX.fmt.price(value):VX.fmt.price(invested),value!==null?(rich.some(t=>t.delayed)?'marques différées (scan)':'marques live/desk'):'au coût (marques indisponibles)')}
-          ${tile('P&L latent',pl!==null?((pl>=0?'+':'')+VX.fmt.price(pl)):'n/d',pl!==null?VX.fmt.pct(pl/invested*100,1)+(rich.some(t=>t.delayed)?' · différé':''):'IBKR hors ligne',pl>0?'pos':pl<0?'neg':'')}
+          ${tile('Valeur',value!==null?VX.fmt.price(value):VX.fmt.price(invested),value!==null?marqueLib:'au coût ('+pfCauseMarques(sansMarque)+')')}
+          ${tile('P&L latent',pl!==null?((pl>=0?'+':'')+VX.fmt.price(pl)):'n/d',pl!==null?VX.fmt.pct(pl/invested*100,1)+(differe?' · différé':''):plSub,pl>0?'pos':pl<0?'neg':'')}
           ${tile('Équipe actions',stocks.length+' / 10',stocks.length>=10?'complet — remplacement obligatoire':'places disponibles')}
           ${tile('Options tactiques',opts.length+' / 3','CALLS '+opts.filter(t=>t.type==='CALL').length+' · PUTS '+opts.filter(t=>t.type==='PUT').length+' / 1 max')}
         </div>
@@ -397,12 +657,24 @@ async function pfCommandStrip(rich){
   const plPct=pl!=null&&invested?pl/invested*100:null;
   const winners=marked.filter(t=>t.pl>0).length,losers=marked.filter(t=>t.pl<0).length;
   const tone=(v)=>v>0?'pos':v<0?'neg':'';
+  /* SECOND SITE DU CONSTAT 25, sur la même page. La sous-ligne du P&L écrivait
+     « marques indispo. » dès que `plPct` était nul. Or
+     `plPct = pl!=null && invested ? … : null` et `pl = value!=null && invested
+     ? … : null` : avec `invested === 0` et TOUTES les positions marquées, la
+     bande annonçait une panne de cotation alors qu'aucune marque ne manquait.
+     C'est exactement le cas que `renderSummary` nomme « coût déclaré nul —
+     aucun pourcentage calculable » (l. 448) ; les deux causes se disent
+     désormais avec le même vocabulaire, ici comme là-bas. */
+  const sansMarque=rich.length-marked.length;
+  const plSub=plPct!=null?((plPct>0?'+':'')+VX.fmt.num(plPct,1)+' %')
+             :(sansMarque>0?pfCauseMarques(sansMarque)
+                           :'coût déclaré nul — aucun pourcentage calculable');
   let risk=null;try{const cmd=await VX.fetch('/api/command',{ttl:60000});risk=cmd&&cmd.risk;}catch(e){}
   const k=(label,val,sub,t)=>`<div class="vx-cmd-k" data-tone="${t||''}">
     <div class="vx-cmd-k-v">${val}</div><div class="vx-cmd-k-l">${label}</div>${sub?`<div class="vx-cmd-k-s">${sub}</div>`:''}</div>`;
   host.innerHTML=`<div class="vx-cmd-strip">
     ${k('Valeur',value!=null?VX.fmt.price(value)+' $':VX.fmt.price(invested)+' $',value!=null?'au marché':'au coût')}
-    ${k('P&L latent',pl!=null?((pl>0?'+':'')+VX.fmt.price(pl)+' $'):'n/d',plPct!=null?(plPct>0?'+':'')+VX.fmt.num(plPct,1)+' %':'marques indispo.',tone(pl))}
+    ${k('P&L latent',pl!=null?((pl>0?'+':'')+VX.fmt.price(pl)+' $'):'n/d',esc(plSub),tone(pl))}
     ${k('Gagnantes / perdantes',winners+' / '+losers,marked.length+' marquées',winners>=losers?'pos':'neg')}
     ${k('Capital engagé',VX.fmt.price(invested)+' $',rich.length+' position(s)')}
     ${k('Diversification',risk&&risk.diversification!=null?Math.round(risk.diversification)+' %':'—',risk&&risk.max_corr!=null?'corr. max '+VX.fmt.num(risk.max_corr,2):'',risk&&risk.diversification>=70?'pos':risk&&risk.diversification<45?'neg':'')}
@@ -475,7 +747,7 @@ async function renderTeam(){
   })();
   ($('pf-contrib-body')||{}).innerHTML=withVal.length
     ?divBars(withVal.map(t=>({name:(t.sym+(t.type!=='STK'?' '+t.type:'')),val:(t.value-t.invested)})),{fmt:_pfx})
-    :'<div class="vx-meta">Marques indisponibles (IBKR hors ligne) — aucun P&L affiché plutôt qu’un chiffre inventé.</div>';
+    :'<div class="vx-meta">'+pfCauseMarques(rich.filter(t=>t.value==null).length)+' — aucun P&L affiché plutôt qu’un chiffre inventé.</div>';
   ($('pf-team-cols')||{}).innerHTML=Object.entries(roles).map(([role,list])=>`
     <section class="vx-card vx-mb3" aria-label="${role}">
       <div class="vx-card-header"><span class="vx-card-title">${role}</span>
@@ -519,8 +791,8 @@ async function renderTeam(){
     VXCharts.treemap(el,{width:w,height:260,unit:'$ investi',
       /* La carte hôte pose déjà la question (« Où est concentré le capital,
          et qui gagne/perd ? ») : la redire ici la doublerait. */
-      source:window.__pfLive?'IBKR/desk':'desk (repli)',timestamp:window.__pfTs||null,
-      mode:window.__pfLive?'live':'fallback',
+      source:pfSourceMarques(),timestamp:window.__pfTs||null,
+      mode:pfModeMarques(),
       limits:'aire = capital engagé · couleur = P&L quand il est connu, sinon concentration (rouge > 25 %)',
       items:rich.map(t=>({label:t.sym,value:Math.max(1,t.value??t.invested??0),
         sub:(t.pl!=null?((t.pl>=0?'+':'')+VX.fmt.num(t.pl,1)+'%')
@@ -652,17 +924,29 @@ async function renderPositions(){
         </div></td></tr>`;}).join('')}</tbody></table></div>`
       :VX.states.empty('Aucune position '+g.toLowerCase()+'.')}
     </section>`).join('')
-    +`<div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,window.__pfLive?'IBKR/desk':'desk (repli)',window.__pfLive?'live':'fallback')}
+    +`<div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,pfSourceMarques(),pfModeMarques())}
       · portefeuille déclaré dans Vertex — IBKR ne sert qu'à coter · lecture seule — aucun ordre</div>`;
 }
 
 /* ═══ PERFORMANCE (LOT G — migrée depuis Journal, domicile unique) ═══ */
+function pfEquiteDerivee(closed){
+  const cl=(closed||[]).filter(t=>t&&t.closed&&isFinite(Number(t.cost))&&isFinite(Number(t.exit)))
+    .slice().sort((a,b)=>String(a.closed).localeCompare(String(b.closed)));
+  if(cl.length<2)return [];
+  const base=(E()&&E().capital&&E().capital())||0;
+  let cum=base;const eq=[];
+  cl.forEach(t=>{cum+=Number(t.exit)-Number(t.cost);eq.push({d:t.closed,v:Math.round(cum*100)/100});});
+  return eq;
+}
 function pfTrades(){return (E()?E().journal():[]).filter(e=>(e.result==='WIN'||e.result==='LOSS')&&isFinite(Number(e.pnl)));}
 async function renderPerformance(){
   const pos=E().positions();
   renderSummary(enrich(pos,await quotesFor(pos)));
-  const eq=(E()?E().equity():[])||[];
   const closed=(E()?E().closedPositions():[])||[];
+  /* Équité DÉRIVÉE des clôtures déclarées (exit − coût, cumulé, base = capital
+     déclaré) : le stock `myTradesEquity` n'est alimenté par personne, la courbe
+     restait vide à vie. Même règle que la page Performance. Arithmétique, réel. */
+  const eq=pfEquiteDerivee(closed);
   ($('pf-body')||{}).innerHTML=`
     <div class="vx-insight vx-page-lead vx-mb3" role="note"><b>Performance de portefeuille — domicile unique.</b>
       Courbe cumulée, drawdown, contribution et saisonnalité vivent ici (migrées depuis Journal).
@@ -688,14 +972,14 @@ async function renderPerformance(){
     VXCharts.equityCard('pf-perf-equity',{title:'Courbe d’équité (cumulée)',unit:'$',timeframe:eq.length+' points',
       question:'Le capital progresse-t-il régulièrement ?',
       conclusion:up?'Équité en progression sur la période.':'Équité en retrait sur la période.',
-      labels,values,height:240,source:'clôtures déclarées (myTradesEquity)',timestamp:window.__pfTs||null,mode:'delayed',
+      labels,values,height:240,source:'clôtures déclarées (cumul exit − coût)',timestamp:window.__pfTs||null,mode:'delayed',
       explain:{shows:'La série d’équité issue de tes clôtures de positions.',
         why:'Une méthode saine produit une pente régulière, pas des à-coups.',
         confirm:'Nouveaux plus hauts avec drawdowns contenus.',invalidate:'Série de plus bas d’équité.'}});
     VXCharts.drawdownCard('pf-perf-drawdown',{title:'Drawdown depuis les pics',unit:'%',
       question:'Les pertes de portefeuille restent-elles contrôlées ?',
       conclusion:'Dérivé arithmétiquement de la courbe d’équité.',
-      labels,values,height:240,source:'clôtures déclarées (myTradesEquity)',timestamp:window.__pfTs||null,mode:'delayed',
+      labels,values,height:240,source:'clôtures déclarées (cumul exit − coût)',timestamp:window.__pfTs||null,mode:'delayed',
       limits:'dérivé de la série déclarée — pas un indicateur de marché',
       explain:{shows:'L’écart en % entre l’équité et son dernier pic.',
         why:'La profondeur des drawdowns mesure la discipline de risque réelle.',
@@ -731,12 +1015,22 @@ async function renderPerformance(){
     VXCharts.card('pf-perf-contrib',{title:'Contribution au P&L (positions ouvertes)',unit:'$',
       question:'Qui porte le résultat latent ?',
       conclusion:withAbs[0].sym+' domine ('+((withAbs[0].plAbs>=0?'+':'')+VX.fmt.price(withAbs[0].plAbs))+').',
-      height:Math.max(160,Math.min(300,withAbs.length*30)),source:window.__pfLive?'IBKR/desk':'desk (repli)',
-      timestamp:window.__pfTs||null,mode:window.__pfLive?'live':'fallback',limits:'P&L latent absolu (valeur − coût)',
+      height:Math.max(160,Math.min(300,withAbs.length*30)),source:pfSourceMarques(),
+      timestamp:window.__pfTs||null,mode:pfModeMarques(),limits:'P&L latent absolu (valeur − coût)',
       render:(cv)=>VXCharts.bars(cv,withAbs.map(t=>t.sym),withAbs.map(t=>Math.round(t.plAbs)),
         {horizontal:true,colors:withAbs.map(t=>t.plAbs>=0?VXCharts.colors.positive:VXCharts.colors.negative),
          yFmt:(v)=>VX.fmt.price(v)})});
-  }else{emptyCard('pf-perf-contrib','Contribution indisponible — aucune marque (IBKR hors ligne).');}
+  }else{
+    /* Le seul appelant qui pouvait vraiment passer 0 à `pfCauseMarques` :
+       sans position déclarée (rich vide) ou sans module graphique chargé, le
+       compte de positions sans marque vaut 0 et la carte annonçait pourtant
+       « marques indisponibles » — une panne de cotation inventée pour un cas
+       qui n'en est pas une. Trois causes, trois phrases. */
+    const sansAbs=rich.filter(t=>t.plAbs==null).length;
+    emptyCard('pf-perf-contrib',!rich.length
+      ?'Contribution indisponible — aucune position ouverte déclarée.'
+      :(sansAbs?('Contribution indisponible — '+pfCauseMarques(sansAbs)+'.')
+              :'Contribution indisponible — module de graphiques non chargé.'));}
 }
 
 /* ═══ OPTIONS COMMAND CENTER (§19 — inchangé, refonte dédiée PR n°7) ═══ */
@@ -762,7 +1056,7 @@ async function renderOptions(){
   const dtes=rich.map(t=>t.exp?Math.round((new Date(t.exp)-Date.now())/86400000):null).filter(v=>v!==null);
   const dteAvg=dtes.length?Math.round(dtes.reduce((a,b)=>a+b,0)/dtes.length):null;
   const shortDte=rich.filter(t=>t.exp&&((new Date(t.exp)-Date.now())/86400000)<=7).length;
-  const H=(l,v,d,cls)=>`<div class="vx-card vx-card--compact vx-kpi" style="grid-column:span 3">
+  const H=(l,v,d,cls)=>`<div class="vx-card vx-card--compact vx-kpi vx-col-3">
     <span class="vx-kpi-label">${l}</span><span class="vx-kpi-value" style="font-size:20px">${v}</span>
     ${d?`<span class="vx-kpi-delta ${cls||'vx-muted'}">${d}</span>`:''}</div>`;
   /* Greeks RÉELS du broker (modelGreeks IBKR persistés) — jamais estimés. Jambe non cotée → n/d honnête. */
@@ -772,18 +1066,37 @@ async function renderOptions(){
   const gDelta=(og&&og.delta!=null)?((og.delta>0?'+':'')+VX.fmt.num(og.delta,0)):'n/d';
   const gTheta=(og&&og.theta!=null)?(VX.fmt.num(og.theta,0)+' $/j'):'n/d';
   const gVega=(og&&og.vega!=null)?('vega '+VX.fmt.num(og.vega,0)+' $/pt'):(og?'chaîne à charger':'IBKR requis');
+  /* Échéances de résultats : AUCUN aller-retour. Rien à lire — mesuré, cf. le
+     bloc « CONTRÔLE ADVERSE » plus haut : aucun producteur n'écrit
+     `days_to_earnings` sur un contrat, et la route qui le porterait fait coter
+     tout le desk par le worker `posq`. Le jour où `enrich_option` publiera la
+     date, le banc `test_le_desk_ne_publie_pas_la_date_de_resultats_d_un_contrat`
+     tombera : c'est là qu'il faudra rebrancher la lecture, et les branches
+     « à vérifier » / « aucun chevauchement » de la fonction, déjà écrites et
+     déjà gardées, redeviendront atteignables. */
+  const ev=pfEtatEvenementiel(rich.map(()=>({nonPublie:true})));
+  /* CONTAMINATION CROISÉE, mesurée : renderOptions appelle quotesFor(opts) PUIS
+     quotesFor(pos) — les deux écrivent les MÊMES globales, si bien que
+     `window.__pfFallback` reflétait ici le repli de TOUT le portefeuille. Une
+     action valorisée au prix de scan collait donc « · différé » au P&L des
+     OPTIONS, qui n'était pas concerné : le repli ACTION ne comble jamais un
+     contrat (routes/desk.py refuse d'en dériver le prix). Le témoin par
+     POSITION suffit — le repli OPTION, lui, pose `delayed` sur sa propre cote. */
+  const plOptSub=plTot!==null
+    ?VX.fmt.pct(plTot/engaged*100,1)+(rich.some(t=>t.delayed)?' · différé':'')
+    :pfCauseMarques(rich.length-marked.length);
   ($('pf-body')||{}).innerHTML=
     `<div class="vx-grid vx-mb3">
       ${H('CALLS ouverts',calls.length,'direction principale (~90 %)')}
       ${H('PUTS tactiques',puts.length+' / 1',puts.length>1?'PLAFOND DÉPASSÉ':'rares, jamais « parce que ça baisse »',puts.length>1?'vx-neg':'')}
       ${H('Capital engagé',VX.fmt.price(engaged),'coût total déclaré')}
-      ${H('P&L options',plTot!==null?VX.fmt.price(plTot):'n/d',plTot!==null?VX.fmt.pct(plTot/engaged*100,1)+(rich.some(t=>t.delayed)?' · différé':''):'marques indisponibles (IBKR hors ligne)',plTot>0?'vx-pos':plTot<0?'vx-neg':'vx-muted')}
+      ${H('P&L options',plTot!==null?VX.fmt.price(plTot):'n/d',plOptSub,plTot>0?'vx-pos':plTot<0?'vx-neg':'vx-muted')}
     </div>
     <div class="vx-grid vx-mb3">
       ${H('DTE moyen',dteAvg!==null?dteAvg+' j':'n/d','constitution : 60-270, préf. 90-210')}
       ${H('Delta total',gDelta,gCov,(og&&og.delta>0)?'vx-pos':(og&&og.delta<0)?'vx-neg':'')}
       ${H('Theta quotidien',gTheta,gVega,(og&&og.theta<0)?'vx-neg':'')}
-      ${H('Risque événementiel',rich.some(t=>t.entrySnap&&t.entrySnap.earnings_dte!=null)?'à vérifier':'—','earnings par position ci-dessous')}
+      ${H('Risque événementiel',ev.valeur,ev.sous,ev.cls)}
     </div>
     <section class="vx-card vx-mb3" aria-label="Allocation du capital options">
       <div class="vx-chart-head"><span class="vx-chart-title">Capital engagé par contrat</span>
@@ -798,6 +1111,13 @@ async function renderOptions(){
     <div class="vx-table-wrap vx-table-cards"><table class="vx-table"><thead><tr>
       <th>Contrat</th><th class="vx-num">Qté</th><th class="vx-num">Coût</th><th class="vx-num">Marque</th>
       <th class="vx-num">P&L</th><th class="vx-num">DTE</th><th>Stop sous-jacent</th><th></th></tr></thead><tbody>
+    ${/* STOP SOUS-JACENT : deux tirets muets relevés dans le DOM le 06/09/2026,
+         sur 2 lignes sur 2 — dans la colonne même dont l'en-tête a été lu plus
+         haut pour prouver qu'aucune colonne « earnings » n'existait. `VX.fmt.nd`
+         rend « — » sans cause, si bien qu'un stop NON DÉCLARÉ (le seul cas
+         possible ici : `option_position` ne lit que `entrySnap.stop`) s'écrit
+         comme une donnée perdue. Un stop manquant se corrige par une
+         déclaration ; encore faut-il que l'écran le demande. */''}
     ${rich.map(t=>{
       const dte=t.exp?Math.round((new Date(t.exp)-Date.now())/86400000):null;
       return `<tr>
@@ -808,20 +1128,22 @@ async function renderOptions(){
       <td data-label="Marque" class="vx-num">${t.mark!==null?VX.fmt.price(t.mark):'n/d'}${marqueNote(t)}</td>
       <td data-label="P&L" class="vx-num ${t.pl>0?'vx-pos':t.pl<0?'vx-neg':''}">${t.pl!==null?VX.fmt.pct(t.pl,1):'n/d'}</td>
       <td data-label="DTE" class="vx-num ${dte!==null&&dte<=7?'vx-warn':''}">${dte!==null?dte+' j':'—'}</td>
-      <td data-label="Stop">${VX.fmt.nd(t.entrySnap&&t.entrySnap.stop)}</td>
+      <td data-label="Stop">${(t.entrySnap&&t.entrySnap.stop!=null)
+        ?VX.fmt.nd(t.entrySnap.stop)
+        :'<span class="vx-muted">non déclaré</span>'}</td>
       <td><div class="vx-row-actions">
         <button class="vx-btn vx-btn-sm vx-btn-primary" data-opt-analyze="${t.id}">Analyser</button>
         <button class="vx-btn vx-btn-icon vx-btn-ghost" data-position-menu="${t.id}" aria-label="Actions position ${t.sym}">⋯</button>
       </div></td></tr>`;}).join('')}</tbody></table></div>
-    <div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,window.__pfLive?'IBKR/desk':'desk (repli)',window.__pfLive?'live':'fallback')}
+    <div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,pfSourceMarques(),pfModeMarques())}
       · Greeks agrégés affichés uniquement avec IBKR (jamais estimés en agrégat)</div></section>`;
   if(window.VXCharts&&VXCharts.treemap){
     const cc=VXCharts.colors;const el=document.getElementById('pf-opt-tree');const w=(el&&el.clientWidth)||900;
     VXCharts.treemap(el,{width:w,height:220,unit:'$ investi',
       /* Question déjà posée par la carte hôte : « Où est concentré le capital
          options ? » */
-      source:window.__pfLive?'IBKR/desk':'desk (repli)',timestamp:window.__pfTs||null,
-      mode:window.__pfLive?'live':'fallback',limits:'aire = prime engagée par contrat',
+      source:pfSourceMarques(),timestamp:window.__pfTs||null,
+      mode:pfModeMarques(),limits:'aire = prime engagée par contrat',
       items:rich.map(t=>({label:t.sym+' '+(t.strike||''),value:Math.max(1,t.invested||0),
         sub:(t.type==='PUT'?'PUT':'CALL')+(t.exp?' '+t.exp:''),
         color:(t.type==='PUT'?(cc.violet||'#9c79d0'):(cc.neutral||'#8f8a83'))})),
@@ -848,7 +1170,7 @@ function renderOptMix(rich){
       question:'Le portefeuille options est-il directionnel ?',
       conclusion:calls+' call(s) · '+puts+' put(s)',
       labels:['CALL','PUT'],values:[calls,puts],colors:['var(--vx-neutral)','var(--vx-option)'],height:200,
-      source:'positions déclarées',timestamp:window.__pfTs||null,mode:window.__pfLive?'live':'fallback'});
+      source:'positions déclarées',timestamp:window.__pfTs||null,mode:pfModeMarques()});
   }
   const dtes=rich.map(t=>({sym:t.sym,strike:t.strike,type:t.type,
       dte:t.exp?Math.round((new Date(t.exp)-Date.now())/86400000):null})).filter(x=>x.dte!=null)
@@ -910,7 +1232,7 @@ async function renderCombinedOptions(rich){
         <div class="vx-kv"><span class="k">Perte max</span><span class="v vx-mono vx-neg">${d.max_loss!=null?VX.fmt.price(d.max_loss):'—'}</span></div>
         <div class="vx-kv"><span class="k">Breakevens</span><span class="v vx-mono">${be}</span></div>
       </div>
-      <div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,window.__pfLive?'IBKR/desk':'desk (repli)',window.__pfLive?'live':'fallback')}
+      <div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,pfSourceMarques(),pfModeMarques())}
         · résumé d'exposition — le détail par contrat est dans Options</div>
     </section>`;
   }).join('');
@@ -923,6 +1245,34 @@ async function renderCombinedOptions(rich){
    la carte ne se peignait jamais. On retire donc une capacité déjà morte à
    l'écran, pas un affichage vivant. Le P&L affiché reste celui que Vertex
    calcule sur les positions déclarées, cotées par symbole. */
+
+/* PÉRIMÈTRE DU STRESS — servi, jamais peint jusqu'ici.
+   /api/portfolio/team rend `stress.coverage` {equity_basis, note, options_open,
+   options_in_equity, options_vega_known} et `stress.warnings` (liste). Mesure
+   du 06/09/2026 sur KO 88,07 $ + 25 000 $ de cash : coverage.note dit « base de
+   stress = positions valorisées + cash ; les options déclarées exigent marque
+   et greeks IBKR et restent hors base » et options_in_equity vaut false — deux
+   faits qui changent la lecture de CHAQUE pourcentage du tableau, et que
+   l'écran jetait. Un impact de -0,05 % calculé sur une base qui exclut les
+   options n'est pas le même chiffre selon qu'on le sait ou non.
+   Rien n'est recalculé ici : on peint les phrases du moteur. */
+function stressPerimetre(bloc){
+  const cov=(bloc&&bloc.coverage)||null;
+  const warns=(bloc&&bloc.warnings)||[];
+  if(!cov&&!warns.length)return '';
+  let txt='';
+  if(cov){
+    const bits=[];
+    if(cov.equity_basis)bits.push('base : '+cov.equity_basis);
+    if(typeof cov.options_open==='number')
+      bits.push(cov.options_open+' option(s) déclarée(s), '
+        +(cov.options_in_equity?'incluse(s) dans la base':'hors base de stress'));
+    if(cov.options_vega_known===false)bits.push('vega des options non mesuré');
+    txt=bits.join(' · ')+(cov.note?' — '+cov.note:'');
+  }
+  return (txt?`<div class="vx-meta vx-mt2">${esc(txt)}</div>`:'')
+    +(warns.length?`<div class="vx-meta vx-warn vx-mt1">${warns.map(esc).join(' · ')}</div>`:'');
+}
 
 /* ═══ RISQUE PRIORISÉ (LOT F — moteur risk_engine, positions réelles §26) ═══ */
 async function renderRisk(){
@@ -940,14 +1290,37 @@ async function renderRisk(){
     const r=await fetch('/api/portfolio/team',{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d=await r.json();
-    const risk=d.risk||{},guard=d.guard||{},stress=(d.stress||{}).scenarios||{};
+    const risk=d.risk||{},guard=d.guard||{},stressBloc=d.stress||{},stress=stressBloc.scenarios||{};
     const optGreeks={delta:risk.options_exposure&&risk.options_exposure.delta};
+    /* ── HHI : DEUX AUTORITÉS À L'ÉCRAN, mesurées le 06/09/2026 ─────────────
+       Le même mot « HHI » désigne deux grandeurs différentes sur deux vues du
+       MÊME portefeuille, avec deux barèmes opposés :
+         · ici (/api/portfolio/team → risk_engine) : base « compartiment
+           actions, poids renormalisés à 100 % — cash exclu », barème 33/66 sur
+           HHI×100 ;
+         · vue Allocation (/api/portfolio/context) : base « toutes les lignes
+           valorisées (actions, ETF et options au capital engagé) », barème
+           0,18 / 0,25.
+       Mesure de la contradiction : le nombre 0,30 se lit « bien dispersé » ici
+       et « concentré » là-bas. Et sur KO 88,07 $ + 25 000 $ de cash, `hhi`
+       vaut 1,0 — « très concentré » en rouge — alors que 0,35 % du capital est
+       investi : le rouge décrit un compartiment quasi vide.
+       Le serveur sert déjà la base (`hhi_basis`) et la part investie
+       (`invested_pct`) ; ni l'une ni l'autre n'était peinte. On ne touche NI
+       les seuils NI les nombres — la page peint ce que le moteur dit, elle
+       nomme seulement ce que son chiffre mesure. */
+    const hhiBase=risk.hhi_basis?String(risk.hhi_basis):'';
+    const hhiPart=(typeof risk.invested_pct==='number')
+      ?(VX.fmt.num(risk.invested_pct,2)+' % du capital investi')
+      :'part investie non servie';
+    const hhiPied=[hhiBase,hhiPart].filter(Boolean).join(' · ');
     ($('pf-body')||{}).innerHTML=`<div class="vx-grid vx-mb3">
       <section class="vx-card vx-col-4" aria-label="Concentration du risque">
         <div class="vx-card-header"><span class="vx-card-title">Concentration du risque</span>
           <span class="vx-chart-question">Le capital est-il trop concentré ?</span></div>
         <div id="pf-risk-gauge"><div class="vx-skeleton" style="height:118px"></div></div>
-        <div class="vx-card-footer"><span class="vx-meta">Indice HHI (0 = dispersé · 100 = tout sur un titre) — donnée réelle du moteur.</span></div>
+        <div class="vx-card-footer"><span class="vx-meta">Indice HHI (0 = dispersé · 100 = tout sur un titre) — donnée réelle du moteur.
+          Base : ${esc(hhiPied)}. La vue Allocation publie un HHI d&#8217;une AUTRE base (toutes les lignes valoris&eacute;es) : les deux nombres ne se comparent pas.</span></div>
       </section>
       <section class="vx-card vx-col-8" aria-label="Synthèse du risque">
         <div class="vx-card-header"><span class="vx-card-title">Synthèse du risque</span></div>
@@ -964,7 +1337,8 @@ async function renderRisk(){
         ${(guard.mandatory_reviews||[]).map(r=>`<div class="vx-meta">⚠ ${esc(r)}</div>`).join('')}</div>
       <div class="vx-card vx-col-4"><div class="vx-card-header"><span class="vx-card-title">Concentration</span></div>
         ${kv('Drawdown portefeuille',risk.drawdown_pct!==null&&risk.drawdown_pct!==undefined?risk.drawdown_pct+' %':'n/d (pic non renseigné)')}
-        ${kv('HHI',risk.hhi)}${kv('Bêta pondéré',risk.beta)}
+        ${kv('HHI',risk.hhi)}${hhiPied?`<div class="vx-meta" style="margin:-2px 0 6px">${esc(hhiPied)}</div>`:''}
+        ${kv('Bêta pondéré',risk.beta)}
         ${(function(){const ps=risk.per_stock_pl_pct||{};const ent=Object.keys(ps).map(k=>[k,ps[k]]).sort((a,b)=>a[1]-b[1]);
           if(!ent.length)return '';
           return '<div class="vx-mt2"><span class="vx-metric-k" style="display:block;margin-bottom:3px">P&amp;L par position (pire en tête)</span>'
@@ -998,8 +1372,9 @@ async function renderRisk(){
         ${Object.entries(stress).map(([k,v])=>`<tr><td>${k}</td>
           <td class="vx-num ${v.impact_pct<0?'vx-neg':''}">${v.impact_pct!==null&&v.impact_pct!==undefined?VX.fmt.pct(v.impact_pct,1):'non estimé'}</td>
           <td class="vx-meta">${esc(v.note||'')}</td></tr>`).join('')}</tbody></table></div>
-        <div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,'risk_engine (positions réelles)',window.__pfLive?'live':'fallback')}
-        ${(risk.warnings||[]).length?'· '+risk.warnings.length+' avertissement(s)':''}</div></section>
+        ${stressPerimetre(stressBloc)}
+        <div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,'risk_engine · horodatage des marques d’entrée',pfModeMarques())}
+        ${(risk.warnings||[]).length?'· '+risk.warnings.map(esc).join(' · '):''}</div></section>
       <div class="vx-col-12" id="pf-corr-heatmap"></div></div>`;
     /* Heatmap de corrélations RÉELLES entre les positions (risk_engine · rendements) :
        rouge = fortement corrélé (diversification illusoire), vert = décorrélé. Vide
@@ -1011,16 +1386,26 @@ async function renderRisk(){
       var _hhi=(risk.hhi!=null)?Math.round(risk.hhi*100):null;
       if(window.VXCharts&&VXCharts.gauge)VXCharts.gauge('pf-risk-gauge',{
         value:_hhi,min:0,max:100,unit:'',label:'Concentration',
-        reading:_hhi==null?'donnée indisponible':(_hhi>=66?'très concentré':_hhi>=33?'concentration modérée':'bien dispersé'),
+        /*  La lecture NOMME sa base : « très concentré » sur un compartiment
+            actions renormalisé à 100 % ne dit pas la même chose selon qu'il
+            pèse 0,35 % ou 95 % du capital. Le mot du barème est inchangé ; ce
+            qui s'y ajoute est SERVI (hhi_basis / invested_pct), pas déduit.  */
+        /*  `reading` est inséré tel quel dans le DOM ET dans un aria-label par
+            chart-core.js : la phrase vient du serveur, elle passe par esc().  */
+        reading:(_hhi==null?'donnée indisponible':(_hhi>=66?'très concentré':_hhi>=33?'concentration modérée':'bien dispersé'))
+          +(hhiPied?' — '+esc(hhiPied):''),
         bands:[{to:33,color:VXCharts.colors.positive},{to:66,color:VXCharts.colors.warning},{to:100,color:VXCharts.colors.negative}]});
       var _ws=Object.values(stress).map(function(v){return v&&v.impact_pct;}).filter(function(x){return typeof x==='number';});
       var _worst=_ws.length?Math.min.apply(null,_ws):null;
-      var _rk=function(l,v,d,cls){return '<div class="vx-card vx-card--compact vx-kpi" style="grid-column:span 3"><span class="vx-kpi-label">'+l+'</span><span class="vx-kpi-value" style="font-size:22px">'+(v==null?'—':v)+'</span>'+(d?'<span class="vx-kpi-delta '+(cls||'vx-muted')+'">'+d+'</span>':'')+'</div>';};
+      var _rk=function(l,v,d,cls){return '<div class="vx-card vx-card--compact vx-kpi vx-col-3"><span class="vx-kpi-label">'+l+'</span><span class="vx-kpi-value" style="font-size:22px">'+(v==null?'—':v)+'</span>'+(d?'<span class="vx-kpi-delta '+(cls||'vx-muted')+'">'+d+'</span>':'')+'</div>';};
       var _rh=$('pf-risk-kpis');
       if(_rh)_rh.innerHTML=
-        _rk('HHI',risk.hhi!=null?risk.hhi:'—','indice',(_hhi!=null&&_hhi>=66)?'vx-neg':'')
-        +_rk('Bêta',risk.beta!=null?risk.beta:'—','pondéré')
-        +_rk('Drawdown',(risk.drawdown_pct!=null)?(risk.drawdown_pct+' %'):'n/d','pic')
+        (function(){var h=pfEtatHhi(risk.hhi,risk.hhi_basis,risk.weights);
+            return _rk('HHI',h.valeur,esc(h.sous),(_hhi!=null&&_hhi>=66)?'vx-neg':'');})()
+        +(function(){var b=pfEtatBeta(risk.beta,risk.beta_coverage);
+            return _rk('Bêta',b.valeur,esc(b.sous),b.cls);})()
+        +(function(){var dw=pfEtatDrawdown(risk.drawdown_pct,payload.peak_equity!=null);
+            return _rk('Drawdown',dw.valeur,esc(dw.sous),dw.cls);})()
         +_rk('Pire scénario',_worst!=null?VX.fmt.pct(_worst,1):'—','stress',(_worst!=null&&_worst<0)?'vx-neg':'');
       /* Barres de poids par position (risk.weights réel + cash + surpondérations) —
          remplit la synthèse et rend la concentration lisible d'un coup d'œil. */
@@ -1103,7 +1488,18 @@ async function renderWatchlist(){
     <section class="vx-card vx-mb3"><div class="vx-card-header"><span class="vx-card-title">Suivis actifs (setups)</span>
       <span class="vx-chart-question">Stop · entrée · objectif — le plan de chaque setup, visuel</span></div>
       ${follows.length?follows.map(r=>{
-        const e=+r.entry_spot,s=+r.stop,t=+r.tgt;
+        /* `+null`, `+''` et `+false` valent 0, et `isFinite(0)` vaut true : la
+           garde laissait passer une ABSENCE et la barre dessinait un plan
+           « 0,00 STOP · 123,45 ENTRÉE · 0,00 OBJECTIF » — une perte de 100 %
+           présentée comme le plan de risque du setup. Mesuré le 06/09/2026 :
+           le bouton « Suivre → » d'Analyse crée un suivi sans aucun niveau
+           (vx-entities.js : entry_spot/stop/tgt = null par défaut), donc ce
+           rendu est le cas NOMINAL, pas un cas de bord. Coercition stricte :
+           une absence devient NaN, la garde tombe, et le repli honnête déjà
+           écrit plus bas (VX.fmt.nd → « — ») s'affiche. Un vrai 0 reste
+           affiché — absence et zéro redeviennent distincts (invariant 5). */
+        const fin=x=>(x===null||x===undefined||x===''||typeof x==='boolean')?NaN:+x;
+        const e=fin(r.entry_spot),s=fin(r.stop),t=fin(r.tgt);
         let range='';
         if([e,s,t].every(x=>isFinite(x))){
           const lo=Math.min(e,s,t),hi=Math.max(e,s,t),span=(hi-lo)||1,pad=span*.08,a=lo-pad,rng=(hi+pad*2)-a;
@@ -1115,10 +1511,17 @@ async function renderWatchlist(){
             <i class="rb-tick" data-kind="mean" style="left:${P(t)}%;background:var(--vx-positive)"></i><span class="rb-lab" data-kind="mean" style="left:${P(t)}%;color:var(--vx-positive)">${VX.fmt.price(t)}<span class="rb-lab-sub">objectif</span></span>
           </div>`;
         }
+        /* Le libellé de repli affirmait une CAUSE que la branche ne mesure pas :
+           elle se déclenche sur `[e,s,t].every(x=>!isFinite(x))`, ce qui couvre
+           aussi une valeur stockée non numérique (une chaîne non parsable donne
+           NaN sans passer par la garde null/''/booléen). « Aucun niveau saisi à
+           la création du suivi » était donc une hypothèse : vraie du cas nominal
+           (le bouton « Suivre → » crée entry_spot/stop/tgt à null), fausse d'un
+           suivi corrompu. La page dit ce qu'elle constate. */
         return `<div class="vx-flex" style="padding:9px 0;border-bottom:1px dashed var(--vx-border-soft);gap:12px;align-items:center">
         <button class="vx-btn vx-btn-sm vx-btn-ghost vx-ticker" data-open-analysis="${r.sym}">${r.sym}</button>
         <span class="vx-badge vx-badge-entity" data-kind="follow">${r.kind}</span>
-        ${range||`<span class="vx-grow vx-mono vx-meta">entrée ${VX.fmt.nd(r.entry_spot)} · stop ${VX.fmt.nd(r.stop)} · objectif ${VX.fmt.nd(r.tgt)}</span>`}
+        ${range||`<span class="vx-grow vx-mono vx-meta">${[e,s,t].every(x=>!isFinite(x))?'plan non défini — aucun niveau exploitable':`entrée ${VX.fmt.nd(r.entry_spot)} · stop ${VX.fmt.nd(r.stop)} · objectif ${VX.fmt.nd(r.tgt)}`}</span>`}
         <span class="vx-meta">depuis ${r.followed||'—'}</span>
         <button class="vx-btn vx-btn-sm vx-btn-danger" data-unfollow="${r.sym}">Retirer</button></div>`;}).join('')
         :VX.states.empty('Aucun suivi actif — créez un suivi depuis une analyse (entrée/stop/objectif).')}
@@ -1178,8 +1581,8 @@ async function renderStress(){
     host.innerHTML=tete+VX.states.empty(esc(d.reason||'aucune position chiffrable'))
       +(exclus?`<div class="vx-meta vx-mt2">${exclus} position(s) exclue(s) faute de prix reel`
         +(d.excluded_cost!=null?` · cout declare ${VX.fmt.price(d.excluded_cost)}`:'')+'</div>':'')
-      +`<div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,
-          'portfolio_stress',window.__pfLive?'live':'fallback')}</div>`;
+      +`<div class="vx-card-footer">${VX.updateIndicator(null,
+          'portfolio_stress · horodatage non servi par la route','')}</div>`;
     ($('pf-body')||{}).appendChild&&$('pf-body').appendChild(host);return;}
 
   const lignes=(d.positions||[]).map(x=>{
@@ -1198,16 +1601,40 @@ async function renderStress(){
     +`<div class="vx-meta vx-mt2">Couverture ${d.coverage_pct!=null?VX.fmt.pct(d.coverage_pct,0):'n/d'}`
     +((d.excluded||[]).length?` · ${(d.excluded||[]).length} position(s) hors calcul faute de prix reel`:'')
     +'</div>'
-    +`<div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,
-        'portfolio_stress · '+esc(d.generator||'moteur'),
-        window.__pfLive?'live':'fallback')} · lecture seule</div>`;
+    /* HORODATAGE : `window.__pfTs` est l'heure de la charge /api/pos-quotes.
+       Or cette carte lit /api/portfolio/stress, un GET SANS CORPS que la route
+       sert depuis le scan — elle ne consomme aucune des marques de pos-quotes.
+       Mesure du 06/09/2026 sur la charge servie : ses clés sont assumption,
+       coverage_pct, empty, excluded, excluded_cost, generator, narrative,
+       positions, reason, scenarios, stressed_value — aucun `as_of`, aucun `ts`.
+       Dater cette carte avec l'horloge d'une AUTRE route lui prêtait une
+       fraîcheur jamais mesurée (famille du constat 51). Sans horodatage servi,
+       `updateIndicator(null, …)` écrit « Âge inconnu » et n'affirme aucun mode :
+       une absence dite vaut mieux qu'un âge emprunté. */
+    +`<div class="vx-card-footer">${VX.updateIndicator(null,
+        'portfolio_stress · '+esc(d.generator||'moteur')+' · horodatage non servi par la route',
+        '')} · lecture seule</div>`;
   ($('pf-body')||{}).appendChild&&$('pf-body').appendChild(host);
 }
 
 /* Dependances cachees : ce que l'etiquette de secteur ne montre pas. */
+/* Panier = positions DÉCLARÉES (actions/ETF), envoyées explicitement au
+   moteur. Le GET de /api/risk mesure le panier du comité, pas le portefeuille :
+   c'était l'ancien défaut (§13 #7). Aucun chiffre n'est calculé ici. */
+function pfSymbolesDeclares(){
+  const pos=(window.VXEntities?VXEntities.positions():[])||[];
+  return [...new Set(pos.filter(p=>!p.type||p.type==='STK')
+    .map(p=>String(p.sym||'').toUpperCase()).filter(Boolean))];
+}
+async function pfRisqueDeclare(){
+  const r=await fetch('/api/risk',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({symbols:pfSymbolesDeclares()})});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  return r.json();
+}
 async function renderHiddenDeps(){
   let d=null,err=null;
-  try{d=await VX.fetch('/api/risk',{ttl:120000});}catch(e){err=e;}
+  try{d=await pfRisqueDeclare();}catch(e){err=e;}
   document.querySelectorAll('[aria-label="Dependances cachees"]').forEach(n=>n.remove());
   const host=document.createElement('section');
   host.className='vx-card vx-mt3';host.setAttribute('aria-label','Dependances cachees');
@@ -1225,11 +1652,15 @@ async function renderHiddenDeps(){
         differentes : la premiere est un resultat, la seconde une absence de
         mesure. Le serveur les distingue par `note` — on la sert telle quelle
         plutot que d'annoncer une diversification qu'on n'a pas mesuree.  */
+    /*  « Aucun drapeau » sur un panier mesure est un RESULTAT (etat positif),
+        pas une absence de donnee : seule la `note` du serveur (panier trop
+        petit, aucune position) est un etat vide.  */
     host.innerHTML=tete
       +(d.note?VX.states.empty(esc(d.note))
-             :VX.states.empty('Aucune dependance cachee detectee sur '+(d.n||0)+' titre(s)'))
-      +`<div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,'risk_engine',
-          window.__pfLive?'live':'fallback')}</div>`;
+             :'<div class="vx-insight vx-mt2">Aucune dependance cachee detectee sur '+(d.n||0)+' titre(s) declare(s).</div>')
+      +pfNonMesures(d)
+      +`<div class="vx-card-footer">${VX.updateIndicator(d.as_of||window.__pfTs||null,'risk_engine · positions declarees',
+          pfModeMarques())}</div>`;
     ($('pf-body')||{}).appendChild&&$('pf-body').appendChild(host);return;}
 
   const items=flags.map(f=>{
@@ -1241,11 +1672,18 @@ async function renderHiddenDeps(){
 
   host.innerHTML=tete
     +`<div class="vx-mt2">${items}</div>`
-    +`<div class="vx-meta vx-mt2">${flags.length} signal(aux) sur ${d.n||0} titre(s)`
+    +`<div class="vx-meta vx-mt2">${flags.length} signal(aux) sur ${d.n||0} titre(s) declare(s)`
     +(d.no_new_risk?' · <span class="vx-neg">nouveau risque deconseille</span>':'')+'</div>'
-    +`<div class="vx-card-footer">${VX.updateIndicator(window.__pfTs||null,'risk_engine',
-        window.__pfLive?'live':'fallback')} · lecture seule</div>`;
+    +pfNonMesures(d)
+    +`<div class="vx-card-footer">${VX.updateIndicator(d.as_of||window.__pfTs||null,'risk_engine · positions declarees',
+        pfModeMarques())} · lecture seule</div>`;
   ($('pf-body')||{}).appendChild&&$('pf-body').appendChild(host);
+}
+/* Titres declares que le moteur n'a PAS pu mesurer (hors scan ou historique
+   < 40 clotures) : dits, jamais comptes comme « diversifies ». */
+function pfNonMesures(d){
+  const nm=(d&&d.non_mesures)||[];
+  return nm.length?`<div class="vx-meta vx-mt1">${nm.length} titre(s) non mesurable(s) (hors scan ou historique trop court) : ${nm.map(esc).join(', ')}</div>`:'';
 }
 
 async function renderDiscipline(){
@@ -1364,7 +1802,14 @@ async function renderAllocation(){
           esc(d.top_symbol||'—')+(topOver?' · au-dessus du plafond '+maxW+' %':' · plafond '+maxW+' %'),
           topOver?'neg':'')}
       ${k('HHI',d.hhi!=null?VX.fmt.num(d.hhi,3):'—',
-          d.hhi==null?'non calculable':(d.hhi>=0.25?'concentré':d.hhi>=0.18?'modérément concentré':'dispersé'),hhiTone)}
+          /*  Le même mot « HHI » vit sur la vue Risque avec une AUTRE base
+              (compartiment actions renormalisé à 100 %) et un AUTRE barème
+              (33/66 sur HHI×100) : mesuré, 0,30 s'y lit « bien dispersé » et
+              ici « concentré ». `hhi_basis` est servi par les deux routes ;
+              le peindre est la seule façon de ne pas laisser le lecteur croire
+              qu'il regarde deux fois le même indice. */
+          esc(d.hhi==null?'non calculable':(d.hhi>=0.25?'concentré':d.hhi>=0.18?'modérément concentré':'dispersé')
+              +(d.hhi_basis?' · '+d.hhi_basis:' · base non servie')),hhiTone)}
     </div>
     ${d.valuation_note?`<div class="vx2-banner" data-kind="prudence" role="status"><span>${esc(d.valuation_note)}</span></div>`:''}
     ${d.asset_mix_note?`<div class="vx2-banner" data-kind="prudence" role="status"><span>${esc(d.asset_mix_note)}</span></div>`:''}
@@ -1544,6 +1989,9 @@ async function pfFresh(){
   if(a==null){dire('Session non horodatée — âge inconnu','missing');return;}
   el.innerHTML=VX.freshness.chip(VX.freshness.assess({ageMs:a,live:live}));
 }
+/* Diffusion (P1) : rejeu sur événement serveur (cotations, scan) — le
+   portefeuille est déclaré localement, la sous-vue vient de l'URL. */
+if(window.VX&&VX.refresh&&VX.refresh.register)VX.refresh.register(function(){pfFresh();return (RENDER[VIEW]||renderTeam)();},15*60*1000,'portefeuille-live');
 function boot(){pfFresh();(RENDER[VIEW]||renderTeam)().catch(e=>{($('pf-body')||{}).innerHTML=VX.states.error(e.message);});}
 if(window.VXCharts&&window.Chart)boot();else window.addEventListener('load',boot,{once:true});
 ['vx:position-changed','vx:watchlist-changed','vx:follow-changed','vx:favorites-changed']

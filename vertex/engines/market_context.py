@@ -230,6 +230,10 @@ def build(scan_state, prev=None, now=None, demo=False, stale_after_s=STALE_AFTER
         'conflicts': conflicts,
         'regime': regime,
         'changes_since_prev': changes,
+        #  Une liste vide sans base se lisait « rien n'a changé » : la base est
+        #  nommée (ou son absence), avec la date du contexte précédent.
+        'changes_base': bool(prev),
+        'prev_as_of': (prev or {}).get('as_of'),
         'note': 'Contexte descriptif — pas une prévision ; dimensions absentes = MISSING, jamais estimées.',
     }
 

@@ -116,7 +116,58 @@ def contient_donnee_sensible(x) -> list:
                     "quantites_divergentes"):
             if pos.get(cle):
                 trouve.append("$.positions.%s : titres détenus" % cle)
+    trouve.extend(_lignes_de_detention(x, "$"))
     return trouve
+
+
+#: Ce qui fait d'un dictionnaire une LIGNE DE DÉTENTION : un titre, et une
+#: grandeur qui n'a de sens que si on le possède.
+_CLE_TITRE = ("symbol", "sym", "ticker", "localSymbol", "conId")
+_CLE_DETENTION = ("position", "quantity", "qty", "avgcost", "avg_cost",
+                  "averagecost", "cost_basis", "capital_committed",
+                  "marketvalue", "market_value", "unrealizedpnl",
+                  "realizedpnl", "unrealized_pnl")
+
+
+def _lignes_de_detention(x, chemin) -> list:
+    """Toute ligne « titre + détention », À N'IMPORTE QUELLE PROFONDEUR.
+
+    ## Pourquoi chercher une FORME et non une clé
+
+    Mesuré le 2026-09-06 : ce témoin ne regardait qu'une clé `positions` de
+    PREMIER NIVEAU, de type dict, avec trois sous-clés attendues. Or une
+    capture réelle produit `fixture.positions_brutes`, une LISTE de
+    `{symbol, position, avgCost}`. Sur un relevé de cette forme, `anonymiser()`
+    rendait les tickers, les quantités et les prix de revient INTACTS, le
+    témoin rendait `[]` — donc « publiable » — et `enregistrer()` écrivait le
+    fichier sans refuser.
+
+    La docstring d'`enregistrer` promet pourtant : « REFUSE d'écrire si une
+    trace subsiste », parce qu'un artefact publié « en espérant » finit dans un
+    dépôt public. La promesse était plus large que le contrôle, et c'est
+    exactement la forme de défaut que ce dépôt vient de payer ailleurs.
+
+    On cherche donc la PROPRIÉTÉ : un identifiant de titre accompagné d'une
+    grandeur qui suppose qu'on le possède. Une cotation (`symbol`, `bid`,
+    `ask`, `iv`) reste de la donnée de MARCHÉ et n'est pas signalée — sans
+    quoi le rejeu perdrait ce qui le fait fonctionner.
+    """
+    out = []
+    if isinstance(x, dict):
+        bas = {str(k).lower() for k in x}
+        titre = bas & {c.lower() for c in _CLE_TITRE}
+        detention = bas & set(_CLE_DETENTION)
+        if titre and detention and any(
+                x.get(k) not in (None, "", [], {}) for k in x
+                if str(k).lower() in detention):
+            out.append("%s : ligne de détention (%s + %s)"
+                       % (chemin, sorted(titre)[0], sorted(detention)[0]))
+        for k, v in x.items():
+            out.extend(_lignes_de_detention(v, "%s.%s" % (chemin, k)))
+    elif isinstance(x, (list, tuple)):
+        for i, v in enumerate(x):
+            out.extend(_lignes_de_detention(v, "%s[%d]" % (chemin, i)))
+    return out
 
 
 def enregistrer(releve: dict, chemin) -> Path:

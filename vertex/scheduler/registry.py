@@ -10,10 +10,19 @@ univers (l'ordre d'affichage reflète cette priorité).
 """
 from __future__ import annotations
 
+import contextlib
 import time
 import threading
 
 _LOCK = threading.Lock()
+
+#: Naissance du processus : une attente a une durée maximale. Sans ce repère,
+#: `EN_ATTENTE` (« implémenté, pas encore passé depuis le démarrage ») n'expire
+#: jamais — mesuré sur l'instance sans TWS : `MARKET_RADAR_REFRESH`, cadence
+#: 240 s, affichait « en attente / 0 exécution » après 16 min d'uptime (4× sa
+#: cadence) parce que son thread n'est créé que sous `if IBKR_ENABLED:`.
+#: `SILENCIEUX` ne pouvait pas prendre le relais : il exige un `last_run`.
+_DEMARRAGE = time.time()
 
 # Jobs canoniques (nom → métadonnées). interval_s = cadence NOMINALE de la
 # boucle historique ; les jobs « événement » ont interval_s None.
@@ -85,6 +94,14 @@ _CANONICAL_4 = (
     #  toutes les 240 s — la dernière boucle cadencée du produit qui
     #  n'avait aucune ligne à l'écran.
     ('MARKET_RADAR_REFRESH', 'Radar marché entier + fil courtier', 240, True),
+    #  AJOUT (mission alimentation 2026-09-06) : références macro OFFICIELLES
+    #  (FRED, BCE, BNS) collectées par `vertex/services/macro_officiel.py`,
+    #  cadence de croisière 6 h (séries quotidiennes ou mensuelles).
+    #  CE LITTÉRAL NE FAIT PLUS AUTORITÉ : la cadence réelle est une fonction
+    #  (`macro_officiel.cadence_min()`, pilotée par VERTEX_MACRO_OFFICIEL_MIN),
+    #  résolue à la lecture par `_interval_effectif`. Il ne sert plus que de
+    #  repli si le module est indisponible.
+    ('MACRO_OFFICIEL_REFRESH', 'Références macro officielles (FRED, BCE, BNS)', 6 * 3600, True),
     ('PREMARKET_BRIEF', 'Brief pré-marché', None, False),
     ('INTRADAY_BRIEF', 'Brief intraday', None, False),
     ('CLOSE_BRIEF', 'Brief de clôture', None, False),
@@ -97,7 +114,19 @@ _CANONICAL_4 = (
     #  semaines à se voir.
     ('WEEKLY_REVIEW', 'Sélection & revue hebdomadaire', 300, True),
     ('SYSTEM_AUDIT', 'Diagnostics système', None, False),
-    ('DATA_BACKUP', 'Backup quotidien du desk (rotation 7)', 86400, True),
+    #  86400 -> None. MESURE SUR LE REGISTRE : `DATA_BACKUP` annonçait une
+    #  cadence quotidienne alors qu'AUCUNE horloge ne l'appelle — son unique
+    #  émetteur est `_backup_desk` (vertex/app/routes/desk.py:97/109), appelé
+    #  depuis le POST de synchronisation du desk, sans boucle ni thread ni
+    #  minuteur (balayage AST : c'est le SEUL job implémenté qui déclarait une
+    #  cadence sans boucle). Deux faussetés en découlaient : la colonne
+    #  « Prochaine (est.) » promettait « dans ~1440 min » — un compte à rebours
+    #  que rien ne tient — et, 48 h après un battement (un week-end sans
+    #  toucher au desk), l'état passait SILENCIEUX, dont la légende dit « la
+    #  boucle est morte ou coincée » : un diagnostic impossible ici, la vraie
+    #  cause étant « le desk n'a pas été synchronisé ». `interval_s = None`
+    #  rend l'étiquette déjà existante et honnête « sur événement ».
+    ('DATA_BACKUP', 'Backup du desk avant la première écriture du jour (rotation 7)', None, True),
     #  86400 -> 6 h. Le battement a rejoint `_edge_loop`, la boucle qui
     #  appelle vraiment `_track.record` et qui dort 6 h. L'écart faisait
     #  attendre 2 jours avant qu'une boucle morte ne se voie.
@@ -132,9 +161,90 @@ for name, desc, interval, _implemente in _CANONICAL_4:
                    'echecs_consecutifs': 0}
 
 
+#  ── BORNAGE DE LA DIFFUSION (canal `jobs`) ─────────────────────────────────
+#  MESURE (6 sept. 2026, instance de contrôle) : `POSITION_REFRESH` est battu
+#  DANS le handler de POST /api/pos-quotes ; le battement était diffusé à TOUS
+#  les clients SSE, et le client rejoue ses tâches sur n'importe quel canal —
+#  donc reposte /api/pos-quotes. Un seul onglet au repos entretenait la boucle
+#  à 0,65 évt/s (un appel toutes les 1,53 s = le debounce du client), soit
+#  ~590× la cadence de 15 min que la page déclare elle-même. Conséquence
+#  mesurée sur le tampon de rejeu (maxlen 200) : 200/200 événements `jobs`,
+#  dont 187 POSITION_REFRESH — plus aucun `market`, `positions`, `alerts` ni
+#  `connections` ne survivait, et un client qui se reconnecte rejouait 93 % de
+#  bruit en ayant perdu en silence tous les vrais changements d'état.
+#
+#  On ne supprime PAS le battement (le registre continuerait alors de mentir
+#  sur `last_run`/`runs`) : on borne sa DIFFUSION à un événement par job et par
+#  `_DIFFUSION_MIN_S`. Un CHANGEMENT d'état (succès -> échec ou l'inverse) passe
+#  toujours : ce qui est étouffé n'est qu'une répétition sans information.
+#  Ceci ne referme pas la boucle à lui seul — il faut aussi que le battement
+#  déclenché par une requête cesse d'être diffusé (desk.py) et que le client
+#  cesse de rejouer TOUTES ses tâches pour le canal `jobs` (live-updates.js).
+_DIFFUSION_MIN_S = 10.0
+_DERNIERE_DIFFUSION: dict[str, tuple[float, bool]] = {}
+
+
+#  ── « JE TOURNE, MON ENTRÉE MANQUE » ───────────────────────────────────────
+#  MESURE (registre en processus isolé, 6 sept. 2026) : quatre boucles réelles
+#  sont gardées par la disponibilité du scan — `_opt_loop` et `_weekly_loop`
+#  (`if scan_state.get('rows') and scan_state.get('detail'):`), `_fund_loop` et
+#  `_edge_loop` (`if scan_state.get('rows'):`) — et dorment 8 à 20 s SANS
+#  battre tant que le premier scan n'a rien publié. Passé 2× leur cadence
+#  depuis la naissance du processus, `jobs()` les déclarait :
+#
+#  ```text
+#  OPTIONS_BOARD_REFRESH  cadence 120 s   uptime   241 s → JAMAIS_DEMARRE
+#  WEEKLY_REVIEW          cadence 300 s   uptime   601 s → JAMAIS_DEMARRE
+#  FUNDAMENTALS_REFRESH   cadence 6 h     uptime 43201 s → JAMAIS_DEMARRE
+#  TRACK_RECORD_UPDATE    cadence 6 h     uptime 43201 s → JAMAIS_DEMARRE
+#  ```
+#
+#  soit « boucle non démarrée dans cette configuration ou arrêtée avant son
+#  premier passage » pour une boucle VIVANTE qui attend légitimement son
+#  entrée — le chemin `abandon_debit` (backoffs anti-429 de 6 s) suffit à faire
+#  traîner le premier scan au-delà de 240 s. Un état FAUX est pire que le
+#  silence qu'il remplace : c'est la classe de défaut que ce programme corrige.
+#
+#  La seule autorité sur « la boucle tourne-t-elle ? » est la boucle. Elle le
+#  DIT ici, à chaque tour d'attente ; `jobs()` ne suppose rien. Le signal
+#  périme (`_ATTENTE_TTL_S`) : une boucle qui meurt en attendant cesse de
+#  signaler et retombe sur `JAMAIS_DEMARRE` en moins d'une minute. `attente`
+#  ne touche NI `runs` NI `last_run` NI la diffusion : attendre n'est pas
+#  exécuter, et l'écran ne doit jamais compter une attente comme un passage.
+#
+#  LE CORRECTIF DISCRIMINE, IL NE MASQUE PAS : en mode DÉMO ces quatre threads
+#  ne sont pas créés (`_demarrer_les_boucles`, `if not DEMO_MODE:`), donc aucun
+#  signal n'arrive et `JAMAIS_DEMARRE` reste servi — ce qui est alors la
+#  description exacte.
+#
+#  60 s : les quatre boucles gardées repassent toutes les 8 à 20 s, le seuil
+#  tolère donc trois à sept tours manqués avant de conclure à la mort.
+_ATTENTE_TTL_S = 60.0
+_ATTENTES: dict[str, tuple[float, str]] = {}
+
+
+def attente(name: str, prerequis: str) -> None:
+    """Signal de vie d'une boucle cadencée dont l'ENTRÉE n'est pas encore là.
+
+    `prerequis` nomme ce qui manque (le job producteur, ex.
+    `MARKET_DATA_REFRESH`) — l'écran peut donc renvoyer vers la vraie cause au
+    lieu d'accuser la boucle qui attend. À appeler à CHAQUE tour d'attente :
+    c'est la fraîcheur du signal qui distingue « vivante » de « morte ».
+    """
+    with _LOCK:
+        _ATTENTES[name] = (time.time(), str(prerequis))
+
+
 def beat(name: str, ok: bool = True, error: str | None = None,
-         duration_ms: float | None = None) -> None:
-    """Battement émis par une boucle historique après une exécution."""
+         duration_ms: float | None = None, diffuser: bool = True) -> None:
+    """Battement émis par une boucle historique après une exécution.
+
+    `diffuser=False` — pour un battement déclenché par la requête d'un client
+    (et non par une boucle de fond) : le registre l'enregistre, mais l'annoncer
+    à TOUS les clients SSE n'apprend rien à personne et referme la boucle
+    mesurée ci-dessus. C'est ce qu'attend l'émetteur de `POSITION_REFRESH`,
+    dans le handler de POST /api/pos-quotes (vertex/app/routes/desk.py).
+    """
     with _LOCK:
         j = _JOBS.setdefault(name, {'name': name, 'description': '', 'interval_s': None,
                                     'implemente': True,
@@ -149,8 +259,56 @@ def beat(name: str, ok: bool = True, error: str | None = None,
         #  un succes remet a zero. Le registre le porte pour que l'ecran et
         #  un futur circuit breaker lisent le meme chiffre.
         j['echecs_consecutifs'] = 0 if ok else j.get('echecs_consecutifs', 0) + 1
+        #  Le job a tourné : son attente d'entrée appartient au passé. Sans ce
+        #  retrait, `_ATTENTES` garderait un signal que plus rien ne rafraîchit
+        #  — inoffensif pour l'état servi (il n'est lu que si `last_run` est
+        #  nul) mais faux comme description du présent.
+        _ATTENTES.pop(name, None)
         if duration_ms is not None:
             j['last_duration_ms'] = round(duration_ms)
+        #  cf. `_DIFFUSION_MIN_S` : une RÉPÉTITION du même verdict, à moins de
+        #  10 s de la précédente, n'apprend rien à personne et remplit le
+        #  tampon de rejeu. Un changement de verdict passe toujours.
+        precedent = _DERNIERE_DIFFUSION.get(name)
+        diffuser = diffuser and not (precedent is not None
+                                     and precedent[1] == bool(ok)
+                                     and (j['last_run'] - precedent[0]) < _DIFFUSION_MIN_S)
+        if diffuser:
+            _DERNIERE_DIFFUSION[name] = (j['last_run'], bool(ok))
+    #  Diffusion (canal `jobs`) : la page Système suit les battements sans
+    #  sonder. Hors verrou, jamais bloquant, jamais une exception ici.
+    if diffuser:
+        with contextlib.suppress(Exception):
+            from vertex.services.live_stream import BROKER as _broker
+            _broker.publish('jobs', {'job': name, 'ok': bool(ok)})
+
+
+def _interval_effectif(nom: str, declare: int | None) -> int | None:
+    """Cadence RÉELLEMENT en vigueur dans ce processus, pas le littéral déclaré.
+
+    `MACRO_OFFICIEL_REFRESH` est le SEUL job dont la cadence est une fonction
+    (`VERTEX_MACRO_OFFICIEL_MIN`, plancher 15 min) et non une constante.
+    MESURE (processus isolé, comparaison sommeil réel / `interval_s` servi) :
+
+    ```text
+    env=None → boucle 21600 s | registre 21600 s | seuil SILENCIEUX 43200 s | OK
+    env=1440 → boucle 86400 s | registre 21600 s | seuil        43200 s | DÉRIVE
+    env=15   → boucle   900 s | registre 21600 s | seuil        43200 s | DÉRIVE
+    ```
+
+    Poser la variable documentée (docs/VERTEX_DATA_COVERAGE.md) à 15 min
+    laissait donc une boucle MORTE affichée « ACTIF » pendant 12 h au lieu de
+    30 min, et `next_run_eta_s` faux dans les deux sens. Même traitement que
+    `REFRESH_SEC` plus haut : dériver du propriétaire canonique au lieu de le
+    recopier. Import paresseux — aucun cycle au niveau module.
+    """
+    if nom == 'MACRO_OFFICIEL_REFRESH':
+        try:
+            from vertex.services.macro_officiel import cadence_min
+            return int(cadence_min()) * 60
+        except Exception:              # module absent/cassé : le littéral reste
+            return declare
+    return declare
 
 
 def jobs() -> list[dict]:
@@ -167,37 +325,85 @@ def jobs() -> list[dict]:
       lot, un job mort restait « ACTIF » pour toujours — un vert de façade sur
       des alertes que personne n'évalue plus. ERREUR prime sur le silence :
       un échec suivi de mutisme reste un échec.
+    - `JAMAIS_DEMARRE` — cadencé, implémenté, JAMAIS battu alors que 2× sa
+      cadence s'est écoulée depuis la naissance du processus, ET sans signal de
+      vie frais : la boucle n'a pas démarré dans cette configuration (ex.
+      `MARKET_RADAR_REFRESH`, dont le thread n'est créé que sous
+      `if IBKR_ENABLED:`) ou est morte avant son premier battement. Mesuré :
+      « en attente / 0 » après 16 min d'uptime sur un job à 240 s — une attente
+      qui ne finit jamais se lisait comme une imminence, et `SILENCIEUX` ne
+      pouvait pas la relever faute de `last_run`.
+    - `EN_ATTENTE_ENTREE` — la boucle a signalé (`attente`) qu'elle tourne et
+      que son entrée manque, il y a moins de `_ATTENTE_TTL_S`. `attente_de`
+      nomme le producteur attendu. Sans cette branche, les quatre boucles
+      gardées par la disponibilité du scan basculaient sur `JAMAIS_DEMARRE` —
+      mesuré : 241 s d'uptime pour `OPTIONS_BOARD_REFRESH`, 601 s pour
+      `WEEKLY_REVIEW` — un diagnostic FAUX sur une boucle vivante.
     """
     now = time.time()
-    out = []
+    #  Le verrou ne couvre que la COPIE de l'état : `_interval_effectif` fait un
+    #  import paresseux, et importer sous un verrou non réentrant qu'un `beat`
+    #  peut vouloir prendre s'appelle un interblocage.
     with _LOCK:
-        for name, _, _ in _CANONICAL:
-            j = dict(_JOBS[name])
-            if j['last_run'] and j['interval_s']:
-                j['next_run_eta_s'] = max(0, round(j['last_run'] + j['interval_s'] - now))
+        instantane = [dict(_JOBS[name]) for name, _, _ in _CANONICAL]
+        attentes = dict(_ATTENTES)
+    out = []
+    for j in instantane:
+        #  Servi sur TOUTES les lignes (None quand il n'y a rien à attendre) :
+        #  une clé qui apparaît et disparaît oblige chaque consommateur à
+        #  deviner la différence entre « absente » et « nulle ».
+        j['attente_de'] = None
+        j['interval_s'] = _interval_effectif(j['name'], j['interval_s'])
+        if j['last_run'] and j['interval_s']:
+            j['next_run_eta_s'] = max(0, round(j['last_run'] + j['interval_s'] - now))
+        else:
+            j['next_run_eta_s'] = None
+        j['age_s'] = round(now - j['last_run']) if j['last_run'] else None
+        if not j.get('implemente', True):
+            j['etat'] = 'NON_IMPLEMENTE'
+        elif j['last_run'] is None:
+            #  La boucle a-t-elle dit qu'elle tournait, récemment ? Ce signal
+            #  est une MESURE (cf. `attente`), pas une supposition : il vient
+            #  de la boucle elle-même, à chaque tour d'attente. Il prime sur le
+            #  seuil ci-dessous — sinon quatre boucles vivantes se déclarent
+            #  « jamais démarrées » dès 241 s (OPTIONS_BOARD_REFRESH).
+            att = attentes.get(j['name'])
+            if att and (now - att[0]) <= _ATTENTE_TTL_S:
+                j['etat'] = 'EN_ATTENTE_ENTREE'
+                j['attente_de'] = att[1]
             else:
-                j['next_run_eta_s'] = None
-            j['age_s'] = round(now - j['last_run']) if j['last_run'] else None
-            if not j.get('implemente', True):
-                j['etat'] = 'NON_IMPLEMENTE'
-            elif j['last_run'] is None:
-                j['etat'] = 'EN_ATTENTE'
-            elif not j['last_ok']:
-                j['etat'] = 'ERREUR'
-            elif (j['interval_s']
-                    and (now - j['last_run']) > 2 * j['interval_s']):
-                j['etat'] = 'SILENCIEUX'
-            else:
-                j['etat'] = 'ACTIF'
-            out.append(j)
+                #  Une attente qui dure plus de 2× la cadence, SANS signal de
+                #  vie, n'est plus une attente : la boucle n'a pas démarré
+                #  (configuration) ou est morte avant son premier battement.
+                #  Même seuil que SILENCIEUX, donc aucune constante de plus ;
+                #  les jobs « sur événement » (`interval_s is None`) restent
+                #  EN_ATTENTE — rien ne les cadence.
+                j['etat'] = ('JAMAIS_DEMARRE'
+                             if (j['interval_s']
+                                 and (now - _DEMARRAGE) > 2 * j['interval_s'])
+                             else 'EN_ATTENTE')
+        elif not j['last_ok']:
+            j['etat'] = 'ERREUR'
+        elif (j['interval_s']
+                and (now - j['last_run']) > 2 * j['interval_s']):
+            j['etat'] = 'SILENCIEUX'
+        else:
+            j['etat'] = 'ACTIF'
+        out.append(j)
     return out
 
 
 class _Registry:
+    #  CE QUE LES BOUCLES APPELLENT. `from vertex.scheduler import registry`
+    #  rend CET objet (cf. `vertex/scheduler/__init__.py`), pas le module :
+    #  une fonction absente d'ici est du code mort côté appelant, avalé par
+    #  leur `except Exception: pass`. `attente` doit donc y figurer comme
+    #  `beat` — c'est par ce chemin que terminal.py la joint.
     beat = staticmethod(beat)
     jobs = staticmethod(jobs)
+    attente = staticmethod(attente)
 
 
 registry = _Registry()
 
-__all__ = ['registry', 'jobs', 'beat', 'NON_IMPLEMENTES']
+__all__ = ['registry', 'jobs', 'beat', 'attente', 'NON_IMPLEMENTES']

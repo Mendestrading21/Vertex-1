@@ -101,7 +101,18 @@ def test_disclaimer_readonly_ouvre_chaque_ticket(client):
 # ── /api/search : la recherche de tickers ────────────────────────────────────
 
 def test_recherche_vide_et_sous_chaine_insensible_casse(client):
-    assert client.get('/api/search').get_json() == []          # sans q → []
+    """Sans terme, la recherche EXPLIQUE au lieu de rendre une liste vide.
+
+    Ce banc épinglait `== []`. Mesuré le 2026-09-06 en exerçant les 184 règles
+    du runtime : une liste vide ne peut porter aucun motif, donc l'appelant ne
+    pouvait pas distinguer « aucun terme fourni » de « aucun résultat » ni de
+    « l'univers n'est pas chargé ». La forme AVEC résultats, elle, ne change
+    pas — c'est celle dont un consommateur pourrait dépendre.
+    """
+    vide = client.get('/api/search').get_json()
+    assert isinstance(vide, dict), vide
+    assert vide['resultats'] == []
+    assert 'q=' in vide['usage'], vide
     assert client.get('/api/search?q=aapl').get_json() == [{'ticker': 'AAPL'}]
 
 

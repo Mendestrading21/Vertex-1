@@ -109,6 +109,20 @@ def en_charge_client(pv: ProvenancedValue) -> dict | None:
     v = dict(pv.value)
     v.update({'type': 'STK', 'source': pv.source, 'mode': pv.source_mode,
               'fallback_used': bool(pv.fallback_used)})
+    #  CONSTAT 27, RACINE. Le repli OPTION (`routes/desk.py
+    #  _scan_fallback_quote`) étiquette sa cote `delayed: True` ; ce repli-ci,
+    #  celui des ACTIONS, ne le posait pas — il ne servait que `mode:'DELAYED'`
+    #  et `fallback_used: true`. Deux écritures du MÊME fait dans la même
+    #  charge `/api/pos-quotes`, et une page qui n'en lit qu'une annonce du
+    #  temps réel sur un prix de scan (mesuré : le seul test `q.delayed`
+    #  laissait une action valorisée au cours du scan s'afficher sans aucune
+    #  marque de différé). La règle client (`VX.quotes.differee`) est un OU
+    #  logique des trois champs : poser le troisième ne double aucun compte et
+    #  ferme la divergence de vocabulaire à sa source. Rien n'est affirmé —
+    #  `delayed` n'est écrit que si le routeur a réellement classé la cote en
+    #  mode différé.
+    if pv.source_mode == MODE_DELAYED:
+        v['delayed'] = True
     return v
 
 

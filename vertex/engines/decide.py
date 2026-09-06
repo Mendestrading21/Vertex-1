@@ -8,6 +8,8 @@ données déjà calculées (technique, momentum, régime, setup, confiance, opti
 fondamentaux). 100% règles, déterministe. ⛔ ANALYSE ONLY, jamais une promesse.
 """
 
+from vertex.engines import evidence      # lecteur canonique du R:R du plan
+
 
 def _sig(d, k):
     return bool((d.get('signals') or {}).get(k))
@@ -88,9 +90,15 @@ def decide(d, opt=None):
     #    R:R ≥ 2:1, régime connu et invalidation définie. Aligné sur
     #    ExecutiveEngine — le verdict de scan ne peut plus contredire le gate.
     if dec in ('ACHETER FORT', 'ACHETER'):
-        rr = plan.get('rr_res')
-        if rr is None:
-            rr = plan.get('rr')
+        #  Le repli `if rr is None: rr = plan.get('rr')` FRANCHISSAIT la garde
+        #  avec une valeur supposée : `analysis.py:265` écrit `'rr': 3.0` en dur
+        #  (reformulation de `tp3 = last + 3 * risk`), donc tout plan sans
+        #  `rr_res` passait le minimum 2:1 avec la constante 3.0 au lieu de
+        #  tomber dans la branche « R:R non confirmé » située deux lignes plus
+        #  bas. Mesuré : `_scan_buy()` sans `rr_res` rendait ACHETER FORT sans
+        #  aucun « Hard gate » dans `cons` ; il rend maintenant SURVEILLER avec
+        #  « Hard gate : R:R non confirmé (≥ 2:1 requis) ».
+        rr = evidence.rr_mesure(d)
         gate_fail = None
         if plan.get('stop') is None:
             gate_fail = 'invalidation (stop) absente'
