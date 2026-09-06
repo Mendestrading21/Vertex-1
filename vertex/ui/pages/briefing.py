@@ -272,7 +272,8 @@ _CONTENT = """
     transition:border-color .15s ease,transform .15s ease}
   #vx-portfolio .vx-pf-card:hover{border-color:var(--vx-brand,#c9cdd4);transform:translateY(-1px)}
   #vx-portfolio .vx-pf-card .pf-pl{font:700 21px/1.1 var(--vx-font-mono,monospace);font-variant-numeric:tabular-nums}
-  #vx-portfolio .vx-pf-card .pf-sub{font-size:11.5px;color:var(--vx-text-dim,#817d77)}
+  /* AA mesuré par le gardien navigateur (4,46:1 < 4,5 avec text-dim) : jeton muted (≥ 4,5:1). */
+  #vx-portfolio .vx-pf-card .pf-sub{font-size:11.5px;color:var(--vx-text-muted,#828892)}
   .vx-sect span{font-size:11.5px;color:var(--vx-text-dim,#817d77)}
   .vx-sect::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--vx-border,#26221e),transparent)}
   /* Bandeau indices : tuiles KPI denses, sparkline intégrée. Responsive :

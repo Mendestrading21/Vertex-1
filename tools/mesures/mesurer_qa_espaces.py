@@ -98,7 +98,9 @@ RACINE = pathlib.Path(__file__).resolve().parents[2]
 if str(RACINE) not in sys.path:
     sys.path.insert(0, str(RACINE))
 
-BASE_DEFAUT = 'http://127.0.0.1:5002'
+#  `VERTEX_MESURE_BASE` : cibler une autre instance (par ex. l'instance QA
+#  sans code d'accès, 127.0.0.1:5003) sans toucher l'instance de travail.
+BASE_DEFAUT = os.environ.get('VERTEX_MESURE_BASE', 'http://127.0.0.1:5002')
 LARGEURS = (390, 768, 1440)
 
 #: Registre lu depuis le produit — recopier la liste ici la ferait diverger le
@@ -117,6 +119,12 @@ _MOTIFS_CHROMIUM = (
     '~/.cache/ms-playwright/chromium-*/chrome-linux/chrome',                 # Linux
     '~/Library/Caches/ms-playwright/chromium-*/chrome-mac*/'
     'Chromium.app/Contents/MacOS/Chromium',                                  # macOS
+    #  Windows : le SHELL headless d'abord — mesure du 2026-09-06 sur cette
+    #  machine : `chrome.exe` complet refuse de s'engendrer (« spawn UNKNOWN »)
+    #  alors que `chrome-headless-shell.exe` demarre ; c'est aussi ce que
+    #  Playwright choisit seul en headless.
+    '~/AppData/Local/ms-playwright/chromium_headless_shell-*/'
+    'chrome-headless-shell-win*/chrome-headless-shell.exe',                  # Windows (shell)
     '~/AppData/Local/ms-playwright/chromium-*/chrome-win*/chrome.exe',       # Windows
 )
 

@@ -39,13 +39,32 @@ en test · **DÉCLARATIF** = configuré/affiché sans lecteur · **ABSENT** ·
 - Rôles `ibkr_link.CLIENT_IDS['compte']` (preuve de socket seulement) et
   `['pnl']` (aucun consommateur) : à renommer / retirer après preuve d'absence
   de consommateur.
-- Réseau dans des requêtes utilisateur : `/api/correlations/<sym>`,
-  `/desc/<sym>`, `/api/company/<sym>/analyst`, `/api/company/<sym>` sur cache
-  froid, `/api/pos-quotes` (attente 12 s), dossier options
-  (`on_demand.fetch`) — à passer par un magasin servi en fond.
+- Réseau dans des requêtes utilisateur : **corrigé** (tranches réseau hors
+  requête) — `/api/analyst`, `/api/company`, `/api/correlations`,
+  `/api/pos-quotes`, dossier options (`chaine_a_la_demande.board_avec`) servent
+  le cache et collectent en fond (`EN_COURS`/`CACHE`/`PERIME`) ; gardien
+  `tests/test_reseau_hors_requete.py`.
 - Aucun masque d'identifiant de compte sur les journaux `ib_async`
   (métadonnées de protocole) : les identifiants sont désormais effacés de la
   session à la connexion ; un filtre de journal reste à ajouter.
+
+## Composants candidats évalués (mission §6, plan P4)
+
+Décision par composant, sur besoin mesuré ; rien n'est installé « par
+principe ». Versions retenues épinglées dans `requirements*.txt`.
+
+| Composant | Besoin couvert ? | Décision |
+|---|---|---|
+| Playwright (`playwright==1.62.0`, déjà en `requirements-dev.txt`) + Chromium | Les gardiens navigateur (`tests/test_qa_espaces.py`, `test_couche_visuelle.py`, `test_boutons_morts_temoins.py`) s'abstenaient : binaire Chromium absent (`BINAIRE_ABSENT`). | **Installé** : `python -m playwright install chromium` dans le cache utilisateur Playwright (hors dépôt) ; les gardiens mesurent désormais réellement. CI : `ci.yml` installe `requirements-dev.txt` mais pas le navigateur — à décider (coût de téléchargement par exécution). |
+| feedparser | RSS Google News parsé par `news_plus.parse_rss` (maison, testé sur fixtures, assainissement au point de sortie). | **Non installé** : aucun flux réel en échec ; à reconsidérer si un flux Atom/RSS non conforme apparaît (P5 le vérifie sur les communiqués BCE/BNS). |
+| trafilatura | Extraction de texte d'articles : Vertex résume des titres/descriptions, ne recopie pas d'articles entiers (mission §11). | **Non installé** : pas de besoin ; l'extraction pleine page poserait la question des droits. |
+| firecrawl, changedetection.io | Surveillance de pages : les sources retenues sont des API/RSS/CSV officiels ; aucune page HTML à surveiller n'est au contrat. | **Non installés** ; service externe/conteneur non nécessaire. |
+| OpenBB | Agrégateur multi-sources : redondant avec les connecteurs directs (IBKR, yfinance, FRED, BCE, BNS) et ajoute une couche de droits opaque. | **Non installé**. |
+| Prefect, n8n (+ skills n8n, n8n-mcp) | Orchestration : les boucles du monolithe + registre des jobs + diffuseur SSE suffisent (décision D1 de la nuit) ; un second orchestrateur créerait deux autorités. | **Non installés**. |
+| OpenTelemetry | Observabilité : Système › Jobs, `/healthz`, `/readyz`, battements et journaux bornés couvrent le besoin local. | **Non installé** ; à reconsidérer pour un déploiement serveur. |
+| ib_async | Déjà en production (`>=1.0`, 2.1.0 installé) ; session marché seulement prouvée sur socket. | Épinglage exact `==2.1.0` : **décision humaine** (le comportement au connect dépend de la version). |
+| lightweight-charts (TradingView) | Graphiques : `chart-core.js` + Chart.js/SVG maison couvrent les 72 cartes ; une bibliothèque n'est pas une source de données. | **Non installé**. |
+| playwright-cli / playwright-mcp / skills webapp-testing, superpowers, firecrawl skills | Outils d'agent : le skill maître interdit un second skill actif ; les quatre skills de design restent consultatifs. | **Non installés** (documenté dans `.claude/design-skills/SOURCES.md`). |
 
 ## Configuration d'exemple (sans valeurs)
 

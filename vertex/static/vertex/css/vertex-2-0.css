@@ -1745,3 +1745,9 @@ html,body{max-width:100%;overflow-x:clip}
   #vx-content[data-space="markets"] .vx-mk-macro .m-area{width:88px}
   #vx-content[data-space="markets"] .vx-mk-macro .m-area svg{width:88px}
 }
+
+/* ── 34. Système › bouclier READONLY : mesuré par le gardien navigateur
+   (tests/test_qa_espaces.py, Chromium enfin disponible le 2026-09-06) — la
+   pastille `white-space:nowrap` faisait déborder le document de 44 px à
+   390 px (434 > 390). Elle passe à la ligne au lieu de pousser la page. ── */
+.vx-readonly-shield{white-space:normal;flex-wrap:wrap;max-width:100%;overflow-wrap:anywhere}

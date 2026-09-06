@@ -71,7 +71,7 @@ def _navigateur_dispo():
 
 def _serveur_repond():
     try:
-        with urllib.request.urlopen('http://127.0.0.1:5002/healthz', timeout=3) as r:
+        with urllib.request.urlopen(_mes.BASE_DEFAUT + '/healthz', timeout=3) as r:
             return r.status == 200
     except Exception:  # noqa: BLE001
         return False
