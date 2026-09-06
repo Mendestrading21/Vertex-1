@@ -136,3 +136,58 @@ def test_le_miroir_de_verification_n_emporte_aucune_donnee_personnelle():
     assert 'desk_data_backup_2026-09-06.json' in ignores, ignores
     assert 'position_inventory_backup.json' in ignores, ignores
     assert 'terminal.py' not in ignores, 'le miroir doit toujours copier le code'
+
+
+# ── Le garde-fou de PUBLICATION d'une capture courtier ──────────────────────
+
+def test_le_temoin_voit_une_ligne_de_detention_a_n_importe_quelle_profondeur():
+    """`enregistrer()` promet de REFUSER d'écrire si une trace subsiste.
+
+    Mesuré le 2026-09-06 : le témoin ne regardait qu'une clé `positions` de
+    PREMIER NIVEAU, de type dict, avec trois sous-clés attendues. Une capture
+    réelle produit `fixture.positions_brutes`, une LISTE de
+    `{symbol, position, avgCost}` : sur cette forme, l'anonymiseur rendait les
+    tickers, quantités et prix de revient intacts, le témoin rendait « rien à
+    signaler », et le fichier était écrit.
+
+    La promesse était plus large que le contrôle — la forme exacte du défaut
+    que ce dépôt a payé ailleurs cette nuit.
+    """
+    from vertex.data_sources.ibkr_replay import contient_donnee_sensible
+
+    capture = {'version_fixture': 1,
+               'fixture': {'positions_brutes': [
+                   {'symbol': 'NVDA', 'position': 250, 'avgCost': 118.42}]}}
+    restes = contient_donnee_sensible(capture)
+    assert restes, 'une liste de titres détenus passe encore pour publiable'
+    assert 'positions_brutes' in restes[0]
+
+
+def test_le_temoin_ne_confond_pas_une_COTATION_avec_une_DETENTION():
+    """Contre-épreuve : sans elle, on refuserait toute donnée de marché.
+
+    Une cotation porte un titre et des prix ; elle est publique et le rejeu ne
+    fonctionne pas sans elle. Ce qui trahit une détention, c'est la grandeur
+    qui n'a de sens que si on possède le titre — quantité, prix de revient,
+    valeur de marché, plus-value.
+    """
+    from vertex.data_sources.ibkr_replay import contient_donnee_sensible
+
+    assert contient_donnee_sensible(
+        {'quotes': [{'symbol': 'NVDA', 'bid': 1.2, 'ask': 1.3, 'iv': 0.4}]}) == []
+    assert contient_donnee_sensible({'fixture': {'positions_brutes': []}}) == []
+
+
+def test_ecrire_une_capture_non_anonyme_est_REFUSE(tmp_path):
+    """Le refus est le point : un artefact publié « en espérant » finit dans un
+    dépôt public avec un portefeuille dedans."""
+    import pytest as _pytest
+
+    from vertex.data_sources import ibkr_replay
+
+    releve = {'positions_brutes': [{'symbol': 'NVDA', 'position': 250,
+                                    'avgCost': 118.42}]}
+    cible = tmp_path / 'capture.json'
+    with _pytest.raises(Exception):
+        ibkr_replay.enregistrer(releve, cible)
+    assert not cible.exists(), 'le fichier a été écrit malgré la trace'
