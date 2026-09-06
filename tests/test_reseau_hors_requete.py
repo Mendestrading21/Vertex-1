@@ -237,6 +237,53 @@ def test_les_pages_options_reessaient_quand_la_chaine_charge():
         assert '< 2' in src, '%s : le réessai doit être borné' % nom
 
 
+# ── /api/company et /api/correlations ──────────────────────────────────────
+
+def test_company_sert_le_cache_et_collecte_en_fond(monkeypatch):
+    from vertex.app.routes import company_api
+    from vertex.data import company as dc
+    monkeypatch.setattr(company_api, 'DEMO_MODE', False)
+    monkeypatch.setattr(company_api, '_COMPANY_EN_COURS', {})
+    appels = []
+    fini = threading.Event()
+
+    def faux_get(sym, demo=False, allow_fetch=True, brief=False):
+        appels.append((sym, allow_fetch, brief))
+        if allow_fetch:
+            fini.set()
+        return {'symbol': sym, 'name': None}
+    monkeypatch.setattr(dc, 'get', faux_get)
+    monkeypatch.setattr(dc, 'fraicheur', lambda sym: (False, False))
+    app = Flask(__name__)
+    app.register_blueprint(company_api.bp)
+    t0 = time.time()
+    j = app.test_client().get('/api/company/AAPL').get_json()
+    assert time.time() - t0 < 1.0 and j['etat'] == 'EN_COURS' and j['retry_s'] > 0
+    assert appels[0] == ('AAPL', False, False), 'la requête ne doit ni fetcher ni traduire'
+    assert fini.wait(3) and ('AAPL', True, True) in appels
+
+
+def test_correlations_calcule_en_fond_et_sert_le_cache(monkeypatch):
+    from vertex.app.routes import correlations_api as ca
+    monkeypatch.setattr(ca, '_CORR_SYM', {})
+    monkeypatch.setattr(ca, '_CORR_EN_COURS', {})
+    fini = threading.Event()
+
+    def faux_calcul(sym):
+        fini.set()
+        return {'sym': sym, 'corr': [['QQQ', 0.8]]}
+    monkeypatch.setattr(ca, 'calculer', faux_calcul)
+    app = Flask(__name__)
+    app.register_blueprint(ca.bp)
+    c = app.test_client()
+    j = c.get('/api/correlations/AAPL').get_json()
+    assert j['etat'] == 'EN_COURS' and j['corr'] == []
+    assert fini.wait(3)
+    time.sleep(0.05)
+    j2 = c.get('/api/correlations/AAPL').get_json()
+    assert j2['etat'] == 'CACHE' and j2['corr'] == [['QQQ', 0.8]] and j2['as_of']
+
+
 def test_la_route_ne_porte_plus_l_attente_de_12_s():
     src = _src('vertex', 'app', 'routes', 'desk.py')
     assert 'timeout=12' not in src

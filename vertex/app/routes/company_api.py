@@ -42,11 +42,53 @@ from vertex.data_sources import sec_fondamentaux as _sec_f
 bp = Blueprint('company_api', __name__)
 
 
+_COMPANY_EN_COURS: dict[str, float] = {}
+_COMPANY_VERROU = threading.Lock()
+
+
+def _collecter_profil_en_fond(sym):
+    """`company.get(allow_fetch=True, brief=True)` dans un thread démon : le
+    profil yfinance ET sa traduction (réseau) ne se font jamais dans la requête."""
+    now = time.time()
+    with _COMPANY_VERROU:
+        if now - _COMPANY_EN_COURS.get(sym, 0) < ANALYST_RELANCE_S:
+            return False
+        _COMPANY_EN_COURS[sym] = now
+
+    def _run():
+        try:
+            with contextlib.suppress(Exception):
+                _company.get(sym, demo=DEMO_MODE, allow_fetch=True, brief=True)
+        finally:
+            with _COMPANY_VERROU:
+                _COMPANY_EN_COURS.pop(sym, None)
+    threading.Thread(target=_run, daemon=True, name='profil-' + sym).start()
+    return True
+
+
 @bp.route('/api/company/<sym>')
 def api_company(sym):
-    """Profil d'entreprise seul (cache hebdomadaire — activité, CEO, segments, pairs)."""
+    """Profil d'entreprise seul (cache hebdomadaire — activité, CEO, segments, pairs).
+
+    Aucun réseau dans la requête : le cache (ou la couche curée) est servi tel
+    quel avec `etat` CACHE / PERIME / EN_COURS ; une entrée absente ou périmée
+    déclenche la collecte EN FOND (`retry_s`)."""
+    sym = sym.upper()
     try:
-        return jsonify(_company.get(sym.upper(), demo=DEMO_MODE, brief=True))
+        present, frais = (False, False)
+        with contextlib.suppress(Exception):
+            present, frais = _company.fraicheur(sym)
+        out = _company.get(sym, demo=DEMO_MODE, allow_fetch=False, brief=False)
+        if not isinstance(out, dict):
+            out = {'symbol': sym}
+        if frais or DEMO_MODE:
+            out['etat'] = 'CACHE' if present else 'CURE'
+        else:
+            _collecter_profil_en_fond(sym)
+            out['etat'] = 'PERIME' if present else 'EN_COURS'
+            out['stale'] = present
+            out['retry_s'] = ANALYST_RETRY_S
+        return jsonify(out)
     except Exception as e:
         return jsonify({'error': 'company_unavailable',
                         'note': 'fiche société indisponible — '

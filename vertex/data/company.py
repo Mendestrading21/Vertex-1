@@ -244,6 +244,14 @@ def _fetch_profile(sym):
     }
 
 
+def fraicheur(sym):
+    """(présent dans le cache, frais) — AUCUN réseau. Sert à répondre à une
+    requête utilisateur sans la faire attendre yfinance ni une traduction."""
+    e = _load().get((sym or '').upper())
+    frais = bool(e) and (time.time() - (e.get('ts') or 0) < _WEEK) and e.get('_v') == _SCHEMA_V
+    return bool(e), frais
+
+
 def get(sym, demo=False, allow_fetch=True, brief=False):
     """Profil d'entreprise (cache hebdo). Retourne un dict enrichi + méta de fraîcheur.
 
