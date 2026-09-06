@@ -84,6 +84,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | `0b293dc5` | fix(réseau) : chaîne d'options hors requête (`chaine_a_la_demande.board_avec`, `en_cours`, pages Options avec réessai borné ; coque vx-shell-6, SW v293) |
 | `abd7df10` | fix(composants) : « Ce qui a changé » sur /api/market/context (`changes_base`, `prev_as_of`), équité Portefeuille dérivée des clôtures déclarées, `plAbs` produit (contribution) |
 | `d2722b4c` | fix(structure) : verdict, liquidité, mouvement attendu et scénarios de la vue Structure calculés par le serveur (`structure_verdict`), la page peint (coque vx-shell-7, SW v294) |
+| `9327ee42` | fix(cerveau) : cotations LLM réconciliées avec le prix du scan (`scan_price`, `ecart_pct`) ; contrat du lot décision (`VERTEX_LOT_DECISION_CONTRAT.md`) |
 
 ## 5. Tests (résultats exacts)
 
@@ -100,6 +101,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | Tranche chaîne hors requête (`0b293dc5`) | `4455 passed, 180 skipped, 1 failed` (import orphelin) → corrigé avant le commit, gardien vert ; suite complète relancée après : `4456 passed, 180 skipped, 0 failed` |
 | Tranche composants alimentés (`abd7df10`) | `4460 passed, 180 skipped, 0 failed` |
 | Tranche verdict de structure (`d2722b4c`) | `4468 passed, 180 skipped, 0 failed` |
+| Tranche cerveau + contrat décision (`9327ee42`) | `4471 passed, 180 skipped, 0 failed` |
 
 Preuves réelles hors suite : socket TWS (session marché seulement),
 collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
@@ -143,7 +145,10 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
 - Tranche « verdict de structure » faite (`d2722b4c`) : §13 #13 (calcul financier
   dans l'interface, vue Structure). Vérifié sur l'instance QA : carte-verdict,
   scénarios et comparaison peints depuis `strategie.analyse`, console propre.
-- Prochaine action si reprise : §13 #2 (trois autorités de décision, programme
-  lot décision — contrat humain requis), #11 (SEC, action humaine) ; Cerveau
-  Claude (cotations web non réconciliées) et regroupement des onglets Options
-  restent consignés.
+- Tranche « cerveau + contrat décision » faite (`9327ee42`) : cotations LLM
+  réconciliées (Système), contrat du lot 10 écrit — **décision humaine
+  attendue** (`VERTEX_LOT_DECISION_CONTRAT.md` §9) avant tout code moteur.
+- Prochaine action si reprise : regroupement des onglets Options (interface,
+  lot 18), puis, sur validation humaine, étape 1 du lot décision (façade sans
+  changement de calcul). SEC (#11) et épinglage `ib_async` restent des
+  actions humaines.
