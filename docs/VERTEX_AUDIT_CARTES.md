@@ -36,6 +36,28 @@ du code corrigé :
 | Interactions | 59 pages, 593 clics | **0 problème** |
 | Gardiens navigateur (Chromium) | 5 bancs | **53 réussis** |
 
+## Relevé FINAL, après l'audit complet des douze lots (2026-09-06)
+
+Instance QA reconstruite sur le code final (`td-shell-v301`), 59 vues ouvertes
+dans Chromium à 1600 px, service worker neutralisé par la reconstruction.
+
+| Mesure | Résultat |
+| --- | --- |
+| Vues ouvertes | 59 |
+| Vues avec un problème | **0** |
+| Erreurs console | 0 |
+| Exceptions JavaScript | 0 |
+| Requêtes en échec | 0 |
+| Squelettes perpétuels | 0 |
+| Cartes vides sans motif | 0 |
+| Débordements horizontaux | 0 |
+| Entrées `/api/client-log` | 0 |
+
+Les deux défauts que le relevé précédent portait encore sont fermés :
+`VXCharts.donutCard is not a function` sur Système › données, et la carte
+« Scénarios Bull / Base / Bear » vidée à néant sur la fiche Analyse quand le
+dossier est incomplet.
+
 ## Graphiques et widgets (`tools/qa/audit_graphiques.py`, 1600 px)
 
 Les deux premiers outils mesurent la PAGE (statut, erreurs, squelettes,
