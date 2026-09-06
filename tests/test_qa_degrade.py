@@ -58,7 +58,13 @@ from tools.mesures import mesurer_qa_degrade as _mes  # noqa: E402
 #  La variable était ignorée : sur la seule instance mesurable de la machine
 #  (QA, sans code d'accès), le gardien continuait de dormir — y compris sous le
 #  job CI que le dépôt prépare, qui pose pourtant cette variable sur 5003.
-#  Le défaut sans variable reste 5002 : aucun poste existant ne change.
+#
+#  LE DÉFAUT EST PASSÉ À 5003 le 2026-09-06, avec les dix autres instruments.
+#  Viser 5002 par défaut, c'est frapper l'instance branchée sur le courtier et
+#  protégée par un code — sur le poste de l'auteur — et sonder un port dont on
+#  ne sait rien sur toute autre machine. Le dépôt est public : n'importe qui
+#  peut lancer ces outils. `VERTEX_MESURE_BASE` reste le moyen de viser autre
+#  chose, explicitement.
 BASE = _mes.BASE_DEFAUT
 
 #  LE MÊME CRITÈRE QUE LES TROIS MODULES FRÈRES, ET IL VIT DANS L'INSTRUMENT.
@@ -245,9 +251,9 @@ def _recharger_instrument(valeur):
     retirée. MESURE, sur un poste qui pose la variable :
 
     ```text
-    VERTEX_MESURE_BASE=http://127.0.0.1:5003 pytest tests/test_qa_degrade.py
-      avant : environnement restauré à …:5003, _mes.BASE_DEFAUT figé à …:5002
-      après : environnement restauré à …:5003, _mes.BASE_DEFAUT = …:5003
+    VERTEX_MESURE_BASE=http://127.0.0.1:5290 pytest tests/test_qa_degrade.py
+      avant : environnement restauré à …:5290, _mes.BASE_DEFAUT figé au défaut
+      après : environnement restauré à …:5290, _mes.BASE_DEFAUT = …:5290
     ```
 
     Sans effet sur la suite actuelle (aucun autre module ne lit
@@ -288,9 +294,11 @@ def test_le_banc_vise_l_instance_que_l_instrument_vise():
         assert _recharger_instrument('http://127.0.0.1:5003') == 'http://127.0.0.1:5003', (
             'l’instrument ignore VERTEX_MESURE_BASE, contrairement à ses trois '
             'modules frères')
-        assert _recharger_instrument(None) == 'http://127.0.0.1:5002', (
-            'le défaut a changé : un poste existant se met à mesurer une autre '
-            'instance sans l’avoir demandé')
+        assert _recharger_instrument(None) == 'http://127.0.0.1:5003', (
+            'le défaut d’un instrument de mesure doit rester l’instance de '
+            'VÉRIFICATION : viser 5002 par défaut, c’est frapper l’instance '
+            'branchée sur le courtier, lui voler des requêtes, et sonder un '
+            'port inconnu sur une machine tierce')
     finally:
         #  L'ENVIRONNEMENT DU POSTE D'ABORD, LE MODULE ENSUITE.
         _recharger_instrument(poste)
@@ -299,14 +307,21 @@ def test_le_banc_vise_l_instance_que_l_instrument_vise():
 def test_l_instrument_reste_accorde_a_l_environnement_du_poste():
     """Le banc précédent manipule un module global : il doit le rendre INTACT.
 
-    MESURE : `VERTEX_MESURE_BASE=http://127.0.0.1:5003 pytest -q
-    tests/test_qa_degrade.py` laissait `_mes.BASE_DEFAUT` à `…:5002` alors que
-    la variable, elle, était bien restaurée à `…:5003` — l'instrument et son
-    environnement racontaient deux instances différentes pour le reste de la
-    session pytest."""
+    MESURE : `VERTEX_MESURE_BASE=<autre> pytest -q tests/test_qa_degrade.py`
+    laissait `_mes.BASE_DEFAUT` au défaut alors que la variable, elle, était
+    bien restaurée — l'instrument et son environnement racontaient deux
+    instances différentes pour le reste de la session pytest.
+
+    Le défaut attendu est lu chez l'INSTRUMENT et non recopié ici : le figer
+    obligerait à modifier ce banc à chaque déplacement du port, et c'est
+    exactement ce qui vient d'arriver quand les onze instruments sont passés de
+    5002 à 5003."""
+    import importlib
     import os
 
-    attendu = os.environ.get('VERTEX_MESURE_BASE') or 'http://127.0.0.1:5002'
+    frais = importlib.import_module('tools.mesures._sonde_http')
+    defaut = getattr(frais, 'BASE_DEFAUT_SANS_ENV', None) or 'http://127.0.0.1:5003'
+    attendu = os.environ.get('VERTEX_MESURE_BASE') or defaut
     assert _mes.BASE_DEFAUT == attendu, (
         'l’instrument vise %s alors que l’environnement dit %s : un banc l’a '
         'rechargé au mauvais moment' % (_mes.BASE_DEFAUT, attendu))
