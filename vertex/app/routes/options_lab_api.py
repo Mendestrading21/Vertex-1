@@ -67,6 +67,15 @@ def api_options_strategies(sym):
         res['entrees'] = _entrees.provenance(scan_state, sym)
         res['as_of'] = scan_state.get('scan_ts_h') or scan_state.get('updated')
         res['demo'] = DEMO_MODE
+        #  Verdict, liquidité, mouvement attendu, asymétrie et scénarios : calculés
+        #  ICI (vertex/options/structure_verdict.py), plus dans la page.
+        if res.get('available') and isinstance(res.get('strategies'), list):
+            from vertex.options import structure_verdict as _sv
+            res.setdefault('sym', sym)
+            for s in res['strategies']:
+                if isinstance(s, dict):
+                    s['analyse'] = _sv.analyser(res, s, board)
+            res['analyse_source'] = 'structure_verdict (serveur)'
         return jsonify(res)
     except Exception as e:
         return jsonify({'available': False, 'reason': 'options_lab_unavailable'}), 200

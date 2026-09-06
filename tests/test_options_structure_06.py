@@ -65,10 +65,15 @@ def test_options_pages_render_200(client):
 def test_verdict_card_present_and_honest():
     src = _read(JS)
     assert 'function verdictCard' in src and 'vx-verdict-card' in src
+    #  Mission alimentation (2026-09-06) : les libellés de verdict sont décidés
+    #  par le SERVEUR (structure_verdict) ; la page les peint depuis `analyse`.
+    from vertex.options import structure_verdict as sv
+    serveur = open(sv.__file__, encoding='utf-8').read()
     for verdict in ('Asymétrie excellente', 'Structure intéressante mais chère',
                     'Risque/temps médiocre', 'Liquidité insuffisante',
                     'Données insuffisantes', 'Attendre une meilleure entrée'):
-        assert verdict in src, f'verdict manquant : {verdict}'
+        assert verdict in serveur, f'verdict manquant : {verdict}'
+    assert 'm.verdict.label' in src
     # ratio d'asymétrie = gain exceptionnel / perte max
     assert "d'asymétrie" in src or 'asymétrie' in src
     # aucune probabilité inventée : la PoP vient du moteur et reste estimation
@@ -79,7 +84,11 @@ def test_verdict_card_present_and_honest():
 def test_scenario_card_expiry_labeled():
     src = _read(JS)
     assert 'function renderScenarios' in src
-    assert 'Pessimiste' in src and 'Probable' in src and 'Exceptionnel' in src
+    #  Les trois scénarios sont SERVIS (structure_verdict.scenarios) ; la page les peint.
+    from vertex.options import structure_verdict as sv
+    serveur = open(sv.__file__, encoding='utf-8').read()
+    assert 'Pessimiste' in serveur and 'Probable' in serveur and 'Exceptionnel' in serveur
+    assert 'a.scenarios' in src
     assert "à l'échéance" in src
     # distinction explicite payoff échéance vs valeur avant échéance
     assert 'valeur-temps' in src or 'avant l' in src
@@ -106,12 +115,16 @@ def test_greeks_always_interpreted_or_insufficient():
 
 # ── Liquidité (LOT G) ────────────────────────────────────────────────────
 def test_liquidity_states_explicit_no_zero_for_missing():
-    src = _read(JS)
-    assert 'function liqState' in src
+    """Mission alimentation (2026-09-06) : l'état de liquidité est calculé par
+    le SERVEUR (vertex/options/structure_verdict.py) et peint par la page —
+    plus de calcul financier dans l'interface."""
+    from vertex.options import structure_verdict as sv
+    assert 'function liqState' not in _read(JS)
+    assert 'analyseDe(' in _read(JS)
     for s in ('Excellente', 'Acceptable', 'Médiocre', 'Insuffisante'):
-        assert s in src
+        assert s in open(sv.__file__, encoding='utf-8').read()
     # bid/ask ou OI absent => insuffisante (jamais remplacé par zéro)
-    assert 'non évaluable' in src
+    assert sv.etat_liquidite(None, None)['note'] == 'bid/ask ou OI absent — non évaluable'
 
 
 # ── LEAPS explicable (LOT B) ─────────────────────────────────────────────

@@ -24,69 +24,15 @@
     return VX.fetch('/api/options', { ttl: 120000 }).then(function (d) { _board = (d && d.board) || []; return _board; }).catch(function () { return []; });
   }
 
-  /* ── Liquidité (LOT G) — état explicite, jamais un zéro pour un bid/ask absent ── */
-  function liqState(oi, vol, spreadPct) {
-    if (oi == null && spreadPct == null) return { key: 'insuffisante', label: 'Insuffisante', tone: 'neg', note: 'bid/ask ou OI absent — non évaluable' };
-    var o = oi || 0, s = (spreadPct == null ? 99 : spreadPct);
-    if (o >= 5000 && s <= 3) return { key: 'excellente', label: 'Excellente', tone: 'pos', note: 'OI ' + nd(oi) + ' · spread ' + num(s, 1) + ' %' };
-    if (o >= 1500 && s <= 6) return { key: 'acceptable', label: 'Acceptable', tone: 'pos', note: 'OI ' + nd(oi) + ' · spread ' + num(s, 1) + ' %' };
-    if (o >= 500 && s <= 10) return { key: 'mediocre', label: 'Médiocre', tone: 'warn', note: 'OI ' + nd(oi) + ' · spread ' + num(s, 1) + ' %' };
-    return { key: 'insuffisante', label: 'Insuffisante', tone: 'neg', note: 'OI ' + nd(oi) + ' · spread ' + num(s, 1) + ' %' };
-  }
-  function contractsFor(bd, sym, exp) {
-    return (bd || []).filter(function (c) { return c.sym === sym && (!exp || c.exp === exp); });
-  }
-  /* liquidité d'une stratégie = pire jambe (approchée depuis le board). */
-  function strategyLiquidity(bd, sym, exp, legs) {
-    var cs = contractsFor(bd, sym, exp);
-    if (!cs.length) { var near = contractsFor(bd, sym, null); if (!near.length) return liqState(null, null, null);
-      var oi0 = Math.min.apply(null, near.map(function (c) { return c.oi || 0; })); var sp0 = Math.max.apply(null, near.map(function (c) { return c.spread_pct == null ? 99 : c.spread_pct; }));
-      return liqState(oi0, null, sp0); }
-    var worst = null;
-    (legs || []).forEach(function (l) {
-      var t = (l.type || '').toUpperCase();
-      var c = cs.filter(function (x) { return x.type === t && Math.abs((x.strike || 0) - (l.strike || 0)) < 0.6; })[0]
-        || cs.filter(function (x) { return x.type === t; }).sort(function (a, b) { return Math.abs(a.strike - l.strike) - Math.abs(b.strike - l.strike); })[0];
-      if (!c) return;
-      var st = liqState(c.oi, c.vol, c.spread_pct);
-      var rank = { excellente: 3, acceptable: 2, mediocre: 1, insuffisante: 0 };
-      if (worst == null || rank[st.key] < rank[worst.key]) worst = st;
-    });
-    return worst || liqState(null, null, null);
-  }
-
-  /* ── Interpolation P&L à l'échéance depuis la courbe payoff ── */
-  function pnlAt(payoff, px) {
-    if (!payoff || !payoff.length) return null;
-    if (px <= payoff[0].price) return payoff[0].pnl;
-    if (px >= payoff[payoff.length - 1].price) return payoff[payoff.length - 1].pnl;
-    for (var i = 1; i < payoff.length; i++) {
-      if (px <= payoff[i].price) {
-        var a = payoff[i - 1], b = payoff[i], t = (px - a.price) / (b.price - a.price);
-        return a.pnl + t * (b.pnl - a.pnl);
-      }
-    }
-    return payoff[payoff.length - 1].pnl;
-  }
-  function expectedMove(spot, ivDec, dte) {
-    if (!spot || !ivDec || !dte) return null;
-    return spot * ivDec * Math.sqrt(dte / 365);
-  }
-
-  /* ── Verdict analytique (LOT A) — jamais une probabilité inventée ── */
-  function computeVerdict(s, liq, spot, capital, gainExc) {
-    var asym = (capital > 0 && gainExc != null) ? (gainExc / capital) : null;
-    var expensive = (spot && capital) ? (capital / (spot * 100) > 0.12) : false;
-    if (liq.key === 'insuffisante') return { label: 'Liquidité insuffisante', tone: 'neg', why: 'liquidité insuffisante — aucun verdict positif possible', dominant: true };
-    if (asym == null) return { label: 'Données insuffisantes', tone: 'muted', why: 'asymétrie non calculable' };
-    if (asym >= 3) return { label: 'Asymétrie excellente', tone: 'pos', why: 'gain exceptionnel ≈ ' + num(asym, 1) + '× la perte max' };
-    if (asym >= 1.8) return expensive
-      ? { label: 'Structure intéressante mais chère', tone: 'warn', why: 'asymétrie ' + num(asym, 1) + '× mais prime élevée (>12 % du notionnel)' }
-      : { label: 'Structure intéressante', tone: 'muted', why: 'asymétrie ' + num(asym, 1) + '× — correcte sans être exceptionnelle' };
-    if (s.days_to_exp != null && s.days_to_exp < 20) return { label: 'Risque/temps médiocre', tone: 'warn', why: 'échéance courte (' + s.days_to_exp + ' j) pour cette asymétrie' };
-    if (asym < 1.2) return { label: 'Risque/temps médiocre', tone: 'warn', why: 'asymétrie faible (' + num(asym, 1) + '×)' };
-    return { label: 'Attendre une meilleure entrée', tone: 'muted', why: 'asymétrie moyenne — patienter est une décision valide' };
-  }
+  /* ── Liquidité, mouvement attendu, asymétrie, verdict, scénarios ──
+     Calculés par le SERVEUR (vertex/options/structure_verdict.py) et servis
+     dans `strategie.analyse` par /api/options/strategies/<sym>. Les fonctions
+     qui vivaient ici (liqState, strategyLiquidity, pnlAt, expectedMove,
+     computeVerdict) étaient un calcul financier dans l'interface : retirées,
+     la page PEINT. Scénarios et P&L à l'échéance (payoff) viennent du serveur.
+     Liquidité absente = « Insuffisante — non évaluable », jamais un zéro
+     (règle conservée côté serveur). ── */
+  function analyseDe(s) { return (s && s.analyse) || null; }
 
   /* ════════════════ VUE STRUCTURE ════════════════ */
   var _structRetry = {};
@@ -112,26 +58,18 @@
           ($('vx-os-payoff')||{}).innerHTML = '<div class="vx-empty">—</div>'; return;
         }
         var s = d.strategies.filter(function (x) { return x.recommended; })[0] || d.strategies[0];
-        var ivDec = d.iv;                               // décimale (moteur corrigé PR n°6)
-        var spot = d.spot, dte = s.days_to_exp, capital = Math.abs(s.max_loss || 0);
-        var em = expectedMove(spot, ivDec, dte);
-        /* orienter le mouvement « favorable » par le biais : baissier → vers le bas. */
-        var dir = (d.bias === 'bearish') ? -1 : 1;
-        var pProb = em ? spot + dir * em : null, pExc = em ? spot + dir * 2 * em : null;
-        var gainProb = pProb != null ? pnlAt(s.payoff, pProb) : null;
-        var gainExc = s.max_profit_unbounded ? (pExc != null ? pnlAt(s.payoff, pExc) : null) : s.max_profit;
-        var liq = strategyLiquidity(bd, sym, d.exp, s.legs);
-        var verdict = computeVerdict(s, liq, spot, capital, gainExc);
-        var asym = (capital > 0 && gainExc != null) ? (gainExc / capital) : null;
-        var cs = contractsFor(bd, sym, d.exp);
-        var catContract = cs[0];
+        var a = analyseDe(s);
+        if (!a || !a.verdict) {
+          vHost.innerHTML = insufficientCard(sym, 'analyse serveur absente (structure_verdict)');
+          ($('vx-os-payoff')||{}).innerHTML = '<div class="vx-empty">—</div>'; return;
+        }
         vHost.innerHTML = verdictCard(d, s, {
-          spot: spot, dte: dte, capital: capital, gainProb: gainProb, gainExc: gainExc,
-          asym: asym, liq: liq, verdict: verdict, ivDec: ivDec, em: em
+          spot: a.spot, dte: a.dte, capital: a.capital, gainProb: a.gain_prob, gainExc: a.gain_exc,
+          asym: a.asym, liq: a.liquidite, verdict: a.verdict, ivDec: a.iv_dec, em: a.em
         });
-        renderScenarios(d, s, { spot: spot, em: em, capital: capital, dte: dte });
-        renderPayoff(d, s, { spot: spot, capital: capital });
-        renderGreeks(s, ivDec);
+        renderScenarios(d, s, a);
+        renderPayoff(d, s, { spot: a.spot, capital: a.capital });
+        renderGreeks(s, a.iv_dec);
         renderCompare(d, bd);
       })
       .catch(function (e) { vHost.innerHTML = VX.states.error('Analyse indisponible : ' + esc(e.message)); });
@@ -187,24 +125,19 @@
   }
 
   /* Carte-Scénario (LOT C) — valeurs À L'ÉCHÉANCE (distinctes de la valeur avant échéance). */
-  function renderScenarios(d, s, m) {
+  function renderScenarios(d, s, a) {
     var host = $('vx-os-scenarios'); if (!host) return;
-    if (!m.em) { host.innerHTML = '<section class="vx-card"><div class="vx-meta">Scénarios indisponibles : IV absente, mouvement attendu non calculable (aucune valeur inventée).</div></section>'; return; }
-    var up = (d.bias === 'bearish') ? -1 : 1;
-    var defs = [
-      { key: 'Pessimiste', px: m.spot - up * m.em, cond: 'mouvement contraire ~1σ', tone: 'neg' },
-      { key: 'Probable', px: m.spot + up * m.em, cond: 'mouvement attendu ~1σ (IV·√t)', tone: 'muted' },
-      { key: 'Exceptionnel', px: m.spot + up * 2 * m.em, cond: 'mouvement favorable ~2σ', tone: 'pos' }
-    ];
-    var cards = defs.map(function (x) {
-      var pnl = pnlAt(s.payoff, x.px);
-      var pct = m.capital > 0 ? (pnl / m.capital * 100) : null;
-      return '<div class="vx-scenario" data-kind="' + (x.key === 'Pessimiste' ? 'down' : x.key === 'Exceptionnel' ? 'up' : 'base') + '">'
-        + '<div class="vx-scenario-head"><b>' + x.key + '</b><span class="vx-meta">' + esc(x.cond) + '</span></div>'
+    var sc = (a && a.scenarios) || [];
+    if (!a || !a.em || !sc.length) { host.innerHTML = '<section class="vx-card"><div class="vx-meta">Scénarios indisponibles : IV absente, mouvement attendu non calculable (aucune valeur inventée).</div></section>'; return; }
+    /* Scénarios SERVIS (structure_verdict) : prix, P&L et % viennent du serveur. */
+    var cards = sc.map(function (x) {
+      var pnl = x.pnl, pct = x.pct;
+      return '<div class="vx-scenario" data-kind="' + esc(x.kind || 'base') + '">'
+        + '<div class="vx-scenario-head"><b>' + esc(x.cle) + '</b><span class="vx-meta">' + esc(x.cond) + '</span></div>'
         + '<div class="vx-kv"><span class="k">Sous-jacent</span><span class="v vx-mono">' + price(x.px) + '</span></div>'
-        + '<div class="vx-kv"><span class="k">P&L (échéance)</span><span class="v vx-mono ' + (pnl >= 0 ? 'vx-pos' : 'vx-neg') + '">' + (pnl >= 0 ? '+' : '') + price(pnl) + '</span></div>'
+        + '<div class="vx-kv"><span class="k">P&L (échéance)</span><span class="v vx-mono ' + (pnl >= 0 ? 'vx-pos' : 'vx-neg') + '">' + (pnl != null ? ((pnl >= 0 ? '+' : '') + price(pnl)) : 'n/d') + '</span></div>'
         + '<div class="vx-kv"><span class="k">P&L %</span><span class="v vx-mono ' + (pct >= 0 ? 'vx-pos' : 'vx-neg') + '">' + (pct != null ? (pct >= 0 ? '+' : '') + num(pct, 0) + ' %' : 'n/d') + '</span></div>'
-        + '<div class="vx-kv"><span class="k">Horizon</span><span class="v">' + (m.dte != null ? m.dte + ' j' : '—') + '</span></div>'
+        + '<div class="vx-kv"><span class="k">Horizon</span><span class="v">' + (x.horizon_j != null ? x.horizon_j + ' j' : '—') + '</span></div>'
         + '</div>';
     }).join('');
     host.innerHTML = '<section class="vx-card" aria-label="Scénarios de la structure">'
@@ -310,11 +243,12 @@
     var rows = d.strategies || []; if (rows.length < 2) { host.innerHTML = ''; return; }
     var head = ['Structure', 'Coût/risque max', 'Gain max', 'Breakeven', 'Delta', 'Theta', 'Vega', 'PoP', 'DTE', 'Liquidité', 'Asymétrie', 'Adéquation'];
     var body = rows.map(function (s) {
-      var cap = Math.abs(s.max_loss || 0);
+      var an = analyseDe(s) || {};
+      var cap = an.capital != null ? an.capital : Math.abs(s.max_loss || 0);
       var gmax = s.max_profit_unbounded ? '∞' : (s.max_profit != null ? price(s.max_profit) : '—');
-      var asym = (cap > 0 && s.max_profit != null && !s.max_profit_unbounded) ? (s.max_profit / cap) : (s.max_profit_unbounded ? null : null);
+      var asym = an.asym_compare != null ? an.asym_compare : null;   // servi (max_profit / capital)
       var g = s.greeks || {};
-      var liq = strategyLiquidity(bd, d.sym, d.exp, s.legs);
+      var liq = an.liquidite || { key: 'insuffisante', label: 'Insuffisante', tone: 'neg' };
       return '<tr' + (s.recommended ? ' class="vx-row-hl"' : '') + '>'
         + '<td data-label="Structure">' + (s.recommended ? '★ ' : '') + esc(s.label) + '</td>'
         + '<td data-label="Risque max" class="vx-num vx-neg">' + price(cap) + '</td>'

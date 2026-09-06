@@ -176,3 +176,4 @@ Légende état : **RÉEL** (source identifiée, chaîne complète) · **PARTIEL*
 | 10 | P2 | Sources officielles macro absentes (FRED, BCE, BNS) | **corrigé** (nouvelle chaîne source → carte) |
 | 11 | P2 | SEC EDGAR branchée mais inactive et non consommée | consigné (action humaine : `SEC_USER_AGENT`) |
 | 12 | P1 | Entonnoir Marchés « Achats = 0 » structurel (vocabulaire français seul alors que le scan parle anglais) | **corrigé** : même vocabulaire que l'entonnoir d'Aujourd'hui (gardien d'égalité) ; mesuré sur l'instance QA : 513 → 513 → 294 → 94 au lieu de 0 |
+| 13 | P1 | Vue Structure (Options) : verdict, liquidité, mouvement attendu, asymétrie et scénarios calculés dans le JavaScript de la page | **corrigé** : propriétaire serveur `vertex/options/structure_verdict.py` (règles reprises à l'identique, épinglées par `test_structure_verdict`), servi dans `strategie.analyse` par `/api/options/strategies/<sym>` ; la page peint |
