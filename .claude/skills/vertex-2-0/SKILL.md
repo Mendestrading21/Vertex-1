@@ -108,6 +108,9 @@ jobs, données persistées et chemins de rollback. Lire
 
 - Contrat sources, confiance, provenance et états :
   [data-and-integrations.md](references/data-and-integrations.md).
+- Maintenance de l'alimentation (procédures testées : inventaire des champs,
+  traçabilité, frontière IBKR, réseau hors requête, diffusion, gardiens) :
+  [data-feed-maintenance.md](references/data-feed-maintenance.md).
 - Décision, IA, outils, mémoire et limites :
   [ai-decision-contract.md](references/ai-decision-contract.md).
 - Recherche, stratégies et robustesse hors échantillon :
