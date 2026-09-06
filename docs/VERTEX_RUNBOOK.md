@@ -103,6 +103,7 @@ Chaque tranche de la mission est un commit revertible sur
 | `/api/company` et `/api/correlations` hors requête | `13b063e0` | oui |
 | Delta du brief (market_context) | `b58b6270` | oui |
 | P1 diffusion (réaction client SSE, émetteurs news/jobs) | `c2c0e2b0` | oui (touche `vertex/static` : re-bump requis) |
+| P2 actualités horodatées | `1f3b5791` | oui |
 
 Après un revert touchant `vertex/static`, bumper `td-shell-vN`
 (`vertex/app/routes/system.py`), `SHELL_VERSION` (`vertex/ui/shell/__init__.py`)

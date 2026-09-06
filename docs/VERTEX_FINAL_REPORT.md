@@ -41,6 +41,7 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 | `13b063e0` | `/api/company` et `/api/correlations` sans réseau dans la requête | `git revert` |
 | `b58b6270` | delta du brief depuis le diff market_context | `git revert` |
 | `c2c0e2b0` | P1 diffusion : réaction client aux événements SSE, émetteurs actualités/jobs (coque vx-shell-8, SW v295) | `git revert` puis re-bump |
+| `1f3b5791` | P2 actualités : horodatages source/réception, fil daté, sources comptées | `git revert` |
 
 ## 4. Pages et champs effectivement couverts
 
