@@ -4,10 +4,44 @@ Claude lit, analyse, explique, propose. Il ne calcule pas les indicateurs
 (les moteurs déterministes s'en chargent) et ne peut JAMAIS toucher un ordre :
 tout outil interdit est rejeté à l'enregistrement, et les tests de sécurité
 inspectent ce registre.
+
+## ⚠ AUCUN CHEMIN DE PRODUCTION N'ENREGISTRE D'OUTIL — NON_IMPLÉMENTÉ
+
+Mesuré le 2026-09-06, fermeture transitive des imports depuis les points
+d'entrée réels (`terminal.py`, `vertex/runtime.py`, `vertex/app/factory.py`) :
+ce module n'est atteint que par ses propres bancs. Aucun appelant n'instancie
+`ToolRegistry`, et le seul `tools=` transmis à l'API Anthropic est le
+`web_search` HÉBERGÉ côté fournisseur (`vertex/ai/web_provider.py`) — pas un
+outil local de Vertex.
+
+Autrement dit : Claude ne reçoit aujourd'hui AUCUN outil de ce dépôt. Il reçoit
+un prompt et un paquet de données, et sa réponse est validée
+(`response_validator`, qui rejette tout chiffre absent du paquet).
+
+Il faut l'écrire ici, en tête, parce que la phrase ci-dessus — « tout outil
+interdit est rejeté à l'enregistrement » — est vraie et pourtant trompeuse :
+elle décrit une garde qui ne garde rien, faute de quelque chose à garder. Ce
+n'est PAS un trou de sécurité (aucun outil exposé, donc aucun outil interdit
+atteignable) ; c'est une capacité annoncée et non branchée, ce que l'invariant 8
+demande de nommer.
+
+Le module est conservé : il porte la liste blanche, la liste noire et la
+distinction proposition/lecture, qui restent le contrat à respecter le jour où
+des outils seront exposés. `ETAT` et `MANQUE` le disent à un programme autant
+qu'à un lecteur.
 """
 from __future__ import annotations
 
 from typing import Callable
+
+#: État réel de la capacité, lisible par un programme autant que par un humain.
+ETAT = 'NON_IMPLÉMENTÉ'
+#: Ce qui manque pour l'activer, mesuré et non supposé.
+MANQUE = (
+    'aucun appelant de production n’instancie ToolRegistry',
+    'le seul `tools=` transmis à l’API est le web_search hébergé du fournisseur, '
+    'pas un outil local de Vertex',
+)
 
 ALLOWED_TOOLS = (
     'get_strategy', 'get_market_regime', 'get_market_breadth', 'get_portfolio',
