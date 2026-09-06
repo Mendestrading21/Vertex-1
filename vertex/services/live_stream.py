@@ -15,7 +15,7 @@ import time
 from collections import deque
 
 CHANNELS = ('market', 'positions', 'options', 'portfolio', 'decisions',
-            'alerts', 'connections', 'jobs', 'system')
+            'alerts', 'connections', 'jobs', 'system', 'news')
 
 
 class _Broker:

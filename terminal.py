@@ -13,6 +13,7 @@ Données :  yfinance (différé ~15 min — OK swing). Greeks/GEX = Black-Schole
 import os
 import copy
 import hashlib
+import contextlib
 import json
 import time
 import threading
@@ -1725,6 +1726,13 @@ def _news_loop():
             #  fausse elle aussi ; la vraie est celle d'en dessous, 60 s.
             from vertex.scheduler import registry as _sched
             _sched.beat('NEWS_REFRESH', ok=True)
+            #  Diffusion : les cartes Actualités se rafraîchissent sur l'événement
+            #  (comptes et provenance seulement — jamais le contenu).
+            with contextlib.suppress(Exception):
+                from vertex.services.live_stream import BROKER as _broker
+                _broker.publish('news', {'n': len(news_state.get('items') or []),
+                                         'source': news_state.get('source'),
+                                         'updated': news_state.get('updated')})
         except Exception as e:
             #  Ce battement ne pouvait JAMAIS dire ERREUR : place en fin de
             #  `try`, il n'etait atteint qu'en cas de succes, et l'echec

@@ -1584,6 +1584,9 @@ async function pfFresh(){
   if(a==null){dire('Session non horodatée — âge inconnu','missing');return;}
   el.innerHTML=VX.freshness.chip(VX.freshness.assess({ageMs:a,live:live}));
 }
+/* Diffusion (P1) : rejeu sur événement serveur (cotations, scan) — le
+   portefeuille est déclaré localement, la sous-vue vient de l'URL. */
+if(window.VX&&VX.refresh&&VX.refresh.register)VX.refresh.register(function(){pfFresh();return (RENDER[VIEW]||renderTeam)();},15*60*1000,'portefeuille-live');
 function boot(){pfFresh();(RENDER[VIEW]||renderTeam)().catch(e=>{($('pf-body')||{}).innerHTML=VX.states.error(e.message);});}
 if(window.VXCharts&&window.Chart)boot();else window.addEventListener('load',boot,{once:true});
 ['vx:position-changed','vx:watchlist-changed','vx:follow-changed','vx:favorites-changed']

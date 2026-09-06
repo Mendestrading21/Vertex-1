@@ -1456,6 +1456,12 @@ const RENDER={screener:()=>renderScreener(null),
   etf:()=>renderScreener('ETF'),
   options:renderOptions,portfolio:renderPortfolio,
   anomalies:renderAnomalies,calendar:renderCalendar};
+/* Diffusion (P1) : rejeu sur événement serveur, SAUF le screener (filtres et
+   tri saisis par l'utilisateur : un rejeu les écraserait). */
+if(window.VX&&VX.refresh&&VX.refresh.register)VX.refresh.register(function(){
+  if(VIEW==='screener')return Promise.resolve();
+  return (RENDER[VIEW]||function(){return Promise.resolve();})();
+},15*60*1000,'opportunités-live');
 function boot(){(RENDER[VIEW]||renderScreener)().catch(e=>{
   ($('op-body')||{}).innerHTML=VX.states.error('Chargement impossible : '+e.message);});}
 if(window.VXCharts&&window.Chart)boot();else window.addEventListener('load',boot,{once:true});

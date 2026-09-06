@@ -457,6 +457,13 @@
       this._tasks.forEach((t) => { if (t.persistent) { keep.push(t); } else { clearInterval(t.id); } });
       this._tasks = keep;
     },
+    /* Rejoue les tâches de la page (sans toast, sans vider tout le cache) :
+       appelé par live-updates.js quand le serveur annonce une donnée neuve. */
+    async runTasks() {
+      if (document.hidden) return false;
+      await Promise.allSettled(this._tasks.map((t) => { try { return t.fn(); } catch (e) { return null; } }));
+      return true;
+    },
     async runAll(btn) {
       if (btn) { btn.dataset.state = 'refreshing'; btn.disabled = true; }
       VX.fetch.invalidate();      // vide cache mémoire + persistance (rafraîchissement explicite)

@@ -10,6 +10,7 @@ univers (l'ordre d'affichage reflète cette priorité).
 """
 from __future__ import annotations
 
+import contextlib
 import time
 import threading
 
@@ -155,6 +156,11 @@ def beat(name: str, ok: bool = True, error: str | None = None,
         j['echecs_consecutifs'] = 0 if ok else j.get('echecs_consecutifs', 0) + 1
         if duration_ms is not None:
             j['last_duration_ms'] = round(duration_ms)
+    #  Diffusion (canal `jobs`) : la page Système suit les battements sans
+    #  sonder. Hors verrou, jamais bloquant, jamais une exception ici.
+    with contextlib.suppress(Exception):
+        from vertex.services.live_stream import BROKER as _broker
+        _broker.publish('jobs', {'job': name, 'ok': bool(ok)})
 
 
 def jobs() -> list[dict]:

@@ -729,7 +729,7 @@ async function loadMacroOfficiel(){
     +'<div class="vx-meta vx-mt2">Publications officielles, jamais des cotations : la date affichée est celle de la source. Droits : affichage personnel avec attribution (FRED, BCE, BNS).</div>';
   host.innerHTML=html+foot;
 }
-if(window.VX&&VX.bus){VX.bus.on('vx:live:market',function(ev){ if(ev&&ev.macro_officiel&&VIEW==='macro'){ VX.fetch.invalidate&&VX.fetch.invalidate('/api/macro/officiel'); loadMacroOfficiel(); } });}
+if(window.VX&&VX.bus){VX.bus.on('vx:live:market',function(ev){ const d=(ev&&ev.detail)||{}; if(d.macro_officiel&&VIEW==='macro'){ VX.fetch.invalidate&&VX.fetch.invalidate('/api/macro/officiel'); loadMacroOfficiel(); } });}
 async function loadMacroCal(){
   try{
     const cal=await VX.fetch('/cal-feed',{ttl:300000});
@@ -1021,6 +1021,9 @@ function bindDisclosureResize(){
     });
   });
 }
+/* Diffusion (P1) : `boot` est rejoué sur `vx:data-refreshed` (émis par
+   live-updates.js APRÈS invalidation du cache, regroupé) — voir la fin du
+   script. La sous-vue vient de l'URL, aucun filtre local n'est perdu. */
 async function boot(){
   bindDisclosureResize();
   const render=(scan)=>{
