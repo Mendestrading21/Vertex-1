@@ -1490,7 +1490,7 @@ async function renderWatchlist(){
       ${follows.length?follows.map(r=>{
         /* `+null`, `+''` et `+false` valent 0, et `isFinite(0)` vaut true : la
            garde laissait passer une ABSENCE et la barre dessinait un plan
-           « 0,00 STOP · 361,19 ENTRÉE · 0,00 OBJECTIF » — une perte de 100 %
+           « 0,00 STOP · 123,45 ENTRÉE · 0,00 OBJECTIF » — une perte de 100 %
            présentée comme le plan de risque du setup. Mesuré le 06/09/2026 :
            le bouton « Suivre → » d'Analyse crée un suivi sans aucun niveau
            (vx-entities.js : entry_spot/stop/tgt = null par défaut), donc ce

@@ -141,18 +141,18 @@ def test_une_echeance_lisible_ne_leve_aucun_probleme():
 def _opt_declaree(exp='2027-01-15', right='CALL', pid='p1'):
     """Ligne d'option COMPLÈTE (aucune autre erreur d'audit possible)."""
     return {'position_id': pid, 'symbol': 'MSFT', 'asset_type': 'OPTION',
-            'quantity': 7, 'capital_committed': 9800.0, 'currency': 'USD',
+            'quantity': 4, 'capital_committed': 6000.0, 'currency': 'USD',
             'source': 'MANUAL', 'strike': 500.0, 'expiration': exp,
             'multiplier': 100, 'right': right, 'thesis_text': 'thèse déclarée'}
 
 
 def test_le_meme_contrat_declare_dans_deux_formats_reste_un_doublon():
     """MESURE : MSFT 2027-01-15 500 C saisi une fois '2027-01-15' et une fois
-    '2027.01.15' — le format réellement présent sur le desk — sortait
+    '2027.01.15' — un format que les desks portent réellement — sortait
     `status: HEALTHY`, `critical: 0`, `findings: []`, alors que les DEUX mêmes
     formats sortent `CRITICAL` / DUPLICATE_IDENTITY. La clé d'identité
-    comparait la chaîne brute : 9 800 $ de capital engagé comptés deux fois
-    échappaient à l'audit d'intégrité."""
+    comparait la chaîne brute, donc un même contrat compté deux fois échappait
+    à l'audit d'intégrité — quel que soit le capital engagé."""
     from vertex.positions import audit
     r = audit.audit_positions([_opt_declaree('2027-01-15', pid='p1'),
                                _opt_declaree('2027.01.15', pid='p2')])

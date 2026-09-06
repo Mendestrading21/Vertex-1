@@ -21,7 +21,7 @@ des ÉNONCÉS (heure, unité, cause, provenance), pas des chiffres.
    zéro requête supplémentaire).
 3. Absence rendue comme un zéro — `const e=+r.entry_spot` avec `entry_spot=null`
    donne 0, `isFinite(0)` est vrai : la barre de plan affichait
-   « 0,00 STOP · 361,19 ENTRÉE · 0,00 OBJECTIF », un R:R fabriqué, alors que le
+   « 0,00 STOP · 123,45 ENTRÉE · 0,00 OBJECTIF », un R:R fabriqué, alors que le
    repli honnête (« — ») existait dix lignes plus bas.
 4. Cause de panne fausse — la tuile « P&L latent » écrivait « IBKR hors ligne »
    en dur ; repro avec socket vivante (`live:true`, contrats absents du board) :

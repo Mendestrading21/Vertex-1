@@ -2,15 +2,19 @@
 
 Deux mesures d'origine gèlent ce banc :
 
-1. `/api/portfolio/context` rendait `total_value 4256.59` sur un desk de
-   7 contrats MSFT + 2 contrats GOOG + 1 action KO, soit exactement
-   `7 × 499,70 + 2 × 335,31 + 88,07` : le moteur multipliait un NOMBRE DE
-   CONTRATS par le prix du SOUS-JACENT. 3 497,90 $ pour MSFT n'était ni la
-   prime (marque absente), ni le capital engagé (9 800 $), ni le notionnel
-   (349 800 $) — et `valuation_note` valait `null`, donc l'API affirmait avoir
-   tout valorisé au marché. Attendu après correction : 14 188,07
-   (14 100 déclarés + 88,07 au marché), cohérent avec `value_at_cost: 14100`
-   de `/api/positions/state` et `excluded_cost: 14100` de `/api/portfolio/stress`.
+1. `/api/portfolio/context` valorisait un contrat d'options en multipliant le
+   NOMBRE DE CONTRATS par le prix du SOUS-JACENT. Le montant obtenu n'était ni
+   la prime (marque absente), ni le capital engagé, ni le notionnel — et
+   `valuation_note` valait `null`, donc l'API affirmait avoir tout valorisé au
+   marché. Après correction, les options sortent à leur capital ENGAGÉ et
+   l'action à sa cote, ce que la note dit.
+
+   Les chiffres de ce banc sont SYNTHÉTIQUES et ronds, choisis pour que
+   l'arithmétique se vérifie de tête : 4 contrats MSFT à 6 000 $ engagés,
+   3 contrats GOOG à 3 000 $, 10 actions KO cotées 50 $. La mesure d'origine
+   avait été faite sur un desk réel ; la reproduire avec ses montants
+   publierait le portefeuille de l'utilisateur dans un dépôt public, ce que
+   l'invariant 5 interdit. La PROPRIÉTÉ mesurée est identique.
 
 2. Une option de 50 000 $ engagés sans cote sortait à `value 0.0`,
    `weight_pct 0.0`, `hhi 1.0`, sous la note « 1 position(s) valorisée(s) au
@@ -66,22 +70,29 @@ def test_portfolio_context_keeps_undeclared_asset_type_explicit():
 # ── Constat 2 : la cote du sous-jacent ne valorise JAMAIS un contrat ─────────
 
 def test_option_nest_jamais_valorisee_par_la_cote_du_sous_jacent():
-    """MESURE : 7 contrats MSFT × spot 499,70 $ = 3 497,90 $ comptés comme
-    valeur de marché, GOOG 2 × 335,31 = 670,62 $, total 4 256,59 $ et
-    `valuation_note: null`. Aucun de ces montants n'existe financièrement."""
+    """Le défaut : nombre de CONTRATS × prix du SOUS-JACENT compté comme valeur
+    de marché, et `valuation_note: null` par-dessus. Aucun de ces montants
+    n'existe financièrement.
+
+    Desk SYNTHÉTIQUE et rond, pour que l'arithmétique se lise sans calculatrice
+    et pour ne publier aucun portefeuille réel : 4 MSFT à 6 000 $ engagés,
+    3 GOOG à 3 000 $, 10 KO cotées 50 $.
+      · attendu      : 9 000 engagés + 500 au marché = 9 500
+      · fabriqué     : 4 × 400 + 3 × 300 + 10 × 50 = 3 000, poids MSFT 53,33 %
+    """
     positions = [
-        _option_canonique('MSFT', 7.0, 9800.0),
-        _option_canonique('GOOG', 2.0, 4300.0),
-        {'symbol': 'KO', 'asset_type': 'STOCK', 'quantity': 1.0, 'cost_basis': 80.0,
+        _option_canonique('MSFT', 4.0, 6000.0),
+        _option_canonique('GOOG', 3.0, 3000.0),
+        {'symbol': 'KO', 'asset_type': 'STOCK', 'quantity': 10.0, 'cost_basis': 450.0,
          'status': 'OPEN', 'is_real': True},
     ]
-    out = portfolio_context.build(positions, quotes={'MSFT': 499.7, 'GOOG': 335.31, 'KO': 88.07},
+    out = portfolio_context.build(positions, quotes={'MSFT': 400.0, 'GOOG': 300.0, 'KO': 50.0},
                                   profile=_Profile())
-    assert out['total_value'] == 14188.07          # 14 100 déclarés + 88,07 au marché
-    assert out['asset_mix']['OPTION']['value'] == 14100.0
-    assert out['weights']['MSFT'] != 82.18         # l'ancien poids fabriqué
-    assert out['weights']['MSFT'] == 69.07
-    assert out['hhi'] == 0.569                     # 0,7005 « concentré » était calculé sur la fable
+    assert out['total_value'] == 9500.0            # 9 000 déclarés + 500 au marché
+    assert out['asset_mix']['OPTION']['value'] == 9000.0
+    assert out['weights']['MSFT'] != 53.33         # l'ancien poids fabriqué
+    assert out['weights']['MSFT'] == 63.16
+    assert out['hhi'] == 0.5014                    # le HHI de la fable était plus élevé
     # La note ne peut plus valoir None : deux options sont au capital engagé.
     assert out['valuation_note'] and 'capital engagé' in out['valuation_note']
     #  `method` était comparée à elle-même (`out['valuation']['method']`) : la
@@ -96,26 +107,27 @@ def test_option_nest_jamais_valorisee_par_la_cote_du_sous_jacent():
     assert 'multiplicateur' in methode                   # marque × mult × qty
     assert 'jamais la cote du sous-jacent' in methode    # la règle violée à l'origine
     # Le sizing ne part plus d'une base fabriquée : 4 256,59 → 14 188,07.
-    sized = portfolio_context.build(positions, quotes={'MSFT': 499.7, 'GOOG': 335.31, 'KO': 88.07},
+    sized = portfolio_context.build(positions, quotes={'MSFT': 400.0, 'GOOG': 300.0, 'KO': 50.0},
                                     profile=_ProfileAvecNiveaux())
-    assert sized['sizing']['base'] == 14188.07
-    assert sized['sizing']['levels']['S']['amount_range'] == [1418.81, 2128.21]
+    assert sized['sizing']['base'] == 9500.0
+    assert sized['sizing']['levels']['S']['amount_range'] == [950.0, 1425.0]
 
 
 def test_option_avec_marque_utilise_marque_multiplicateur_quantite():
     """La marque du CONTRAT est la seule valorisation de marché admise :
-    14,00 × 100 × 7 = 9 800, jamais 7 × 499,70."""
-    out = portfolio_context.build([_option_canonique('MSFT', 7.0, 9100.0, mark=14.0)],
-                                  quotes={'MSFT': 499.7}, profile=_Profile())
-    assert out['total_value'] == 9800.0
+    15,00 × 100 × 4 = 6 000, jamais 4 × 400."""
+    out = portfolio_context.build([_option_canonique('MSFT', 4.0, 5800.0, mark=15.0)],
+                                  quotes={'MSFT': 400.0}, profile=_Profile())
+    assert out['total_value'] == 6000.0
     assert out['valuation']['at_market'] == 1
     assert out['valuation_note'] is None           # rien n'a été replié : rien à signaler
 
 
 def test_pnl_du_candidat_ne_compare_pas_un_spot_a_un_cout_par_contrat():
-    """9 800 $ / 7 contrats = 1 400 $ ; face à un spot de 499,70 $ cela ferait
-    −64,3 % — un P&L inventé. Inconnu reste inconnu, donc renforcement non
-    autorisé (jamais un oui par défaut).
+    """6 000 $ / 4 contrats = 1 500 $ ; face à un spot de 400 $ cela ferait
+    −73,3 % — un P&L inventé, obtenu en comparant un coût PAR CONTRAT au prix
+    du SOUS-JACENT. Inconnu reste inconnu, donc renforcement non autorisé
+    (jamais un oui par défaut). Chiffres synthétiques : voir l'en-tête.
 
     PRÉCISION MESURÉE (rejeu de la baseline) : le −64 % n'a JAMAIS été servi.
     Au SHA de référence, `e['cost']` lisait `cost_basis`, absent d'une option
@@ -126,8 +138,8 @@ def test_pnl_du_candidat_ne_compare_pas_un_spot_a_un_cout_par_contrat():
     discrimineraient pas contre la baseline ; c'est `pnl_note` — l'inconnu
     MOTIVÉ, absent avant — qui fait la différence.
     """
-    out = portfolio_context.build([_option_canonique('MSFT', 7.0, 9800.0)],
-                                  quotes={'MSFT': 499.7}, sym='MSFT', profile=_Profile())
+    out = portfolio_context.build([_option_canonique('MSFT', 4.0, 6000.0)],
+                                  quotes={'MSFT': 400.0}, sym='MSFT', profile=_Profile())
     assert out['candidate']['pnl_pct'] is None
     assert out['candidate']['reinforcement_allowed'] is None
     assert 'marque du contrat' in out['candidate']['pnl_note']   # l'inconnu est motivé
@@ -160,10 +172,10 @@ def test_option_canonique_sans_cost_basis_nest_pas_valorisee_zero():
     """`cost_basis` est None sur toute option canonique : lire cette clé faisait
     tomber la ligne à 0 (`p.get('cost_basis') or 0.0`). La clé propriétaire est
     `capital_committed`, comme dans vertex/positions/audit.py:18."""
-    out = portfolio_context.build([_option_canonique('MSFT', 7.0, 9800.0)],
+    out = portfolio_context.build([_option_canonique('MSFT', 4.0, 6000.0)],
                                   quotes={}, profile=_Profile())
     assert out['available'] is True
-    assert out['total_value'] == 9800.0
+    assert out['total_value'] == 6000.0
     assert out['valuation']['at_committed'] == 1
 
 

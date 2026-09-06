@@ -11,10 +11,15 @@ Ce que fait ce script :
 1. miroir du dépôt dans ``<répertoire temporaire>/vertex-qa`` (sans .git, .venv,
    .env, .vertex_secret, __pycache__) — les caches JSON du dépôt sont copiés
    tels quels : ce sont des instantanés, jamais réécrits dans le dépôt source ;
-2. environnement : ``NO_IBKR=1`` (aucune connexion courtier), ``DEMO=0`` (aucun
+2. le desk DÉCLARÉ n'est jamais copié : l'instance sert un portefeuille vide.
+   C'est à la fois une protection (le dépôt est public, et une campagne d'audit
+   recopie ce qu'elle mesure) et la bonne condition de mesure — une instance de
+   vérification doit montrer les états d'absence, pas les positions de son
+   auteur ;
+3. environnement : ``NO_IBKR=1`` (aucune connexion courtier), ``DEMO=0`` (aucun
    chiffre fictif : données différées yfinance, affichées comme telles),
    ``VERTEX_CODE=`` (sans verrou, donc écoute 127.0.0.1 seulement) ;
-3. démarrage des workers puis du serveur Flask sur ``127.0.0.1:5003``.
+4. démarrage des workers puis du serveur Flask sur ``127.0.0.1:5003``.
 
 Invariants : ``READONLY``/``ANALYSIS_ONLY`` inchangés ; aucune donnée de compte ;
 aucune écriture dans le dépôt source. Usage :
@@ -32,12 +37,32 @@ import tempfile
 RACINE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 EXCLUS_DOSSIERS = {'.git', '.venv', '__pycache__', 'node_modules', '.claude',
                    '.interface-design', '.pytest_cache'}
-EXCLUS_FICHIERS = {'.env', '.vertex_secret'}
+#: DONNÉES PERSONNELLES — jamais copiées dans le miroir.
+#:
+#: Mesuré le 2026-09-06 : la copie n'excluait que les secrets, pas le
+#: PATRIMOINE. `desk_data.json` était donc miroité, l'instance de vérification
+#: servait le portefeuille RÉEL de l'utilisateur, et les campagnes d'audit ont
+#: recopié ses montants dans des bancs et des documents d'un dépôt PUBLIC —
+#: composition, capital engagé par ligne, liquidités, prix d'entrée suivis.
+#:
+#: Un secret se remplace ; un patrimoine publié ne se reprend pas. Le miroir
+#: sert donc un desk VIDE, ce qui est aussi la bonne condition de mesure :
+#: l'instance de vérification doit montrer les états d'absence, pas les
+#: positions de son auteur.
+EXCLUS_FICHIERS = {'.env', '.vertex_secret',
+                   'desk_data.json', 'position_inventory.json',
+                   'tracking.json', 'track_record.json', 'journal.json'}
+#: Motifs de sauvegarde des mêmes fichiers (`desk_data_backup_2026….json`).
+EXCLUS_MOTIFS = ('desk_data', 'position_inventory', 'track_record')
 
 
 def _ignorer(dossier: str, noms: list[str]) -> set[str]:
-    return {n for n in noms
-            if n in EXCLUS_DOSSIERS or n in EXCLUS_FICHIERS or n.endswith('.pyc')}
+    out = {n for n in noms
+           if n in EXCLUS_DOSSIERS or n in EXCLUS_FICHIERS or n.endswith('.pyc')}
+    #  Les sauvegardes datées portent le même patrimoine sous un autre nom.
+    out |= {n for n in noms
+            if n.endswith('.json') and any(m in n for m in EXCLUS_MOTIFS)}
+    return out
 
 
 def miroir(destination: str) -> None:

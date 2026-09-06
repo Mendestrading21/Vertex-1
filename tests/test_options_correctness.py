@@ -47,12 +47,19 @@ def test_net_short_call_ratio_unbounded():
 
 def test_covered_call_is_bounded():
     """100 actions + 1 call vendu : pente terminale nulle → perte bornée (à cours 0 :
-    −100×100 + 1×100×2 = −9 800 $)."""
+    −100×100 + 1×100×3 = −9 700 $).
+
+    La prime vaut 3 et non 2 : à 2, le résultat tombait exactement sur un
+    montant du desk réel de la machine de développement, et le gardien
+    `test_aucun_patrimoine_publie` ne peut pas distinguer une coïncidence
+    arithmétique d'une fuite. Lever la coïncidence coûte un chiffre ; laisser
+    une exemption dans le gardien coûterait sa fiabilité.
+    """
     legs = [{'type': 'stock', 'premium': 100, 'qty': 100},
-            {'type': 'call', 'strike': 110, 'premium': 2, 'qty': -1}]
+            {'type': 'call', 'strike': 110, 'premium': 3, 'qty': -1}]
     r = ml.analyze_strategy(legs, spot=100, iv=0.30, days_to_exp=30)
     assert r['max_loss_unbounded'] is False
-    assert r['max_loss'] == pytest.approx(-9800.0, abs=50.0)
+    assert r['max_loss'] == pytest.approx(-9700.0, abs=50.0)
 
 
 def test_bounded_strategies_keep_numeric_max_loss():

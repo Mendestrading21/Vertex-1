@@ -67,11 +67,16 @@ Ceux-là rendaient un chiffre ou un geste faux, pas seulement muet.
 | Noms indéfinis dans le paquet | 1 (plantage en attente) | 0 |
 | Cartes-graphiques muettes | 1 exception, 1 carte vide | 0 |
 | Canevas jamais dessinés | 0 | 0 |
-| Suite de tests | 4787 passés, 2 échecs | 5100 passés, 0 échec |
+| Suite de tests | 4787 passés, 2 échecs | 5077 à 5100 passés, 0 échec |
 | Version d'actifs | td-shell-v299 | td-shell-v301 |
 
-Les 313 tests de plus ne sont pas du remplissage : chacun tombe sans son
-correctif, et les contrôleurs adverses l'ont vérifié en remettant l'ancien
+Le total dépend de l'environnement, et le dire vaut mieux que d'annoncer un
+chiffre unique : les bancs navigateur s'abstiennent quand aucune instance de
+vérification n'écoute, d'où 5077 sans elle et 5100 avec. Aucun n'échoue dans
+l'un ou l'autre cas.
+
+Les quelque 300 tests de plus ne sont pas du remplissage : chacun tombe sans
+son correctif, et les contrôleurs adverses l'ont vérifié en remettant l'ancien
 corps en mémoire, dépôt intact.
 
 ## 4. Comment c'est vérifié

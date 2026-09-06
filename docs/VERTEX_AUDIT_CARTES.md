@@ -117,7 +117,11 @@ Les deux chiffres étaient faux, et le vérifier valait mieux que les publier.
    « Système › données », dont **pas une seule** ne l’était. L’outil écarte
    maintenant ce qui n’est pas affiché, au lieu de le déclarer vide.
 
-### Relevé après correction de la mesure
+### Relevé INTERMÉDIAIRE, avant l'audit des douze lots
+
+Ce tableau est conservé pour la trace : il date d'avant les corrections des
+douze lots, et **le relevé qui fait foi est celui du haut de ce document**. Deux
+tirets muets y subsistaient, sur Portefeuille ; ils sont fermés depuis.
 
 | Mesure | Valeur |
 | --- | --- |

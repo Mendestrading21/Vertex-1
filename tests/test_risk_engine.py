@@ -121,19 +121,24 @@ def test_contrat_du_rapport_de_risque():
 # ── Constat 24 : un HHI dont la base n'était ni les actions ni le total ──────
 
 def test_hhi_du_compartiment_actions_ne_repeint_plus_un_desk_cash_en_vert():
-    """MESURE : `POST /api/portfolio/team` avec 1 action KO (88,07 $) et
-    25 000 $ de cash rendait `hhi 0.0` — la jauge lisait « bien dispersé » en
-    bande verte sur un compartiment actions composé d'UN SEUL titre. Le HHI
-    du compartiment vaut 1,0 (concentration maximale), et `invested_pct` dit
-    que 0,35 % du capital seulement est investi."""
+    """Un compartiment actions composé d'UN SEUL titre rendait `hhi 0.0` — la
+    jauge lisait « bien dispersé » en bande verte sur une concentration
+    maximale. Le HHI du compartiment vaut 1,0, et `invested_pct` dit quelle
+    part du capital est réellement investie.
+
+    Chiffres SYNTHÉTIQUES et ronds : 10 actions à 50 $ et 20 000 $ de cash. La
+    mesure d'origine venait d'un desk réel ; la reproduire avec ses montants
+    publierait le portefeuille de l'utilisateur (invariant 5). La propriété
+    mesurée — un seul titre donne 1,0, pas 0,0 — est identique.
+    """
     snap = PortfolioSnapshot(positions=[
-        Position('KO', 1, avg_cost=88.07, last_price=88.07, sector='Consumer Defensive'),
-    ], cash=25000.0, provenance='REAL')
+        Position('KO', 10, avg_cost=50.0, last_price=50.0, sector='Consumer Defensive'),
+    ], cash=20000.0, provenance='REAL')
     r = portfolio_risk(snap, _Profil())
-    assert r['equity'] == 25088.07
+    assert r['equity'] == 20500.0             # 500 investis + 20 000 de cash
     assert r['hhi'] == 1.0                    # mesuré à 0.0 avant correction
-    assert r['invested_pct'] == 0.35
-    assert r['hhi_total_equity'] == 0.0       # l'ancien chiffre, sous son vrai nom
+    assert r['invested_pct'] == 2.44
+    assert r['hhi_total_equity'] == 0.0006    # l'ancien chiffre, sous son vrai nom
 
 
 def test_hhi_ne_contredit_plus_le_surpoids_de_la_meme_reponse():
