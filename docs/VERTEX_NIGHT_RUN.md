@@ -82,6 +82,7 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | `08e0a79a` | fix(risque) : le risque du panier mesure les positions déclarées (`POST /api/risk {symbols}`), Portefeuille et Opportunités branchés, titres non mesurables nommés |
 | `816e6f73` | fix(réseau) : analystes servis du cache et collectés en fond, cotations sans attente de 12 s (worker en fond, `en_attente`), marque de contrat depuis le cache, blocs analystes de la fiche enfin visibles |
 | `0b293dc5` | fix(réseau) : chaîne d'options hors requête (`chaine_a_la_demande.board_avec`, `en_cours`, pages Options avec réessai borné ; coque vx-shell-6, SW v293) |
+| `abd7df10` | fix(composants) : « Ce qui a changé » sur /api/market/context (`changes_base`, `prev_as_of`), équité Portefeuille dérivée des clôtures déclarées, `plAbs` produit (contribution) |
 
 ## 5. Tests (résultats exacts)
 
@@ -95,7 +96,8 @@ Branche : `ui/refonte-dashboards` (base `main` `ed363d67`). Aucun secret ici.
 | Tranche honnêteté (`240d23b7`) | `4435 passed, 180 skipped, 0 failed` ; une garde « écartée » (`test_future_catalyst_is_not_backdated_on_last_historical_candle`) repasse au vert grâce à l'hôte restauré et sort du registre des gardes supplantées (131 au lieu de 132) |
 | Tranche risque du panier (`08e0a79a`) | `4442 passed, 180 skipped, 0 failed` |
 | Tranche réseau hors requête (`816e6f73`) | `4452 passed, 180 skipped, 0 failed` (gardien `test_pos_quotes` réaligné sur le contrat hors requête) |
-| Tranche chaîne hors requête (`0b293dc5`) | `4455 passed, 180 skipped, 1 failed` (import orphelin) → corrigé avant le commit, gardien vert ; suite complète relancée après (voir ci-dessous) |
+| Tranche chaîne hors requête (`0b293dc5`) | `4455 passed, 180 skipped, 1 failed` (import orphelin) → corrigé avant le commit, gardien vert ; suite complète relancée après : `4456 passed, 180 skipped, 0 failed` |
+| Tranche composants alimentés (`abd7df10`) | `4460 passed, 180 skipped, 0 failed` |
 
 Preuves réelles hors suite : socket TWS (session marché seulement),
 collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
@@ -131,5 +133,10 @@ collecte FRED/BCE/BNS (11/11), carte Marchés dans le navigateur.
   `/api/company`, sans consommateur UI). Vérifié sur l'instance QA :
   `/api/options/strategies/KHC` → `en_cours` en 356 ms, dossier Options KHC
   avec réessai (3 appels), console sans erreur.
-- Prochaine action si reprise : reste de #9 (« Ce qui a changé », équité
-  portefeuille), puis #2 (autorités de décision).
+- Tranche « composants alimentés » faite (`abd7df10`) : §13 #9 clos (reste
+  `daily_changes`, hors interface). Vérifié sur l'instance QA : « Ce qui a
+  changé » dans ses trois états (base absente → base posée → « rien de notable
+  depuis … »), contribution au P&L rendue, équité honnêtement vide sans
+  clôture, console sans erreur.
+- Prochaine action si reprise : §13 #2 (trois autorités de décision, programme
+  lot décision), puis #11 (SEC, action humaine).

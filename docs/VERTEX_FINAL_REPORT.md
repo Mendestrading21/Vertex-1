@@ -35,6 +35,7 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 | `08e0a79a` | risque du panier sur les positions déclarées (`POST /api/risk`), Portefeuille et Opportunités | `git revert` |
 | `816e6f73` | réseau hors requête : analystes (cache + fond), cotations (worker en fond, `en_attente`), marque de contrat depuis le cache, blocs analystes visibles | `git revert` |
 | `0b293dc5` | chaîne d'options hors requête (magasin non bloquant, `en_cours`, pages avec réessai ; coque vx-shell-6, SW v293) | `git revert` puis re-bump |
+| `abd7df10` | composants alimentés : « Ce qui a changé », équité dérivée des clôtures, contribution (`plAbs`) | `git revert` |
 
 ## 4. Pages et champs effectivement couverts
 
@@ -61,7 +62,7 @@ ont changé (fraîcheur, « live »). Le thème Black Glass est intact.
 | `check_ibkr_boundary.py --enforce` (racine entière) | OK, aucun appel sensible |
 | Socket réelle TWS (`VERTEX_TEST_IBKR_LIVE=1`) | 1 passed |
 | Collecte réelle FRED/BCE/BNS (`VERTEX_TEST_RESEAU=1`) | 1 passed (11/11 séries) |
-| Nouveaux tests | `test_ibkr_session_marche_seule` (63), `test_macro_officiel` (12), `test_etiquettes_live_honnetes` (4), `test_fraicheur_serveur` (29), `test_honnetete_verdict_et_calendrier` (12), `test_risque_panier_declare` (7), `test_reseau_hors_requete` (14) |
+| Nouveaux tests | `test_ibkr_session_marche_seule` (63), `test_macro_officiel` (12), `test_etiquettes_live_honnetes` (4), `test_fraicheur_serveur` (29), `test_honnetete_verdict_et_calendrier` (12), `test_risque_panier_declare` (7), `test_reseau_hors_requete` (14), `test_composants_alimentes` (4) |
 
 Tests simulés, contractuels, connexion réelle et observation de fonctionnement
 sont distingués dans chaque fichier (docstring et marqueurs `skipif`).
@@ -115,8 +116,9 @@ calendrier servi et affiché tel quel, entonnoir Marchés au vocabulaire du scan
 Traité aussi (`08e0a79a`) : risque du panier mesuré sur les positions déclarées ;
 (`816e6f73`) : analystes et cotations sans réseau lent dans la requête, blocs
 analystes de la fiche visibles.
-(`0b293dc5`) : chaîne d'options chargée en fond, jamais dans la requête.
-Restent : trois autorités de décision (programme lot décision) ; « Ce qui a changé » et équité portefeuille jamais alimentés ;
+(`0b293dc5`) : chaîne d'options chargée en fond, jamais dans la requête ;
+(`abd7df10`) : « Ce qui a changé », équité et contribution du Portefeuille alimentés.
+Restent : trois autorités de décision (programme lot décision) ;
 verdict/liquidité calculés dans le JS de la vue Structure ; Cerveau Claude qui
 affiche des cotations web non réconciliées ; onglets Options non regroupés.
 
