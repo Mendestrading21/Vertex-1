@@ -50,7 +50,14 @@ def summarize(board, *, as_of=None, demo=False, source='', detail_by_sym=None):
     #  « SPREAD MOY. — non disponible sur ce scan » alors que la page
     #  Opportunités imprimait « 6,5 % » pour le même contrat.
     spreads = [_bf.spread_pct(c) for c in board]
-    ois = [_num(c.get('oi')) for c in board]
+    #  MÊME CAUSE QUE LE SPREAD, UN CRAN PLUS LOIN : `oi` brut porte le zéro
+    #  imputé par `legacy_engine._i` quand le courtier ne reporte rien. Mesuré :
+    #  une moyenne d'intérêt ouvert calculée sur des zéros imputés tire la carte
+    #  « OI MOYEN » vers le bas sans qu'aucune ligne ne l'explique — un chiffre
+    #  faux là où l'absence était disponible (`open_interest_present`).
+    #  `_avg` ignore déjà les None : la moyenne porte donc sur les contrats
+    #  RÉELLEMENT reportés, et leur nombre est publié à côté d'elle.
+    ois = [_bf.open_interest(c) for c in board]
     avg_iv = _avg(ivs)
     avg_qual = _avg(quals)
     avg_spread = _avg(spreads)
@@ -66,6 +73,10 @@ def summarize(board, *, as_of=None, demo=False, source='', detail_by_sym=None):
         'quality_band': _quality_band(avg_qual),
         'avg_spread_pct': avg_spread,
         'avg_oi': _avg(ois),
+        #  Sans ce compte, une moyenne sur 3 contrats se lit comme une moyenne
+        #  sur 96 : la couverture fait partie de la mesure (invariant 6).
+        'oi_reported_count': sum(1 for v in ois if v is not None),
+        'oi_total_count': len(board),
     }
     radar = [{
         'sym': c.get('sym'), 'type': c.get('type'), 'bucket': c.get('bucket'),

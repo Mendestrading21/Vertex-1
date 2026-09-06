@@ -138,6 +138,14 @@ def _quote_freshness(age, maximum):
 #  tête du mandat 3–6 mois (CPAY, vol 1 et spread 14,2 % sur sa ligne de board).
 #  `board_fields` refuse en outre de rendre la pénalité 99.0 ou un volume imputé
 #  à 0 : une absence reste une absence, jamais une conformité ni un rejet faux.
+#
+#  MESURE DU 2026-09-06 : la porte de l'intérêt ouvert lisait encore `oi` BRUT,
+#  alors que `legacy_engine._i` impute `0` quand le courtier ne reporte rien.
+#  `_minimum_ok(0, 500)` rend `False` — un REJET affirmé — là où
+#  `_minimum_ok(None, 500)` rend `None`, c'est-à-dire « non mesurable ». Le
+#  scanner écartait donc des contrats pour une raison qu'il n'avait pas mesurée,
+#  et l'écran affichait « OI insuffisant » sur une absence. Les trois lectures
+#  passent par l'accesseur, comme le volume et le spread avant elles.
 def _leaps_mandate(contract, profile):
     category = profile.category('LEAPS') if profile is not None else {}
     d_min = category.get('delta_min', 0.70)
@@ -146,7 +154,7 @@ def _leaps_mandate(contract, profile):
     spread_max = category.get('spread_pct_max', 5.0)
     return {
         'delta_ok': _value_in_range(contract.get('delta'), d_min, d_max),
-        'oi_ok': _minimum_ok(contract.get('oi'), oi_min),
+        'oi_ok': _minimum_ok(_bf.open_interest(contract), oi_min),
         'spread_ok': _maximum_ok(_bf.spread_pct(contract), spread_max),
         'bounds': {
             'delta': [d_min, d_max],
@@ -160,7 +168,7 @@ def _swing_3_6m_mandate(contract, config):
     age = _quote_age(contract)
     return {
         'delta_ok': _value_in_range(contract.get('delta'), config['delta_abs_min'], config['delta_abs_max']),
-        'oi_ok': _minimum_ok(contract.get('oi'), config['open_interest_min']),
+        'oi_ok': _minimum_ok(_bf.open_interest(contract), config['open_interest_min']),
         'volume_ok': _minimum_ok(_bf.volume(contract), config['volume_min']),
         'spread_ok': _maximum_ok(_bf.spread_pct(contract), config['spread_pct_max']),
         'quote_fresh_ok': _maximum_ok(age, config['max_quote_age_seconds']),
@@ -260,7 +268,7 @@ def scan(board, universe, sym=None, profile=None):
             'delta': raw.get('delta'),
             'iv': iv_dec,
             'iv_unit': 'DECIMAL' if iv_dec is not None else None,
-            'oi': raw.get('oi'),
+            'oi': _bf.open_interest(raw),
             'volume': _bf.volume(raw),
             'spread_pct': _bf.spread_pct(raw),
             'quote_age_seconds': _quote_age(raw),

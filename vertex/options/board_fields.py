@@ -133,4 +133,65 @@ def volume(contract):
     return int(value) if (value is not None and value.is_integer()) else value
 
 
-__all__ = ['spread_pct', 'volume']
+def open_interest(contract):
+    """Intérêt ouvert d'une ligne de board — ou None (absence).
+
+    MÊME défaut que le volume, MÊME témoin, jamais lu. Mesuré le 2026-09-06 :
+    `legacy_engine.build_board` publie quatre drapeaux de présence dans
+    `liquidity_coverage` — `bid_present`, `ask_present`, `volume_present`,
+    `open_interest_present` — et un balayage du dépôt ne trouve un lecteur que
+    pour le troisième. Or `_i(raw_oi)` convertit un intérêt ouvert ABSENT en
+    `0` : à l'écran comme dans les moteurs, un contrat dont le courtier n'a rien
+    reporté est indiscernable d'un contrat réellement sans position ouverte.
+
+    Le paquet porte pourtant la phrase « champ absent ≠ zéro observé ; aucune
+    liquidité n'est imputée » : elle était vraie du paquet, fausse du champ.
+    """
+    if not isinstance(contract, dict):
+        return None
+    if _couverture(contract).get('open_interest_present') is False:
+        return None
+    value = _num(contract.get('open_interest'))
+    if value is None:
+        value = _num(contract.get('oi'))
+    return int(value) if (value is not None and value.is_integer()) else value
+
+
+def bid(contract):
+    """Meilleure offre d'achat — ou None (absence).
+
+    `_f(raw_bid)` impute `0.0` quand le courtier ne cote pas. Un bid de zéro est
+    une information forte (contrat sans acheteur) ; un bid ABSENT n'en est pas
+    une, et les confondre fabrique un spread de 100 %.
+    """
+    return _cote(contract, 'bid_present', 'bid')
+
+
+def ask(contract):
+    """Meilleure demande de vente — ou None (absence). Voir `bid`."""
+    return _cote(contract, 'ask_present', 'ask')
+
+
+def _cote(contract, temoin, cle):
+    if not isinstance(contract, dict):
+        return None
+    if _couverture(contract).get(temoin) is False:
+        return None
+    return _num(contract.get(cle))
+
+
+def couverture_liquidite(contract):
+    """Ce que la ligne a RÉELLEMENT reporté, pour l'afficher sans le déduire.
+
+    Rend un dict `{champ: bool|None}` — `None` quand le board ne porte aucun
+    témoin (fixtures anciennes, board de démonstration), ce qui est distinct de
+    « le champ est absent ».
+    """
+    c = _couverture(contract)
+    return {nom: c.get(nom) if nom in c else None
+            for nom in ('bid_present', 'ask_present', 'volume_present',
+                        'open_interest_present')}
+
+
+__all__ = ['spread_pct', 'volume', 'open_interest', 'bid', 'ask',
+           'couverture_liquidite']

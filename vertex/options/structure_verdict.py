@@ -51,15 +51,30 @@ def etat_liquidite(oi, spread_pct) -> dict:
     if o is None and s is None:
         return {'key': 'insuffisante', 'label': 'Insuffisante', 'tone': 'neg',
                 'note': 'bid/ask ou OI absent — non évaluable',
-                'spread_pct': None, 'spread_mesure': False}
+                'spread_pct': None, 'spread_mesure': False, 'oi_mesure': False}
     if s is None:
         return {'key': 'insuffisante', 'label': 'Insuffisante', 'tone': 'neg',
                 'note': 'OI %s · spread non coté — liquidité non évaluable'
-                        % (int(o) if o is not None else '—'),
-                'spread_pct': None, 'spread_mesure': False}
-    o = o or 0.0
-    note = 'OI %s · spread %s %%' % (int(o) if oi is not None else '—', _fmt(s, 1))
-    mesure = {'spread_pct': round(s, 2), 'spread_mesure': True}
+                        % (int(o) if o is not None else 'non reporté'),
+                'spread_pct': None, 'spread_mesure': False,
+                'oi_mesure': o is not None}
+    #  MÊME DÉFAUT QUE LE SPREAD, SUR L'AUTRE DIMENSION — mesuré le 2026-09-06.
+    #  `o or 0.0` écrasait une absence d'intérêt ouvert en zéro, exactement ce
+    #  que la sentinelle 99.0 faisait au spread. Les trois paliers positifs
+    #  exigent tous un OI minimal : un OI absent tombait donc en « Insuffisante »
+    #  avec la note « OI 0 », c'est-à-dire une mesure affirmée. Or le board
+    #  publie `liquidity_coverage.open_interest_present` précisément pour dire
+    #  qu'il n'a rien reporté ; personne ne le lisait (balayage du dépôt : zéro
+    #  lecteur pour trois des quatre témoins).
+    #  Le classement reste PRUDENT — sans OI reporté, aucun palier positif — mais
+    #  l'absence se nomme au lieu de se chiffrer (invariants 5 et 7).
+    if o is None:
+        return {'key': 'insuffisante', 'label': 'Insuffisante', 'tone': 'neg',
+                'note': 'spread %s %% · intérêt ouvert non reporté — liquidité '
+                        'non évaluable' % _fmt(s, 1),
+                'spread_pct': round(s, 2), 'spread_mesure': True, 'oi_mesure': False}
+    note = 'OI %s · spread %s %%' % (int(o), _fmt(s, 1))
+    mesure = {'spread_pct': round(s, 2), 'spread_mesure': True, 'oi_mesure': True}
     if o >= 5000 and s <= 3:
         return {'key': 'excellente', 'label': 'Excellente', 'tone': 'pos', 'note': note, **mesure}
     if o >= 1500 and s <= 6:
@@ -82,7 +97,12 @@ def liquidite_strategie(board, sym, exp, legs) -> dict:
         near = contrats_pour(board, sym, None)
         if not near:
             return etat_liquidite(None, None)
-        oi0 = min((_num(c.get('oi')) or 0.0) for c in near)
+        #  `min(... or 0.0)` faisait gagner tout contrat dont l'OI est ABSENT :
+        #  le pire OI du voisinage valait alors zéro par imputation, jamais par
+        #  mesure. On ne retient que les OI RÉELLEMENT reportés ; s'il n'y en a
+        #  aucun, l'absence remonte telle quelle.
+        ois = [v for v in (_bf.open_interest(c) for c in near) if v is not None]
+        oi0 = min(ois) if ois else None
         #  Repli sur les échéances voisines : on prend le PIRE spread RÉELLEMENT
         #  coté. L'ancien `max(..., 99.0)` transformait un contrat non coté en
         #  spread de 99 % — un chiffre que personne n'a mesuré, qui écrasait le
@@ -105,7 +125,7 @@ def liquidite_strategie(board, sym, exp, legs) -> dict:
             continue
         #  `spread_pct` n'existe que sur le board de démonstration ; le board
         #  réel publie `spread`. L'accesseur lit les deux (cf. board_fields).
-        st = etat_liquidite(c.get('oi'), _bf.spread_pct(c))
+        st = etat_liquidite(_bf.open_interest(c), _bf.spread_pct(c))
         if pire is None or RANG_LIQUIDITE[st['key']] < RANG_LIQUIDITE[pire['key']]:
             pire = st
     return pire or etat_liquidite(None, None)

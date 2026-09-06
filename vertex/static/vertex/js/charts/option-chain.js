@@ -30,6 +30,17 @@
     var v = (c.volume != null) ? c.volume : c.vol;
     return (v == null || v === '' || !isFinite(+v)) ? null : +v;
   }
+  /* MÊME DÉFAUT, AUTRE COLONNE — mesuré le 2026-09-06 par balayage du dépôt :
+     le board publie QUATRE témoins d'imputation et un seul avait un lecteur.
+     La colonne « OI » lisait `c.oi` nu, or `_i(None) -> 0` : un contrat dont le
+     courtier ne reporte aucun intérêt ouvert imprimait « 0 », indiscernable
+     d'un contrat réellement sans position ouverte. Le zéro d'un intérêt ouvert
+     est une information forte ; l'inventer est donc pire que de l'omettre. */
+  function oiObserve(c) {
+    if (!c || couverture(c).open_interest_present === false) return null;
+    var v = (c.open_interest != null) ? c.open_interest : c.oi;
+    return (v == null || v === '' || !isFinite(+v)) ? null : +v;
+  }
   /* Les trois états que le board sert SÉPARÉMENT et que ce tableau fondait
      sous l'unique étiquette « Différé » de son pied (mesure du 2026-09-06,
      surface /analysis/<sym>, même charge `/api/options/chain/<sym>` que le
@@ -65,12 +76,15 @@
     { k: 'be', label: 'Seuil', num: true, d: 2, title: 'Break-even (seuil de rentabilité à l\'échéance)' },
     { k: 'risk', label: 'Risque max', num: true, fmt: function (c) { return c.cost != null ? VX.fmt.price(c.cost) + ' $' : '—'; }, title: 'Prime payée = perte maximale d\'un achat' },
     { k: 'swing_ret', label: 'Rendt', num: true, fmt: function (c) { return c.swing_ret != null ? '+' + VX.fmt.num(c.swing_ret, 0) + ' %' : '—'; }, title: 'Rendement potentiel du contrat si le sous-jacent atteint la cible (net/prime, moteur swing)' },
-    { k: 'oi', label: 'OI', num: true, d: 0 },
+    { k: 'oi', label: 'OI', num: true, fmt: function (c) {
+      var v = oiObserve(c);
+      return v != null ? VX.fmt.num(v, 0) : '—'; },
+      title: 'Intérêt ouvert reporté — « — » quand la source n’en reporte aucun (un zéro imputé n’est pas une observation)' },
     { k: 'vol', label: 'Vol', num: true, fmt: function (c) {
       /* `volObserve` : jamais un zéro imputé pour une observation. */
       var v = volObserve(c);
       return v != null ? VX.fmt.num(v, 0) : '—'; },
-      title: 'Volume du jour observé — « — » quand la source n\'en reporte aucun (un zéro imputé n\'est pas une observation)' },
+      title: 'Volume du jour observé — « — » quand la source n’en reporte aucun (un zéro imputé n’est pas une observation)' },
     { k: 'pop', label: 'PoP', num: true, fmt: function (c) { return c.pop != null ? c.pop + ' %' : '—'; }, title: 'Probabilité de profit (modèle lognormal)' },
     { k: 'quality', label: 'Qualité', num: true, d: 0 },
   ];
@@ -141,12 +155,14 @@
       var kStale = rows.filter(estEstimation).length;
       var kNonCote = rows.filter(estNonCote).length;
       var kVol = rows.filter(function (c) { return volObserve(c) == null; }).length;
+      var kOi = rows.filter(function (c) { return oiObserve(c) == null; }).length;
       el.querySelector('[data-oc-body]').innerHTML =
         '<div class="vx-datagrid" style="max-height:none"><table class="vx-table"><thead><tr>' + head + '</tr></thead><tbody>' + bodyRows + '</tbody></table></div>'
         + '<div class="vx-meta vx-mt1">' + rows.length + ' contrat(s) · ' + (state.type || 'CALL & PUT') + (state.exp ? ' · éch. ' + esc(state.exp) : '')
         + (kStale ? ' · dont ' + kStale + ' hors séance (valeur indicative)' : '')
         + (kNonCote ? ' · ' + kNonCote + ' sans carnet coté' : '')
-        + (kVol ? ' · ' + kVol + ' sans volume reporté' : '') + '</div>';
+        + (kVol ? ' · ' + kVol + ' sans volume reporté' : '')
+        + (kOi ? ' · ' + kOi + ' sans intérêt ouvert reporté' : '') + '</div>';
       el.querySelectorAll('[data-oc-sort]').forEach(function (th) {
         th.addEventListener('click', function () {
           var k = th.getAttribute('data-oc-sort');

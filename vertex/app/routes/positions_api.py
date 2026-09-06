@@ -94,6 +94,24 @@ def make_blueprint(scan_state: dict, *, opt_job=None, ibkr_enabled=False) -> Blu
     #  memo restent pour les COTATIONS (_quotes) : coter un symbole est du
     #  marche, lire un compte n'en est pas.
     _pos_verrou = threading.Lock()
+    #  NOM ORPHELIN, mesuré le 2026-09-06 par balayage AST du dépôt (322
+    #  modules, un seul nom indéfini) : `_POS_TTL_S` était défini à côté d'un
+    #  `_pos_memo` que le lot « frontière IBKR market-data-only » a retiré avec
+    #  les lectures de compte. Le memo des COTATIONS, lui, est resté — et son
+    #  seul lecteur de la constante avec lui.
+    #
+    #  Le défaut est INVISIBLE en test : `_quotes` rend `{}` d'emblée quand
+    #  IBKR est absent (c'est le cas de l'instance QA et de toute la suite), et
+    #  la condition court-circuite au premier appel puisque la clé mémorisée
+    #  vaut None. Il faut IBKR actif, un desk non vide, et un SECOND appel sur
+    #  le même panier pour atteindre la ligne — c'est-à-dire l'usage normal de
+    #  l'instance de travail, où il rend un 500 au lieu d'une cotation.
+    #
+    #  Valeur restaurée telle qu'elle était avant la suppression (15 s), plus
+    #  courte que la fraîcheur d'une cotation de trade perso (desk.POSQ_TTL_S,
+    #  45 s) : ce memo-ci ne sert qu'à ne pas redemander le MÊME panier à
+    #  quelques secondes d'intervalle depuis deux routes de la même page.
+    _POS_TTL_S = 15.0
     _q_memo = {'clef': None, 'ts': 0.0, 'valeur': None}
 
     def _quotes(positions):
