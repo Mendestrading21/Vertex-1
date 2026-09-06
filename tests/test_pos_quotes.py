@@ -58,19 +58,33 @@ def test_une_cotation_perimee_se_sert_immediatement(monkeypatch):
 
 
 def test_une_cle_jamais_cotee_garde_une_attente_bornee_courte(monkeypatch):
+    """Mission alimentation (2026-09-06) : la clé jamais cotée part au worker
+    EN FOND ; la REQUÊTE n'attend plus que `POSQ_ATTENTE_S` (1,5 s par défaut,
+    0,2 s ici), puis rend le repli et nomme la clé dans `en_attente`. Le
+    worker garde son propre délai (45 s), hors requête."""
     import terminal
+    from vertex.app.routes import desk
 
-    bornes = []
+    monkeypatch.setattr(desk, 'POSQ_ATTENTE_S', 0.2)
+    appels = []
 
-    def worker(kind, args, timeout):
-        bornes.append(timeout)
+    def worker_lent(kind, args, timeout):
+        appels.append((kind, threading.current_thread() is threading.main_thread()))
+        if kind == 'posq':
+            time.sleep(0.8)
         return {}
 
-    monkeypatch.setitem(_hooks(), 'opt_job', worker)
+    monkeypatch.setitem(_hooks(), 'opt_job', worker_lent)
     monkeypatch.setitem(_hooks(), 'ibkr_enabled', True)
     _hooks()['posq_cache'].pop('ZZZZ|||', None)
-    terminal.app.test_client().post('/api/pos-quotes',
-                                    json={'positions': [{'sym': 'ZZZZ'}]})
-    assert bornes and bornes[0] <= 12, (
-        'la seule attente restante (clé jamais cotée) doit être bornée à '
-        '12 s, pas %s.' % (bornes[0] if bornes else 'aucune'))
+    debut = time.monotonic()
+    corps = terminal.app.test_client().post(
+        '/api/pos-quotes', json={'positions': [{'sym': 'ZZZZ'}]}).get_json()
+    duree = time.monotonic() - debut
+    assert duree < 0.7, (
+        'la requête a attendu le worker (%.2f s) : la clé jamais cotée doit '
+        'partir en fond, la requête ne garde qu’une attente courte.' % duree)
+    assert 'ZZZZ|||' in corps.get('en_attente', []), (
+        'la clé encore en cours de cotation doit être nommée (`en_attente`).')
+    assert any(k == 'posq' and not principal for k, principal in appels), (
+        'le worker doit avoir été appelé hors du fil de la requête.')

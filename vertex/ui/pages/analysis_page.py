@@ -1423,10 +1423,21 @@ async function loadDossier(){
 
 /* Analystes PROFONDS (à la demande) : révisions BPA, surprises, notes, détention, initiés.
    Enrichit Catalyseurs + Sentiment sans bloquer le dossier principal. */
-async function loadAnalyst(){
+async function loadAnalyst(essai){
+  essai=essai||0;
   let a=null;
-  try{a=await VX.fetch('/api/analyst/'+SYM,{ttl:600000});}catch(e){}
-  if(!a||a.demo||a.error)return;
+  /* Le serveur ne fait plus de réseau dans la requête : EN_COURS = collecte
+     lancée en fond → réessai borné (3) après `retry_s`, hors cache client.
+     La page supplantée (VX.page._gen) ne repeint pas. */
+  try{a=await VX.fetch('/api/analyst/'+SYM,{ttl:essai?0:600000});}catch(e){}
+  if(a&&a.etat==='EN_COURS'){
+    if(essai<3)setTimeout(function(){
+      if(window.VX&&VX.page&&VX.page._gen!==_g)return;
+      loadAnalyst(essai+1);
+    },((a.retry_s||6)*1000));
+    return;
+  }
+  if(!a||a.demo||a.error||a.available===false)return;
   const $b=id=>document.querySelector('#'+id+' [data-body]');
   const price=(TICKER&&TICKER.detail&&TICKER.detail.price)||null;
   /* Catalyseurs : révisions BPA + surprises + notes datées */
@@ -1445,7 +1456,8 @@ async function loadAnalyst(){
       return `<div class="vx-kv"><span class="k">${esc(r.date)} · ${esc(r.firm)}</span><span class="v ${dir}">${esc(r.to||r.pt_action||r.action)}${tgt}</span></div>`;
     }).join('');
   }
-  if(cat){const el=$b('an-catalysts');if(el)el.innerHTML+=`<div class="vx-mt2" style="border-top:1px solid var(--vx-border,#30292B);padding-top:8px">${cat}</div>`;}
+  if(cat&&a.stale)cat+=`<div class="vx-meta vx-mt1">Données analystes périmées (&gt; 12 h), rafraîchissement en cours.</div>`;
+  if(cat)analystAjout('an-catalysts',cat);
   /* Sentiment : détention institutionnelle (13F) + initiés */
   let sen='';
   if(a.holders&&a.holders.length){
@@ -1457,7 +1469,15 @@ async function loadAnalyst(){
   if(a.insider){const ib=a.insider;
     sen+=kv('Initiés (récent)',`${ib.buys} achat(s) / ${ib.sells} vente(s)`,(ib.bias==='buy'?'vx-pos':ib.bias==='sell'?'vx-neg':''));
   }
-  if(sen){const el=$b('an-sentiment');if(el)el.innerHTML+=`<div class="vx-mt2" style="border-top:1px solid var(--vx-border,#30292B);padding-top:8px">${sen}</div>`;}
+  if(sen)analystAjout('an-sentiment',sen);
+}
+/* Ajout IDEMPOTENT : le corps de la carte est réécrit par loadDossier (rafraîchissement
+   180 s, deuxième passage du routeur) ; l'ancien `innerHTML+=` s'empilait ou
+   disparaissait selon l'ordre. Mesuré : bloc peint à 1 s, effacé à 2 s. */
+function analystAjout(id,html){
+  const el=document.querySelector('#'+id+' [data-body]');if(!el)return;
+  el.querySelectorAll('[data-analyst]').forEach(n=>n.remove());
+  el.insertAdjacentHTML('beforeend',`<div class="vx-mt2" data-analyst style="border-top:1px solid var(--vx-border,#30292B);padding-top:8px">${html}</div>`);
 }
 /* ── Carte-Verdict + Carte-Scénario + Raisonnement du comité (decision stack) ── */
 /* DecisionTrace du dossier : Donnée → Moteur → Décision → Portefeuille.

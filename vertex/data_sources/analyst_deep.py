@@ -193,6 +193,15 @@ def _save_cache(cache):
         pass
 
 
+def depuis_cache(sym, ttl=TTL_S):
+    """(entrée du cache ou None, fraîche ?) — AUCUN réseau. Sert à répondre à
+    une requête utilisateur sans la faire attendre une collecte yfinance."""
+    sym = (sym or '').upper()
+    ent = _load_cache().get(sym) if sym else None
+    frais = bool(ent) and (time.time() - ent.get('_ts', 0)) < ttl
+    return ent, frais
+
+
 def get(sym, ttl=TTL_S, force=False):
     """Renvoie le paquet analyste profond pour `sym` (caché TTL h). None si tout échoue."""
     sym = (sym or '').upper()

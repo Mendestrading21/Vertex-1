@@ -112,6 +112,10 @@ def _backup_desk():
             pass
 
 POSQ_TTL_S = 45          # fraîcheur d'une cotation de trade perso
+#  Attente MAXIMALE d'une requête pour une clé jamais cotée : le worker IBKR
+#  répond d'ordinaire en moins d'une seconde ; au-delà, la requête rend le
+#  repli étiqueté et nomme les clés encore en cours (`en_attente`).
+POSQ_ATTENTE_S = float(os.environ.get('VERTEX_POSQ_ATTENTE_S', '1.5'))
 POSQ_MAX_POSITIONS = 24  # borne dure par requête
 
 
@@ -202,12 +206,14 @@ def _scan_fallback_quote(p):
                 q['mark'] = c.get('mid')
                 break
         if 'mark' not in q and want_strike is not None:
-            # Le board n'a que les « meilleurs » strikes — cote le contrat EXACT
-            # détenu via la chaîne (cache TTL 15 min dans on_demand).
+            # Le board n'a que les « meilleurs » strikes — marque du contrat
+            # EXACT détenu depuis le CACHE de chaîne (on_demand) ; une lecture
+            # manquante part en fond, jamais dans la requête utilisateur.
             try:
                 from vertex.options import on_demand as _od
                 mk = _od.contract_mark(sym, want_exp, want_strike,
-                                       'P' if right.startswith('P') else 'C')
+                                       'P' if right.startswith('P') else 'C',
+                                       reseau=False)
                 if mk is not None:
                     q['mark'] = mk
             except Exception:
@@ -426,15 +432,30 @@ def make_blueprint(*, opt_job, ibkr_enabled, cotation_repli=None):
                     if v is not None:
                         posq_cache[k] = (t2, v)
             threading.Thread(target=_rafraichir, daemon=True).start()
+        en_attente = []
         if todo and broker_actif:
-            #  Seule attente restante : une cle JAMAIS cotee. Bornee a 12 s —
-            #  au-dela, le repli honnete ci-dessous prend la main et le
-            #  prochain passage lira le cache que le worker aura rempli.
-            res = hooks['opt_job']('posq', (todo,), timeout=12) or {}
-            for k, v in res.items():
+            #  Une cle JAMAIS cotee part au worker EN FOND ; la requete n'attend
+            #  que POSQ_ATTENTE_S (mesure : 20/33/56 s de file au pire, avant).
+            #  Au-dela, le repli etiquete ci-dessous prend la main, `en_attente`
+            #  nomme les cles encore en cours et le prochain passage lit le
+            #  cache que le worker aura rempli. Aucun reseau lent dans la
+            #  requete utilisateur (contrat CLAUDE.md).
+            boite = {}
+
+            def _coter(lots=list(todo)):
+                res = hooks['opt_job']('posq', (lots,), timeout=45) or {}
+                t2 = time.time()
+                for k, v in res.items():
+                    if v is not None:
+                        posq_cache[k] = (t2, v)
+                boite.update(res)
+            th = threading.Thread(target=_coter, daemon=True)
+            th.start()
+            th.join(POSQ_ATTENTE_S)
+            for k, v in list(boite.items()):
                 if v is not None:
-                    posq_cache[k] = (now, v)
                     out[k] = v
+            en_attente = [p.get('key') for p in todo if p.get('key') not in out]
         #  INTEGRATION main + vertex-live. Les deux branches avaient ecrit un
         #  repli pour TWS ferme, et chacune tenait une moitie du probleme :
         #
@@ -497,6 +518,7 @@ def make_blueprint(*, opt_job, ibkr_enabled, cotation_repli=None):
         #  récentes ont été servies » (preuve `ibkr_live` posée par ibkr_state).
         from vertex.app.state import scan_state as _etat_scan
         return jsonify({'results': out,
+                        'en_attente': en_attente,
                         'live': bool(ibkr_enabled and _etat_scan.get('ibkr_live')),
                         'ibkr_configure': bool(ibkr_enabled),
                         'fallback_used': bool(combles), 'ts': int(now),

@@ -27,6 +27,10 @@ que `tests/test_routes_company_parity.py` garde.
 """
 from __future__ import annotations
 
+import contextlib
+import threading
+import time
+
 from flask import Blueprint, jsonify
 
 from vertex.app.config import DEMO_MODE
@@ -49,18 +53,63 @@ def api_company(sym):
                                 'source injoignable ou titre inconnu'})
 
 
+#  Collectes analystes EN COURS (dédoublonnage par symbole) : une fiche ouverte
+#  trois fois ne lance qu'une collecte. Entrée oubliée à la fin du thread, ou
+#  après ANALYST_RELANCE_S si le thread n'a jamais rendu la main.
+_ANALYST_EN_COURS: dict[str, float] = {}
+_ANALYST_VERROU = threading.Lock()
+ANALYST_RELANCE_S = 120
+ANALYST_RETRY_S = 6
+
+
+def _collecter_analystes_en_fond(sym):
+    """Lance `analyst_deep.get(sym)` dans un thread démon. Rend True si une
+    collecte a été lancée, False si une collecte est déjà en cours."""
+    now = time.time()
+    with _ANALYST_VERROU:
+        if now - _ANALYST_EN_COURS.get(sym, 0) < ANALYST_RELANCE_S:
+            return False
+        _ANALYST_EN_COURS[sym] = now
+
+    def _run():
+        try:
+            with contextlib.suppress(Exception):   # la panne reste dans le cache/journal, pas ici
+                analyst_deep.get(sym)
+        finally:
+            with _ANALYST_VERROU:
+                _ANALYST_EN_COURS.pop(sym, None)
+    threading.Thread(target=_run, daemon=True, name='analystes-' + sym).start()
+    return True
+
+
 @bp.route('/api/analyst/<sym>')
 def api_analyst(sym):
-    """Données analystes PROFONDES à la demande (révisions BPA, surprises, notes,
-    détention, initiés) — yfinance caché 12 h. En démo : rien (pas de réseau)."""
+    """Données analystes PROFONDES (révisions BPA, surprises, notes, détention,
+    initiés) — cache disque 12 h. En démo : rien (pas de réseau).
+
+    Aucun réseau dans la requête : le cache est servi tel quel (`etat`
+    CACHE ou PERIME + `stale`), et une entrée absente ou périmée déclenche une
+    collecte EN FOND ; la page réessaie après `retry_s` (`etat` EN_COURS)."""
     if DEMO_MODE:
         return jsonify({'demo': True})
-    try:
-        return jsonify(analyst_deep.get(sym.upper()) or {})
-    except Exception as e:
-        return jsonify({'error': 'company_unavailable',
-                        'note': 'fiche société indisponible — '
-                                'source injoignable ou titre inconnu'})
+    sym = sym.upper()
+    ent, frais = None, False
+    with contextlib.suppress(Exception):           # cache illisible = absent
+        ent, frais = analyst_deep.depuis_cache(sym)
+    if frais:
+        out = dict(ent)
+        out['etat'] = 'CACHE'
+        return jsonify(out)
+    _collecter_analystes_en_fond(sym)
+    if ent:
+        out = dict(ent)
+        out.update({'etat': 'PERIME', 'stale': True,
+                    'note': 'données analystes périmées (> 12 h) servies telles quelles — '
+                            'rafraîchissement en cours'})
+        return jsonify(out)
+    return jsonify({'available': False, 'etat': 'EN_COURS', 'sym': sym,
+                    'retry_s': ANALYST_RETRY_S,
+                    'note': 'collecte analystes en cours — la fiche réessaie d’elle-même'})
 
 
 @bp.route('/api/names')

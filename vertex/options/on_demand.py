@@ -208,12 +208,40 @@ def desk_greeks(opt_positions):
             'greeks_partial': priced < len(legs)}
 
 
-def contract_mark(sym, exp_prefix, strike, right):
+#  Marques de contrat en cours de lecture EN FOND (clé → époque) : une requête
+#  utilisateur ne tire jamais la chaîne elle-même (`reseau=False`), elle lance
+#  une lecture de fond au plus une fois par clé et par TTL.
+_MARQUES_EN_COURS: dict = {}
+_MARQUES_VERROU = threading.Lock()
+
+
+def _lire_marque_en_fond(sym, exp_prefix, strike, right, key):
+    now = time.time()
+    with _MARQUES_VERROU:
+        if now - _MARQUES_EN_COURS.get(key, 0) < EMPTY_TTL_S:
+            return False
+        _MARQUES_EN_COURS[key] = now
+
+    def _run():
+        try:
+            contract_mark(sym, exp_prefix, strike, right, reseau=True)
+        finally:
+            with _MARQUES_VERROU:
+                _MARQUES_EN_COURS.pop(key, None)
+    threading.Thread(target=_run, daemon=True, name='marque-' + key).start()
+    return True
+
+
+def contract_mark(sym, exp_prefix, strike, right, reseau=True):
     """Mid RÉEL d'un contrat PRÉCIS via la chaîne (IBKR si TWS ouvert via le
     monkeypatch de legacy_engine.yf, sinon yfinance). Utilisé pour marquer les
     positions options du desk quand IBKR ne cote pas — le board ne contient que
     les « meilleurs » strikes, pas forcément celui détenu. None honnête si le
-    contrat n'est pas coté ; cache TTL partagé (pas de martelage)."""
+    contrat n'est pas coté ; cache TTL partagé (pas de martelage).
+
+    `reseau=False` (requête utilisateur) : sert le cache tel quel — même
+    périmé, car une marque datée vaut mieux qu'une attente — et, s'il manque
+    ou est périmé, lance la lecture EN FOND ; rend None si rien n'est en cache."""
     sym = (sym or '').upper()
     right = (right or 'C').upper()
     try:
@@ -226,6 +254,9 @@ def contract_mark(sym, exp_prefix, strike, right):
     now = time.time()
     if ent and now - (ent.get('ts') or 0) < TTL_S:
         return ent.get('mark')
+    if not reseau:
+        _lire_marque_en_fond(sym, exp_prefix, strike, right, key)
+        return ent.get('mark') if ent else None
     mark = None
     try:
         tk = legacy_engine.yf.Ticker(sym)
